@@ -1,0 +1,38 @@
+defmodule JidoMessaging.Participant do
+  @moduledoc """
+  Represents a participant in conversations (human, agent, or system).
+
+  Participants are mapped to external identities via `external_ids`
+  which stores platform-specific user IDs.
+  """
+
+  @schema Zoi.struct(
+            __MODULE__,
+            %{
+              id: Zoi.string(),
+              type: Zoi.enum([:human, :agent, :system]),
+              identity: Zoi.map() |> Zoi.default(%{}),
+              external_ids: Zoi.map() |> Zoi.default(%{}),
+              presence: Zoi.enum([:online, :away, :busy, :offline]) |> Zoi.default(:offline),
+              metadata: Zoi.map() |> Zoi.default(%{})
+            },
+            coerce: true
+          )
+
+  @type t :: unquote(Zoi.type_spec(@schema))
+
+  @enforce_keys Zoi.Struct.enforce_keys(@schema)
+  defstruct Zoi.Struct.struct_fields(@schema)
+
+  @doc "Returns the Zoi schema for Participant"
+  def schema, do: @schema
+
+  @doc "Creates a new participant with generated ID"
+  def new(attrs) when is_map(attrs) do
+    attrs
+    |> Map.put_new(:id, generate_id())
+    |> then(&struct!(__MODULE__, &1))
+  end
+
+  defp generate_id, do: "part_" <> Base.encode16(:crypto.strong_rand_bytes(8), case: :lower)
+end

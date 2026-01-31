@@ -49,8 +49,7 @@ defmodule JidoMessaging.MixProject do
 
   def application do
     [
-      extra_applications: [:logger],
-      mod: {JidoMessaging.Application, []}
+      extra_applications: [:logger]
     ]
   end
 
@@ -62,6 +61,20 @@ defmodule JidoMessaging.MixProject do
       # Runtime dependencies
       {:jason, "~> 1.4"},
       {:zoi, "~> 0.14"},
+
+      # Telegram integration
+      {:telegex, "~> 1.8"},
+      {:finch, "~> 0.18"},
+      {:multipart, "~> 0.4", override: true},
+
+      # Discord integration (runtime: false to prevent auto-start in tests)
+      {:nostrum, "~> 0.10", runtime: false},
+
+      # Slack integration
+      {:slack_elixir, "~> 1.2"},
+
+      # WhatsApp integration
+      {:whatsapp_elixir, "~> 0.1.8"},
 
       # Dev/Test dependencies
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
