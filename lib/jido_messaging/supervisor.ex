@@ -26,11 +26,13 @@ defmodule JidoMessaging.Supervisor do
     instance_registry_name = Module.concat(instance_module, Registry.Instances)
     instance_supervisor_name = Module.concat(instance_module, InstanceSupervisor)
     deduper_name = Module.concat(instance_module, Deduper)
+    signal_bus_name = Module.concat(instance_module, SignalBus)
 
     children = [
       {Registry, keys: :unique, name: room_registry_name},
       {Registry, keys: :unique, name: agent_registry_name},
       {Registry, keys: :unique, name: instance_registry_name},
+      {Jido.Signal.Bus, name: signal_bus_name},
       {JidoMessaging.RoomSupervisor, name: room_supervisor_name, instance_module: instance_module},
       {JidoMessaging.AgentSupervisor, name: agent_supervisor_name, instance_module: instance_module},
       {JidoMessaging.InstanceSupervisor, name: instance_supervisor_name, instance_module: instance_module},
@@ -40,5 +42,13 @@ defmodule JidoMessaging.Supervisor do
     ]
 
     Supervisor.init(children, strategy: :one_for_one)
+  end
+
+  @doc """
+  Returns the Signal Bus name for a given messaging module.
+  """
+  @spec signal_bus_name(module()) :: atom()
+  def signal_bus_name(instance_module) do
+    Module.concat(instance_module, SignalBus)
   end
 end
