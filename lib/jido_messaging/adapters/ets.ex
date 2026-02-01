@@ -25,20 +25,42 @@ defmodule JidoMessaging.Adapters.ETS do
 
   @behaviour JidoMessaging.Adapter
 
-  alias JidoMessaging.{Room, Participant, Message}
+  @schema Zoi.struct(
+            __MODULE__,
+            %{
+              rooms: Zoi.any(),
+              participants: Zoi.any(),
+              messages: Zoi.any(),
+              room_messages: Zoi.any(),
+              room_bindings: Zoi.any(),
+              participant_bindings: Zoi.any(),
+              message_external_ids: Zoi.any()
+            },
+            coerce: false
+          )
 
-  defstruct [:rooms, :participants, :messages, :room_messages, :room_bindings, :participant_bindings]
+  @type t :: unquote(Zoi.type_spec(@schema))
+
+  @enforce_keys Zoi.Struct.enforce_keys(@schema)
+  defstruct Zoi.Struct.struct_fields(@schema)
+
+  @doc "Returns the Zoi schema"
+  def schema, do: @schema
+
+  alias JidoMessaging.{Room, Participant, Message}
 
   @impl true
   def init(_opts) do
-    state = %__MODULE__{
-      rooms: :ets.new(:rooms, [:set, :public]),
-      participants: :ets.new(:participants, [:set, :public]),
-      messages: :ets.new(:messages, [:set, :public]),
-      room_messages: :ets.new(:room_messages, [:bag, :public]),
-      room_bindings: :ets.new(:room_bindings, [:set, :public]),
-      participant_bindings: :ets.new(:participant_bindings, [:set, :public])
-    }
+    state =
+      struct!(__MODULE__, %{
+        rooms: :ets.new(:rooms, [:set, :public]),
+        participants: :ets.new(:participants, [:set, :public]),
+        messages: :ets.new(:messages, [:set, :public]),
+        room_messages: :ets.new(:room_messages, [:bag, :public]),
+        room_bindings: :ets.new(:room_bindings, [:set, :public]),
+        participant_bindings: :ets.new(:participant_bindings, [:set, :public]),
+        message_external_ids: :ets.new(:message_external_ids, [:set, :public])
+      })
 
     {:ok, state}
   end
@@ -109,7 +131,22 @@ defmodule JidoMessaging.Adapters.ETS do
   def save_message(state, %Message{} = message) do
     true = :ets.insert(state.messages, {message.id, message})
     true = :ets.insert(state.room_messages, {message.room_id, message.id})
+    index_external_id(state, message)
     {:ok, message}
+  end
+
+  defp index_external_id(_state, %Message{external_id: nil}), do: :ok
+
+  defp index_external_id(state, %Message{} = message) do
+    channel = get_in(message.metadata, [:channel])
+    instance_id = get_in(message.metadata, [:instance_id])
+
+    if channel && instance_id do
+      key = {channel, instance_id, message.external_id}
+      true = :ets.insert(state.message_external_ids, {key, message.id})
+    end
+
+    :ok
   end
 
   @impl true
@@ -202,6 +239,38 @@ defmodule JidoMessaging.Adapters.ETS do
         {:ok, participant} = save_participant(state, participant)
         true = :ets.insert(state.participant_bindings, {binding_key, participant.id})
         {:ok, participant}
+    end
+  end
+
+  @impl true
+  def get_message_by_external_id(state, channel, instance_id, external_id) do
+    key = {channel, instance_id, external_id}
+
+    case :ets.lookup(state.message_external_ids, key) do
+      [{^key, message_id}] -> get_message(state, message_id)
+      [] -> {:error, :not_found}
+    end
+  end
+
+  @impl true
+  def update_message_external_id(state, message_id, external_id) do
+    case get_message(state, message_id) do
+      {:ok, message} ->
+        channel = get_in(message.metadata, [:channel])
+        instance_id = get_in(message.metadata, [:instance_id])
+
+        updated_message = %{message | external_id: external_id}
+        true = :ets.insert(state.messages, {message_id, updated_message})
+
+        if channel && instance_id do
+          key = {channel, instance_id, external_id}
+          true = :ets.insert(state.message_external_ids, {key, message_id})
+        end
+
+        {:ok, updated_message}
+
+      {:error, :not_found} = error ->
+        error
     end
   end
 end

@@ -38,6 +38,9 @@ defmodule JidoMessaging.Channels.WhatsApp do
   def channel_type, do: :whatsapp
 
   @impl true
+  def capabilities, do: [:text, :image, :audio, :video, :file]
+
+  @impl true
   def transform_incoming(%{
         "entry" => [%{"changes" => [%{"value" => %{"messages" => [message | _]} = value} | _]} | _]
       }) do

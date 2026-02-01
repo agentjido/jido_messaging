@@ -140,6 +140,26 @@ defmodule JidoMessaging.InstanceSupervisor do
     end
   end
 
+  @doc """
+  Get health snapshots for all running instances.
+
+  Returns a list of health snapshot maps for each instance.
+  """
+  @spec list_instance_health(module()) :: [map()]
+  def list_instance_health(messaging_module) do
+    registry = Module.concat(messaging_module, Registry.Instances)
+
+    Registry.select(registry, [{{:"$1", :"$2", :"$3"}, [], [{{:"$1", :"$2"}}]}])
+    |> Enum.filter(fn
+      {{:instance, _id}, _pid} -> true
+      _ -> false
+    end)
+    |> Enum.map(fn {{:instance, _id}, pid} ->
+      {:ok, snapshot} = InstanceServer.health_snapshot(pid)
+      snapshot
+    end)
+  end
+
   defp supervisor_name(messaging_module) do
     Module.concat(messaging_module, InstanceSupervisor)
   end

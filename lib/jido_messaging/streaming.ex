@@ -32,19 +32,29 @@ defmodule JidoMessaging.Streaming do
   use GenServer
   require Logger
 
-  defstruct [
-    :messaging_module,
-    :room,
-    :channel,
-    :chat_id,
-    :message_id,
-    :current_content,
-    :last_update_at,
-    :min_update_interval_ms,
-    :pending_update
-  ]
+  @schema Zoi.struct(
+            __MODULE__,
+            %{
+              messaging_module: Zoi.any(),
+              room: Zoi.struct(JidoMessaging.Room),
+              channel: Zoi.any(),
+              chat_id: Zoi.any(),
+              message_id: Zoi.any() |> Zoi.nullish(),
+              current_content: Zoi.string() |> Zoi.nullish(),
+              last_update_at: Zoi.integer() |> Zoi.nullish(),
+              min_update_interval_ms: Zoi.integer(),
+              pending_update: Zoi.string() |> Zoi.nullish()
+            },
+            coerce: false
+          )
 
-  @type t :: %__MODULE__{}
+  @type t :: unquote(Zoi.type_spec(@schema))
+
+  @enforce_keys Zoi.Struct.enforce_keys(@schema)
+  defstruct Zoi.Struct.struct_fields(@schema)
+
+  @doc "Returns the Zoi schema"
+  def schema, do: @schema
 
   @default_min_interval_ms 100
 
@@ -118,17 +128,18 @@ defmodule JidoMessaging.Streaming do
 
     case channel.send_message(chat_id, initial_content, opts) do
       {:ok, %{message_id: message_id}} ->
-        state = %__MODULE__{
-          messaging_module: messaging_module,
-          room: room,
-          channel: channel,
-          chat_id: chat_id,
-          message_id: message_id,
-          current_content: initial_content,
-          last_update_at: System.monotonic_time(:millisecond),
-          min_update_interval_ms: min_interval,
-          pending_update: nil
-        }
+        state =
+          struct!(__MODULE__, %{
+            messaging_module: messaging_module,
+            room: room,
+            channel: channel,
+            chat_id: chat_id,
+            message_id: message_id,
+            current_content: initial_content,
+            last_update_at: System.monotonic_time(:millisecond),
+            min_update_interval_ms: min_interval,
+            pending_update: nil
+          })
 
         {:ok, state}
 

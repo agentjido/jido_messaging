@@ -38,6 +38,9 @@ defmodule JidoMessaging.Channels.Discord do
   def channel_type, do: :discord
 
   @impl true
+  def capabilities, do: [:text, :image, :audio, :video, :file, :reactions, :threads]
+
+  @impl true
   def transform_incoming(%Nostrum.Struct.Message{} = msg) do
     {:ok,
      %{

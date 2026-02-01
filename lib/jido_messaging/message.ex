@@ -15,7 +15,11 @@ defmodule JidoMessaging.Message do
               role: Zoi.enum([:user, :assistant, :system, :tool]),
               content: Zoi.array(Zoi.map()) |> Zoi.default([]),
               reply_to_id: Zoi.string() |> Zoi.nullish(),
+              external_id: Zoi.string() |> Zoi.nullish(),
+              thread_root_id: Zoi.string() |> Zoi.nullish(),
               status: Zoi.enum([:sending, :sent, :delivered, :read, :failed]) |> Zoi.default(:sending),
+              reactions: Zoi.map() |> Zoi.default(%{}),
+              receipts: Zoi.map() |> Zoi.default(%{}),
               metadata: Zoi.map() |> Zoi.default(%{}),
               inserted_at: Zoi.struct(DateTime) |> Zoi.nullish(),
               updated_at: Zoi.struct(DateTime) |> Zoi.nullish()

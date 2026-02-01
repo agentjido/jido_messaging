@@ -61,6 +61,7 @@ defmodule JidoMessaging.MixProject do
       # Runtime dependencies
       {:jason, "~> 1.4"},
       {:zoi, "~> 0.14"},
+      {:jido_signal, "~> 1.0"},
 
       # Telegram integration
       {:telegex, "~> 1.8"},
@@ -75,6 +76,9 @@ defmodule JidoMessaging.MixProject do
 
       # WhatsApp integration
       {:whatsapp_elixir, "~> 0.1.8"},
+
+      # PubSub support (required by jido_signal, also used for integration tests)
+      {:phoenix_pubsub, "~> 2.1"},
 
       # Dev/Test dependencies
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},

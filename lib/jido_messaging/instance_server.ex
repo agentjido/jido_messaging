@@ -28,15 +28,27 @@ defmodule JidoMessaging.InstanceServer do
 
   @idle_timeout_ms :timer.minutes(30)
 
-  defstruct [
-    :instance_module,
-    :instance,
-    :status,
-    :last_error,
-    :connected_at,
-    :started_at,
-    consecutive_failures: 0
-  ]
+  @schema Zoi.struct(
+            __MODULE__,
+            %{
+              instance_module: Zoi.any(),
+              instance: Zoi.struct(Instance),
+              status: Zoi.enum([:starting, :connecting, :connected, :disconnected, :error]) |> Zoi.default(:starting),
+              last_error: Zoi.any() |> Zoi.nullish(),
+              connected_at: Zoi.struct(DateTime) |> Zoi.nullish(),
+              started_at: Zoi.struct(DateTime) |> Zoi.nullish(),
+              consecutive_failures: Zoi.integer() |> Zoi.default(0)
+            },
+            coerce: false
+          )
+
+  @type t :: unquote(Zoi.type_spec(@schema))
+
+  @enforce_keys Zoi.Struct.enforce_keys(@schema)
+  defstruct Zoi.Struct.struct_fields(@schema)
+
+  @doc "Returns the Zoi schema"
+  def schema, do: @schema
 
   # Client API
 
@@ -104,6 +116,25 @@ defmodule JidoMessaging.InstanceServer do
     GenServer.call(pid, :stop)
   end
 
+  @doc """
+  Get a health snapshot for the instance.
+
+  Returns a map with:
+  - `:status` - current status (:connected, :disconnected, :error, etc.)
+  - `:instance_id` - the instance ID
+  - `:channel_type` - the channel type atom
+  - `:name` - the instance name
+  - `:uptime_ms` - milliseconds since the instance started
+  - `:connected_at` - DateTime when connected (or nil)
+  - `:last_error` - the last error (or nil)
+  - `:consecutive_failures` - number of consecutive failures
+  - `:sender_queue_depth` - queue depth of sender (if available)
+  """
+  @spec health_snapshot(pid()) :: {:ok, map()}
+  def health_snapshot(pid) do
+    GenServer.call(pid, :health_snapshot)
+  end
+
   defp via_tuple(instance_module, instance_id) do
     {:via, Registry, {registry_name(instance_module), {:instance, instance_id}}}
   end
@@ -119,12 +150,13 @@ defmodule JidoMessaging.InstanceServer do
     instance_module = Keyword.fetch!(opts, :instance_module)
     instance = Keyword.fetch!(opts, :instance)
 
-    state = %__MODULE__{
-      instance_module: instance_module,
-      instance: instance,
-      status: :starting,
-      started_at: DateTime.utc_now()
-    }
+    state =
+      struct!(__MODULE__, %{
+        instance_module: instance_module,
+        instance: instance,
+        status: :starting,
+        started_at: DateTime.utc_now()
+      })
 
     emit_signal(state, :started, %{
       instance_id: instance.id,
@@ -154,6 +186,28 @@ defmodule JidoMessaging.InstanceServer do
   @impl true
   def handle_call(:get_instance, _from, state) do
     {:reply, {:ok, state.instance}, state, @idle_timeout_ms}
+  end
+
+  @impl true
+  def handle_call(:health_snapshot, _from, state) do
+    now = DateTime.utc_now()
+    uptime_ms = DateTime.diff(now, state.started_at, :millisecond)
+
+    sender_queue_depth = get_sender_queue_depth(state)
+
+    snapshot = %{
+      status: state.status,
+      instance_id: state.instance.id,
+      channel_type: state.instance.channel_type,
+      name: state.instance.name,
+      uptime_ms: uptime_ms,
+      connected_at: state.connected_at,
+      last_error: state.last_error,
+      consecutive_failures: state.consecutive_failures,
+      sender_queue_depth: sender_queue_depth
+    }
+
+    {:reply, {:ok, snapshot}, state, @idle_timeout_ms}
   end
 
   @impl true
@@ -225,10 +279,25 @@ defmodule JidoMessaging.InstanceServer do
   end
 
   defp emit_signal(state, event, metadata) do
+    timestamp = DateTime.utc_now()
+
+    base_metadata = %{
+      instance_module: state.instance_module,
+      channel_type: state.instance.channel_type,
+      timestamp: timestamp
+    }
+
     :telemetry.execute(
       [:jido_messaging, :instance, event],
-      %{system_time: System.system_time()},
-      Map.put(metadata, :instance_module, state.instance_module)
+      %{timestamp: timestamp},
+      Map.merge(base_metadata, metadata)
     )
+  end
+
+  defp get_sender_queue_depth(state) do
+    case JidoMessaging.Sender.whereis(state.instance_module, state.instance.id) do
+      nil -> 0
+      pid -> JidoMessaging.Sender.queue_size(pid)
+    end
   end
 end

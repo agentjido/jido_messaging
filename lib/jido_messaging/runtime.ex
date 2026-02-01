@@ -8,7 +8,23 @@ defmodule JidoMessaging.Runtime do
   use GenServer
   require Logger
 
-  defstruct [:instance_module, :adapter, :adapter_state]
+  @schema Zoi.struct(
+            __MODULE__,
+            %{
+              instance_module: Zoi.any(),
+              adapter: Zoi.any(),
+              adapter_state: Zoi.any() |> Zoi.nullish()
+            },
+            coerce: false
+          )
+
+  @type t :: unquote(Zoi.type_spec(@schema))
+
+  @enforce_keys Zoi.Struct.enforce_keys(@schema)
+  defstruct Zoi.Struct.struct_fields(@schema)
+
+  @doc "Returns the Zoi schema"
+  def schema, do: @schema
 
   def start_link(opts) do
     name = Keyword.fetch!(opts, :name)
@@ -33,11 +49,12 @@ defmodule JidoMessaging.Runtime do
 
     case adapter.init(adapter_opts) do
       {:ok, adapter_state} ->
-        state = %__MODULE__{
-          instance_module: instance_module,
-          adapter: adapter,
-          adapter_state: adapter_state
-        }
+        state =
+          struct!(__MODULE__, %{
+            instance_module: instance_module,
+            adapter: adapter,
+            adapter_state: adapter_state
+          })
 
         {:ok, state}
 

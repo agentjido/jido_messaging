@@ -79,7 +79,8 @@ defmodule JidoMessaging.Ingest do
   defp do_ingest(messaging_module, channel_module, channel_type, instance_id, external_room_id, incoming) do
     with {:ok, room} <- resolve_room(messaging_module, channel_type, instance_id, incoming),
          {:ok, participant} <- resolve_participant(messaging_module, channel_type, incoming),
-         {:ok, message} <- build_and_save_message(messaging_module, room, participant, incoming) do
+         {:ok, message} <-
+           build_and_save_message(messaging_module, room, participant, incoming, channel_type, instance_id) do
       context = %{
         room: room,
         participant: participant,
@@ -141,19 +142,36 @@ defmodule JidoMessaging.Ingest do
     )
   end
 
-  defp build_and_save_message(messaging_module, room, participant, incoming) do
+  defp build_and_save_message(messaging_module, room, participant, incoming, channel_type, instance_id) do
     content = build_content(incoming)
+
+    reply_to_id = resolve_reply_to_id(messaging_module, channel_type, instance_id, incoming)
 
     message_attrs = %{
       room_id: room.id,
       sender_id: participant.id,
       role: :user,
       content: content,
+      reply_to_id: reply_to_id,
+      external_id: incoming[:external_message_id],
       status: :sent,
-      metadata: build_metadata(incoming)
+      metadata: build_metadata(incoming, channel_type, instance_id)
     }
 
     messaging_module.save_message(message_attrs)
+  end
+
+  defp resolve_reply_to_id(messaging_module, channel_type, instance_id, incoming) do
+    external_reply_to_id = incoming[:external_reply_to_id]
+
+    if external_reply_to_id do
+      case messaging_module.get_message_by_external_id(channel_type, instance_id, external_reply_to_id) do
+        {:ok, msg} -> msg.id
+        _ -> nil
+      end
+    else
+      nil
+    end
   end
 
   defp build_content(%{text: text}) when is_binary(text) and text != "" do
@@ -162,10 +180,12 @@ defmodule JidoMessaging.Ingest do
 
   defp build_content(_), do: []
 
-  defp build_metadata(incoming) do
+  defp build_metadata(incoming, channel_type, instance_id) do
     %{
       external_message_id: incoming[:external_message_id],
-      timestamp: incoming[:timestamp]
+      timestamp: incoming[:timestamp],
+      channel: channel_type,
+      instance_id: instance_id
     }
     |> Enum.reject(fn {_, v} -> is_nil(v) end)
     |> Map.new()

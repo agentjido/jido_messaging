@@ -19,7 +19,23 @@ defmodule JidoMessaging.Deduper do
   @default_ttl_ms :timer.hours(1)
   @sweep_interval_ms :timer.minutes(1)
 
-  defstruct [:instance_module, :table, :ttl_ms]
+  @schema Zoi.struct(
+            __MODULE__,
+            %{
+              instance_module: Zoi.any(),
+              table: Zoi.any(),
+              ttl_ms: Zoi.integer()
+            },
+            coerce: false
+          )
+
+  @type t :: unquote(Zoi.type_spec(@schema))
+
+  @enforce_keys Zoi.Struct.enforce_keys(@schema)
+  defstruct Zoi.Struct.struct_fields(@schema)
+
+  @doc "Returns the Zoi schema"
+  def schema, do: @schema
 
   @type key :: term()
 
@@ -92,11 +108,12 @@ defmodule JidoMessaging.Deduper do
 
     schedule_sweep()
 
-    state = %__MODULE__{
-      instance_module: instance_module,
-      table: table,
-      ttl_ms: ttl_ms
-    }
+    state =
+      struct!(__MODULE__, %{
+        instance_module: instance_module,
+        table: table,
+        ttl_ms: ttl_ms
+      })
 
     {:ok, state}
   end

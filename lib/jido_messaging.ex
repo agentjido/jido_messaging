@@ -35,6 +35,7 @@ defmodule JidoMessaging do
     quote bind_quoted: [opts: opts] do
       @adapter Keyword.get(opts, :adapter, JidoMessaging.Adapters.ETS)
       @adapter_opts Keyword.get(opts, :adapter_opts, [])
+      @pubsub Keyword.get(opts, :pubsub)
 
       def child_spec(init_opts) do
         %{
@@ -70,6 +71,7 @@ defmodule JidoMessaging do
           :deduper -> Module.concat(__MODULE__, Deduper)
           :adapter -> @adapter
           :adapter_opts -> @adapter_opts
+          :pubsub -> @pubsub
         end
       end
 
@@ -144,6 +146,30 @@ defmodule JidoMessaging do
           external_id,
           attrs
         )
+      end
+
+      @doc "Get a message by its external ID within a channel/instance context"
+      def get_message_by_external_id(channel, instance_id, external_id) do
+        JidoMessaging.get_message_by_external_id(
+          __jido_messaging__(:runtime),
+          channel,
+          instance_id,
+          external_id
+        )
+      end
+
+      @doc "Update a message's external_id"
+      def update_message_external_id(message_id, external_id) do
+        JidoMessaging.update_message_external_id(
+          __jido_messaging__(:runtime),
+          message_id,
+          external_id
+        )
+      end
+
+      @doc "Save an already-constructed message struct (for updates)"
+      def save_message_struct(message) do
+        JidoMessaging.save_message_struct(__jido_messaging__(:runtime), message)
       end
 
       # Room Server functions
@@ -232,6 +258,19 @@ defmodule JidoMessaging do
         JidoMessaging.InstanceSupervisor.count_instances(__MODULE__)
       end
 
+      @doc "Get health snapshot for an instance"
+      def instance_health(instance_id) do
+        case JidoMessaging.InstanceServer.whereis(__MODULE__, instance_id) do
+          nil -> {:error, :not_found}
+          pid -> JidoMessaging.InstanceServer.health_snapshot(pid)
+        end
+      end
+
+      @doc "Get health snapshots for all running instances"
+      def list_instance_health do
+        JidoMessaging.InstanceSupervisor.list_instance_health(__MODULE__)
+      end
+
       # Deduplication functions
 
       @doc "Check if a message key is a duplicate (and mark as seen if new)"
@@ -247,6 +286,18 @@ defmodule JidoMessaging do
       @doc "Clear all dedupe keys"
       def clear_dedupe do
         JidoMessaging.Deduper.clear(__MODULE__)
+      end
+
+      # PubSub functions
+
+      @doc "Subscribe to room events via PubSub"
+      def subscribe(room_id) do
+        JidoMessaging.PubSub.subscribe(__MODULE__, room_id)
+      end
+
+      @doc "Unsubscribe from room events"
+      def unsubscribe(room_id) do
+        JidoMessaging.PubSub.unsubscribe(__MODULE__, room_id)
       end
     end
   end
@@ -333,5 +384,23 @@ defmodule JidoMessaging do
   def get_or_create_participant_by_external_id(runtime, channel, external_id, attrs) do
     {adapter, adapter_state} = Runtime.get_adapter(runtime)
     adapter.get_or_create_participant_by_external_id(adapter_state, channel, external_id, attrs)
+  end
+
+  @doc "Get a message by its external ID within a channel/instance context"
+  def get_message_by_external_id(runtime, channel, instance_id, external_id) do
+    {adapter, adapter_state} = Runtime.get_adapter(runtime)
+    adapter.get_message_by_external_id(adapter_state, channel, instance_id, external_id)
+  end
+
+  @doc "Update a message's external_id"
+  def update_message_external_id(runtime, message_id, external_id) do
+    {adapter, adapter_state} = Runtime.get_adapter(runtime)
+    adapter.update_message_external_id(adapter_state, message_id, external_id)
+  end
+
+  @doc "Save an already-constructed message struct (for updates)"
+  def save_message_struct(runtime, %Message{} = message) do
+    {adapter, adapter_state} = Runtime.get_adapter(runtime)
+    adapter.save_message(adapter_state, message)
   end
 end

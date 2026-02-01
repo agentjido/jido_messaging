@@ -14,6 +14,7 @@ defmodule JidoMessaging.Participant do
               identity: Zoi.map() |> Zoi.default(%{}),
               external_ids: Zoi.map() |> Zoi.default(%{}),
               presence: Zoi.enum([:online, :away, :busy, :offline]) |> Zoi.default(:offline),
+              capabilities: Zoi.array(Zoi.atom()) |> Zoi.default([:text]),
               metadata: Zoi.map() |> Zoi.default(%{})
             },
             coerce: true

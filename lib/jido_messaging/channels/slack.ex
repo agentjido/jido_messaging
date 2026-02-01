@@ -50,6 +50,9 @@ defmodule JidoMessaging.Channels.Slack do
   def channel_type, do: :slack
 
   @impl true
+  def capabilities, do: [:text, :image, :file, :reactions, :threads]
+
+  @impl true
   def transform_incoming(%{event: %{type: "message"} = event}) do
     transform_event(event)
   end

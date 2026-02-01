@@ -98,4 +98,21 @@ defmodule JidoMessaging.Adapter do
               external_id,
               attrs :: map()
             ) :: {:ok, Participant.t()}
+
+  # Message external ID operations (for reply/quote mapping)
+  @doc """
+  Get a message by its external ID within a channel/instance context.
+
+  Used for resolving reply_to references from external platforms.
+  """
+  @callback get_message_by_external_id(state, channel, instance_id, external_id) ::
+              {:ok, Message.t()} | {:error, :not_found}
+
+  @doc """
+  Update a message's external_id after successful channel delivery.
+
+  Used to record the external platform's message ID after sending.
+  """
+  @callback update_message_external_id(state, message_id, external_id) ::
+              {:ok, Message.t()} | {:error, term()}
 end

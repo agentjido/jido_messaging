@@ -39,6 +39,9 @@ defmodule JidoMessaging.Channels.Telegram do
   def channel_type, do: :telegram
 
   @impl true
+  def capabilities, do: [:text, :image, :audio, :video, :file, :streaming]
+
+  @impl true
   def transform_incoming(%Telegex.Type.Update{message: nil}) do
     {:error, :no_message}
   end

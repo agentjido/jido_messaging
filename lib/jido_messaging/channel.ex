@@ -46,8 +46,20 @@ defmodule JidoMessaging.Channel do
 
   @type send_result :: {:ok, map()} | {:error, term()}
 
+  @type capability ::
+          :text | :image | :audio | :video | :file | :tool_use | :streaming | :reactions | :threads
+
   @doc "Returns the channel type atom (e.g., :telegram, :discord)"
   @callback channel_type() :: atom()
+
+  @doc """
+  Returns the list of capabilities this channel supports.
+
+  Defaults to `[:text]` if not implemented.
+  """
+  @callback capabilities() :: [capability()]
+
+  @optional_callbacks capabilities: 0
 
   @doc """
   Transform a raw incoming payload into a normalized message struct.

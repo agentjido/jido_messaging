@@ -37,12 +37,16 @@ defmodule JidoMessaging.AgentRunner do
 
   alias JidoMessaging.{Participant, RoomServer}
 
-  defstruct [
-    :room_id,
-    :agent_id,
-    :agent_config,
-    :instance_module
-  ]
+  @schema Zoi.struct(
+            __MODULE__,
+            %{
+              room_id: Zoi.string(),
+              agent_id: Zoi.string(),
+              agent_config: Zoi.map(),
+              instance_module: Zoi.any()
+            },
+            coerce: false
+          )
 
   @type agent_config :: %{
           handler: (map(), map() -> {:reply, String.t()} | :noreply | {:error, term()}),
@@ -50,12 +54,13 @@ defmodule JidoMessaging.AgentRunner do
           name: String.t()
         }
 
-  @type t :: %__MODULE__{
-          room_id: String.t(),
-          agent_id: String.t(),
-          agent_config: agent_config(),
-          instance_module: module()
-        }
+  @type t :: unquote(Zoi.type_spec(@schema))
+
+  @enforce_keys Zoi.Struct.enforce_keys(@schema)
+  defstruct Zoi.Struct.struct_fields(@schema)
+
+  @doc "Returns the Zoi schema"
+  def schema, do: @schema
 
   # Public API
 
@@ -123,12 +128,13 @@ defmodule JidoMessaging.AgentRunner do
     agent_config = Keyword.fetch!(opts, :agent_config)
     instance_module = Keyword.fetch!(opts, :instance_module)
 
-    state = %__MODULE__{
-      room_id: room_id,
-      agent_id: agent_id,
-      agent_config: agent_config,
-      instance_module: instance_module
-    }
+    state =
+      struct!(__MODULE__, %{
+        room_id: room_id,
+        agent_id: agent_id,
+        agent_config: agent_config,
+        instance_module: instance_module
+      })
 
     register_as_participant(state)
 
