@@ -13,7 +13,7 @@ defmodule JidoMessaging.StructsTest do
           role: :user
         })
 
-      assert String.starts_with?(message.id, "msg_")
+      assert Jido.Signal.ID.valid?(message.id)
       assert message.room_id == "room_1"
       assert message.role == :user
       assert message.content == []
@@ -33,7 +33,7 @@ defmodule JidoMessaging.StructsTest do
     test "new/1 creates room with defaults" do
       room = Room.new(%{type: :direct})
 
-      assert String.starts_with?(room.id, "room_")
+      assert Jido.Signal.ID.valid?(room.id)
       assert room.type == :direct
       assert room.name == nil
       assert room.external_bindings == %{}
@@ -51,7 +51,7 @@ defmodule JidoMessaging.StructsTest do
     test "new/1 creates participant with defaults" do
       participant = Participant.new(%{type: :human})
 
-      assert String.starts_with?(participant.id, "part_")
+      assert Jido.Signal.ID.valid?(participant.id)
       assert participant.type == :human
       assert participant.identity == %{}
       assert participant.external_ids == %{}
@@ -73,7 +73,7 @@ defmodule JidoMessaging.StructsTest do
           channel_type: :telegram
         })
 
-      assert String.starts_with?(instance.id, "inst_")
+      assert Jido.Signal.ID.valid?(instance.id)
       assert instance.name == "my_bot"
       assert instance.channel_type == :telegram
       assert instance.status == :disconnected

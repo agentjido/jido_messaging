@@ -28,7 +28,7 @@ defmodule JidoMessagingTest do
 
       assert room.type == :direct
       assert room.name == "Test"
-      assert String.starts_with?(room.id, "room_")
+      assert Jido.Signal.ID.valid?(room.id)
     end
 
     test "get_room/1 fetches room" do

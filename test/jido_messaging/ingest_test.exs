@@ -54,6 +54,23 @@ defmodule JidoMessaging.IngestTest do
       assert context.channel == MockChannel
       assert context.instance_id == "instance_1"
       assert context.external_room_id == "chat_123"
+      assert context.instance_module == TestMessaging
+    end
+
+    test "context includes instance_module for signal emission" do
+      incoming = %{
+        external_room_id: "chat_signal",
+        external_user_id: "user_signal",
+        text: "Signal test",
+        external_message_id: 9999
+      }
+
+      {:ok, _message, context} =
+        Ingest.ingest_incoming(TestMessaging, MockChannel, "signal_inst", incoming)
+
+      # instance_module is required for Signal.emit_received to find the Signal Bus
+      assert context.instance_module == TestMessaging
+      assert is_atom(context.instance_module)
     end
 
     test "reuses existing room for same external binding" do

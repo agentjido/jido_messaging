@@ -2,7 +2,7 @@ defmodule JidoMessaging.RoomServerFeaturesTest do
   @moduledoc """
   Tests for RoomServer features: threads, reactions, receipts, typing, presence.
   """
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
 
   alias JidoMessaging.{Room, Message, Participant, RoomServer}
 

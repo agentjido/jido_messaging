@@ -305,6 +305,9 @@ defmodule JidoMessaging.Signal do
     )
   end
 
+  defp event_name_for(:message_added), do: [:jido_messaging, :room, :message_added]
+  defp event_name_for(:participant_joined), do: [:jido_messaging, :room, :participant_joined]
+  defp event_name_for(:participant_left), do: [:jido_messaging, :room, :participant_left]
   defp event_name_for(:presence_changed), do: [:jido_messaging, :participant, :presence_changed]
   defp event_name_for(:typing), do: [:jido_messaging, :participant, :typing]
   defp event_name_for(:reaction_added), do: [:jido_messaging, :message, :reaction_added]
@@ -315,6 +318,9 @@ defmodule JidoMessaging.Signal do
   defp event_name_for(:thread_reply_added), do: [:jido_messaging, :thread, :reply_added]
   defp event_name_for(event_type), do: [:jido_messaging, :room, event_type]
 
+  defp signal_type_for(:message_added), do: "jido.messaging.room.message_added"
+  defp signal_type_for(:participant_joined), do: "jido.messaging.room.participant_joined"
+  defp signal_type_for(:participant_left), do: "jido.messaging.room.participant_left"
   defp signal_type_for(:presence_changed), do: "jido.messaging.participant.presence_changed"
   defp signal_type_for(:typing), do: "jido.messaging.participant.typing"
   defp signal_type_for(:reaction_added), do: "jido.messaging.message.reaction_added"
@@ -332,7 +338,8 @@ defmodule JidoMessaging.Signal do
   defp emit_jido_signal(type, data, instance_module, subject, opts) do
     bus_name = MessagingSupervisor.signal_bus_name(instance_module)
 
-    if Process.whereis(bus_name) do
+    # Note: Signal Bus doesn't register with Process.whereis - just try to publish
+    if instance_module do
       source = build_source(instance_module, opts[:instance_id])
 
       signal_opts =
@@ -345,7 +352,13 @@ defmodule JidoMessaging.Signal do
 
       case Jido.Signal.new(type, data, signal_opts) do
         {:ok, signal} ->
-          Jido.Signal.Bus.publish(bus_name, [signal])
+          case Jido.Signal.Bus.publish(bus_name, [signal]) do
+            {:ok, _} ->
+              :ok
+
+            {:error, reason} ->
+              Logger.debug("[JidoMessaging.Signal] Failed to publish signal #{type}: #{inspect(reason)}")
+          end
 
         {:error, reason} ->
           Logger.warning("[JidoMessaging.Signal] Failed to create signal #{type}: #{inspect(reason)}")

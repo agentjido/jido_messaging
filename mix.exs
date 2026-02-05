@@ -61,7 +61,9 @@ defmodule JidoMessaging.MixProject do
       # Runtime dependencies
       {:jason, "~> 1.4"},
       {:zoi, "~> 0.14"},
-      {:jido_signal, "~> 1.0"},
+      {:jido, "~> 2.0.0-rc"},
+      {:jido_signal, "~> 2.0.0-rc"},
+      {:jido_ai, github: "agentjido/jido_ai"},
 
       # Telegram integration
       {:telegex, "~> 1.8"},
@@ -79,6 +81,9 @@ defmodule JidoMessaging.MixProject do
 
       # PubSub support (required by jido_signal, also used for integration tests)
       {:phoenix_pubsub, "~> 2.1"},
+
+      # Environment loading
+      {:dotenvy, "~> 1.1"},
 
       # Dev/Test dependencies
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},

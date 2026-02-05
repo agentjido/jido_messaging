@@ -108,6 +108,8 @@ defmodule JidoMessaging.MultiRoomIntegrationTest do
       assert room_b.id in room_ids
 
       # 4) PubSub subscription for both rooms (if available)
+      # Note: Phase 6 removed PubSub for message_added/participant_joined/left
+      # These events now use Signal Bus instead
       if pubsub_enabled do
         assert PubSub.configured?(messaging)
         :ok = messaging.subscribe(room_a.id)
@@ -115,29 +117,22 @@ defmodule JidoMessaging.MultiRoomIntegrationTest do
       end
 
       # 5) Add more participants
-      {msg_a2, ctx_a2} =
+      {_msg_a2, ctx_a2} =
         ingest!(messaging, "project_alpha", "bob_ext", "Bob joined Alpha", 3,
           username: "bob",
           display_name: "Bob"
         )
 
-      if pubsub_enabled do
-        assert_receive {:participant_joined, _participant}, 1_000
-        msg_a2_id = msg_a2.id
-        assert_receive {:message_added, %JidoMessaging.Message{id: ^msg_a2_id}}, 1_000
-      end
+      # Phase 6: PubSub assertions removed - these events use Signal Bus now
+      # See room_server_signals_test.exs and agent_runner_signals_test.exs
 
-      {msg_b2, ctx_b2} =
+      {_msg_b2, ctx_b2} =
         ingest!(messaging, "project_beta", "carol_ext", "Carol joined Beta", 4,
           username: "carol",
           display_name: "Carol"
         )
 
-      if pubsub_enabled do
-        assert_receive {:participant_joined, _participant}, 1_000
-        msg_b2_id = msg_b2.id
-        assert_receive {:message_added, %JidoMessaging.Message{id: ^msg_b2_id}}, 1_000
-      end
+      # Phase 6: PubSub assertions removed - these events use Signal Bus now
 
       # 6) Full flow: ingest → deliver (and resulting stored messages)
       reply_a1 = reply!(messaging, msg_a1, ctx_a1, "Bot: welcome to Alpha")
@@ -151,13 +146,14 @@ defmodule JidoMessaging.MultiRoomIntegrationTest do
       assert reply_b1.status == :sent
       assert [%Text{text: "Bot: welcome to Beta"}] = reply_b1.content
 
-      # PubSub should see delivered assistant messages too
-      if pubsub_enabled do
-        reply_a1_id = reply_a1.id
-        reply_b1_id = reply_b1.id
-        assert_receive {:message_added, %JidoMessaging.Message{id: ^reply_a1_id}}, 1_000
-        assert_receive {:message_added, %JidoMessaging.Message{id: ^reply_b1_id}}, 1_000
-      end
+      # Phase 6: PubSub assertions removed - message_added uses Signal Bus now
+      # if pubsub_enabled do
+      #   reply_a1_id = reply_a1.id
+      #   reply_b1_id = reply_b1.id
+      #   assert_receive {:message_added, %JidoMessaging.Message{id: ^reply_a1_id}}, 1_000
+      #   assert_receive {:message_added, %JidoMessaging.Message{id: ^reply_b1_id}}, 1_000
+      # end
+      _ = pubsub_enabled
 
       # 7) Verify RoomServer state: participants tracked per room
       pid_a = RoomServer.whereis(messaging, room_a.id)
@@ -297,7 +293,12 @@ defmodule JidoMessaging.MultiRoomIntegrationTest do
       end
     end
 
+    @tag :skip
+    @tag :phase6_deprecated
     test "pubsub events are room-scoped", %{messaging: messaging, pubsub_enabled: pubsub_enabled} do
+      # Phase 6: This test is deprecated - message_added/participant_joined/left
+      # events now use Signal Bus instead of PubSub.
+      # The room scoping behavior is still valid but needs to be tested via Signal Bus.
       unless pubsub_enabled do
         # Skip this test if PubSub is not available
         assert true

@@ -33,6 +33,8 @@ defmodule JidoMessaging.Adapters.ETS do
               messages: Zoi.any(),
               room_messages: Zoi.any(),
               room_bindings: Zoi.any(),
+              room_bindings_by_room: Zoi.any(),
+              room_bindings_by_id: Zoi.any(),
               participant_bindings: Zoi.any(),
               message_external_ids: Zoi.any()
             },
@@ -47,7 +49,7 @@ defmodule JidoMessaging.Adapters.ETS do
   @doc "Returns the Zoi schema"
   def schema, do: @schema
 
-  alias JidoMessaging.{Room, Participant, Message}
+  alias JidoMessaging.{Room, Participant, Message, RoomBinding}
 
   @impl true
   def init(_opts) do
@@ -58,6 +60,8 @@ defmodule JidoMessaging.Adapters.ETS do
         messages: :ets.new(:messages, [:set, :public]),
         room_messages: :ets.new(:room_messages, [:bag, :public]),
         room_bindings: :ets.new(:room_bindings, [:set, :public]),
+        room_bindings_by_room: :ets.new(:room_bindings_by_room, [:bag, :public]),
+        room_bindings_by_id: :ets.new(:room_bindings_by_id, [:set, :public]),
         participant_bindings: :ets.new(:participant_bindings, [:set, :public]),
         message_external_ids: :ets.new(:message_external_ids, [:set, :public])
       })
@@ -271,6 +275,72 @@ defmodule JidoMessaging.Adapters.ETS do
 
       {:error, :not_found} = error ->
         error
+    end
+  end
+
+  # Room binding operations
+
+  @impl true
+  def get_room_by_external_binding(state, channel, instance_id, external_id) do
+    binding_key = {channel, instance_id, external_id}
+
+    case :ets.lookup(state.room_bindings, binding_key) do
+      [{^binding_key, room_id}] -> get_room(state, room_id)
+      [] -> {:error, :not_found}
+    end
+  end
+
+  @impl true
+  def create_room_binding(state, room_id, channel, instance_id, external_id, attrs) do
+    binding_key = {channel, instance_id, external_id}
+
+    binding =
+      RoomBinding.new(
+        Map.merge(attrs, %{
+          room_id: room_id,
+          channel: channel,
+          instance_id: instance_id,
+          external_room_id: external_id
+        })
+      )
+
+    true = :ets.insert(state.room_bindings, {binding_key, room_id})
+    true = :ets.insert(state.room_bindings_by_id, {binding.id, binding})
+    true = :ets.insert(state.room_bindings_by_room, {room_id, binding.id})
+
+    {:ok, binding}
+  end
+
+  @impl true
+  def list_room_bindings(state, room_id) do
+    binding_ids =
+      :ets.lookup(state.room_bindings_by_room, room_id)
+      |> Enum.map(&elem(&1, 1))
+
+    bindings =
+      binding_ids
+      |> Enum.flat_map(fn binding_id ->
+        case :ets.lookup(state.room_bindings_by_id, binding_id) do
+          [{^binding_id, binding}] -> [binding]
+          [] -> []
+        end
+      end)
+
+    {:ok, bindings}
+  end
+
+  @impl true
+  def delete_room_binding(state, binding_id) do
+    case :ets.lookup(state.room_bindings_by_id, binding_id) do
+      [{^binding_id, binding}] ->
+        binding_key = {binding.channel, binding.instance_id, binding.external_room_id}
+        true = :ets.delete(state.room_bindings, binding_key)
+        true = :ets.delete(state.room_bindings_by_id, binding_id)
+        true = :ets.delete_object(state.room_bindings_by_room, {binding.room_id, binding_id})
+        :ok
+
+      [] ->
+        {:error, :not_found}
     end
   end
 end

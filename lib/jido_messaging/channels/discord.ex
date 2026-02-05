@@ -92,6 +92,8 @@ defmodule JidoMessaging.Channels.Discord do
 
   @impl true
   def send_message(channel_id, text, opts \\ []) do
+    # Ensure channel_id is an integer (Nostrum requires this)
+    channel_id = to_integer(channel_id)
     message_opts = build_message_opts(text, opts)
 
     case apply(Nostrum.Api.Message, :create, [channel_id, message_opts]) do
@@ -204,4 +206,7 @@ defmodule JidoMessaging.Channels.Discord do
       value -> Map.put(map, key, value)
     end
   end
+
+  defp to_integer(value) when is_integer(value), do: value
+  defp to_integer(value) when is_binary(value), do: String.to_integer(value)
 end

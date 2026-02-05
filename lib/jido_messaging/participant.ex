@@ -31,9 +31,7 @@ defmodule JidoMessaging.Participant do
   @doc "Creates a new participant with generated ID"
   def new(attrs) when is_map(attrs) do
     attrs
-    |> Map.put_new(:id, generate_id())
+    |> Map.put_new(:id, Jido.Signal.ID.generate!())
     |> then(&struct!(__MODULE__, &1))
   end
-
-  defp generate_id, do: "part_" <> Base.encode16(:crypto.strong_rand_bytes(8), case: :lower)
 end

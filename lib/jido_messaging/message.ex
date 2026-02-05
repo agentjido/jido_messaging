@@ -40,11 +40,9 @@ defmodule JidoMessaging.Message do
     now = DateTime.utc_now()
 
     attrs
-    |> Map.put_new(:id, generate_id())
+    |> Map.put_new(:id, Jido.Signal.ID.generate!())
     |> Map.put_new(:inserted_at, now)
     |> Map.put_new(:updated_at, now)
     |> then(&struct!(__MODULE__, &1))
   end
-
-  defp generate_id, do: "msg_" <> Base.encode16(:crypto.strong_rand_bytes(8), case: :lower)
 end

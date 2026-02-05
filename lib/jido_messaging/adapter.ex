@@ -115,4 +115,36 @@ defmodule JidoMessaging.Adapter do
   """
   @callback update_message_external_id(state, message_id, external_id) ::
               {:ok, Message.t()} | {:error, term()}
+
+  # Room binding operations
+
+  @doc """
+  Get a room by its external binding.
+
+  Returns the room if a binding exists, otherwise :not_found.
+  """
+  @callback get_room_by_external_binding(state, channel, instance_id, external_id) ::
+              {:ok, Room.t()} | {:error, :not_found}
+
+  @doc """
+  Create a binding between an internal room and an external platform room.
+  """
+  @callback create_room_binding(
+              state,
+              room_id,
+              channel,
+              instance_id,
+              external_id,
+              attrs :: map()
+            ) :: {:ok, JidoMessaging.RoomBinding.t()} | {:error, term()}
+
+  @doc """
+  List all bindings for a room.
+  """
+  @callback list_room_bindings(state, room_id) :: {:ok, [JidoMessaging.RoomBinding.t()]}
+
+  @doc """
+  Delete a room binding by ID.
+  """
+  @callback delete_room_binding(state, binding_id :: String.t()) :: :ok | {:error, term()}
 end

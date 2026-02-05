@@ -172,6 +172,43 @@ defmodule JidoMessaging do
         JidoMessaging.save_message_struct(__jido_messaging__(:runtime), message)
       end
 
+      @doc "Save a room struct directly (for custom IDs)"
+      def save_room(room) do
+        JidoMessaging.save_room(__jido_messaging__(:runtime), room)
+      end
+
+      @doc "Get room by external binding (without creating)"
+      def get_room_by_external_binding(channel, instance_id, external_id) do
+        JidoMessaging.get_room_by_external_binding(
+          __jido_messaging__(:runtime),
+          channel,
+          instance_id,
+          external_id
+        )
+      end
+
+      @doc "Create a binding between an internal room and an external platform"
+      def create_room_binding(room_id, channel, instance_id, external_id, attrs \\ %{}) do
+        JidoMessaging.create_room_binding(
+          __jido_messaging__(:runtime),
+          room_id,
+          channel,
+          instance_id,
+          external_id,
+          attrs
+        )
+      end
+
+      @doc "List all bindings for a room"
+      def list_room_bindings(room_id) do
+        JidoMessaging.list_room_bindings(__jido_messaging__(:runtime), room_id)
+      end
+
+      @doc "Delete a room binding"
+      def delete_room_binding(binding_id) do
+        JidoMessaging.delete_room_binding(__jido_messaging__(:runtime), binding_id)
+      end
+
       # Room Server functions
 
       @doc "Start a room server for the given room"
@@ -317,6 +354,12 @@ defmodule JidoMessaging do
     adapter.get_room(adapter_state, room_id)
   end
 
+  @doc "Save a room struct directly (for custom IDs)"
+  def save_room(runtime, %Room{} = room) do
+    {adapter, adapter_state} = Runtime.get_adapter(runtime)
+    adapter.save_room(adapter_state, room)
+  end
+
   @doc "List rooms"
   def list_rooms(runtime, opts \\ []) do
     {adapter, adapter_state} = Runtime.get_adapter(runtime)
@@ -402,5 +445,29 @@ defmodule JidoMessaging do
   def save_message_struct(runtime, %Message{} = message) do
     {adapter, adapter_state} = Runtime.get_adapter(runtime)
     adapter.save_message(adapter_state, message)
+  end
+
+  @doc "Get room by external binding (without creating)"
+  def get_room_by_external_binding(runtime, channel, instance_id, external_id) do
+    {adapter, adapter_state} = Runtime.get_adapter(runtime)
+    adapter.get_room_by_external_binding(adapter_state, channel, instance_id, external_id)
+  end
+
+  @doc "Create a binding between an internal room and an external platform"
+  def create_room_binding(runtime, room_id, channel, instance_id, external_id, attrs) do
+    {adapter, adapter_state} = Runtime.get_adapter(runtime)
+    adapter.create_room_binding(adapter_state, room_id, channel, instance_id, external_id, attrs)
+  end
+
+  @doc "List all bindings for a room"
+  def list_room_bindings(runtime, room_id) do
+    {adapter, adapter_state} = Runtime.get_adapter(runtime)
+    adapter.list_room_bindings(adapter_state, room_id)
+  end
+
+  @doc "Delete a room binding"
+  def delete_room_binding(runtime, binding_id) do
+    {adapter, adapter_state} = Runtime.get_adapter(runtime)
+    adapter.delete_room_binding(adapter_state, binding_id)
   end
 end

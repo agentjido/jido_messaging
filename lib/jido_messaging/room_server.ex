@@ -206,8 +206,15 @@ defmodule JidoMessaging.RoomServer do
     messages = [message | state.messages] |> Enum.take(state.message_limit)
     new_state = %{state | messages: messages}
 
-    notify_agents(state.instance_module, state.room.id, message)
-    broadcast_event(state.instance_module, state.room.id, {:message_added, message})
+    # Emit canonical room event signal (for Bridge, Agents, etc.)
+    emit_signal(:message_added, state, %{
+      room_id: state.room.id,
+      message: message,
+      sender_id: message.sender_id
+    })
+
+    # Phase 6: PubSub removed from critical path - use Signal Bus subscription instead
+    # broadcast_event(state.instance_module, state.room.id, {:message_added, message})
 
     {:reply, :ok, new_state, state.timeout_ms}
   end
@@ -216,7 +223,15 @@ defmodule JidoMessaging.RoomServer do
   def handle_call({:add_participant, participant}, _from, state) do
     participants = Map.put(state.participants, participant.id, participant)
     new_state = %{state | participants: participants}
-    broadcast_event(state.instance_module, state.room.id, {:participant_joined, participant})
+
+    emit_signal(:participant_joined, state, %{
+      room_id: state.room.id,
+      participant: participant
+    })
+
+    # Phase 6: PubSub removed - use Signal Bus subscription instead
+    # broadcast_event(state.instance_module, state.room.id, {:participant_joined, participant})
+
     {:reply, :ok, new_state, state.timeout_ms}
   end
 
@@ -224,7 +239,15 @@ defmodule JidoMessaging.RoomServer do
   def handle_call({:remove_participant, participant_id}, _from, state) do
     participants = Map.delete(state.participants, participant_id)
     new_state = %{state | participants: participants}
-    broadcast_event(state.instance_module, state.room.id, {:participant_left, participant_id})
+
+    emit_signal(:participant_left, state, %{
+      room_id: state.room.id,
+      participant_id: participant_id
+    })
+
+    # Phase 6: PubSub removed - use Signal Bus subscription instead
+    # broadcast_event(state.instance_module, state.room.id, {:participant_left, participant_id})
+
     {:reply, :ok, new_state, state.timeout_ms}
   end
 
@@ -521,7 +544,12 @@ defmodule JidoMessaging.RoomServer do
       messages = [reply_with_thread | state.messages] |> Enum.take(state.message_limit)
       new_state = %{state | messages: messages}
 
-      notify_agents(state.instance_module, state.room.id, reply_with_thread)
+      # Emit message_added so agents can see thread replies too
+      emit_signal(:message_added, state, %{
+        room_id: state.room.id,
+        message: reply_with_thread,
+        sender_id: reply_with_thread.sender_id
+      })
 
       broadcast_event(
         state.instance_module,
@@ -587,15 +615,6 @@ defmodule JidoMessaging.RoomServer do
   end
 
   # Private functions
-
-  defp notify_agents(instance_module, room_id, message) do
-    alias JidoMessaging.{AgentRunner, AgentSupervisor}
-
-    AgentSupervisor.list_agents(instance_module, room_id)
-    |> Enum.each(fn {_agent_id, pid} ->
-      AgentRunner.process_message(pid, message)
-    end)
-  end
 
   defp broadcast_event(instance_module, room_id, event) do
     JidoMessaging.PubSub.broadcast(instance_module, room_id, event)

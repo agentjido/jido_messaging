@@ -30,10 +30,8 @@ defmodule JidoMessaging.Room do
   @doc "Creates a new room with generated ID and timestamp"
   def new(attrs) when is_map(attrs) do
     attrs
-    |> Map.put_new(:id, generate_id())
+    |> Map.put_new(:id, Jido.Signal.ID.generate!())
     |> Map.put_new(:inserted_at, DateTime.utc_now())
     |> then(&struct!(__MODULE__, &1))
   end
-
-  defp generate_id, do: "room_" <> Base.encode16(:crypto.strong_rand_bytes(8), case: :lower)
 end

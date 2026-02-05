@@ -18,6 +18,8 @@ defmodule JidoMessaging.Adapters.ETSTest do
       assert is_reference(state.messages)
       assert is_reference(state.room_messages)
       assert is_reference(state.room_bindings)
+      assert is_reference(state.room_bindings_by_room)
+      assert is_reference(state.room_bindings_by_id)
       assert is_reference(state.participant_bindings)
     end
   end
@@ -219,6 +221,100 @@ defmodule JidoMessaging.Adapters.ETSTest do
         )
 
       assert p1.id == p2.id
+    end
+  end
+
+  describe "room binding CRUD operations" do
+    test "get_room_by_external_binding/4 returns :not_found when no binding exists", %{
+      state: state
+    } do
+      assert {:error, :not_found} =
+               ETS.get_room_by_external_binding(state, :telegram, "bot_1", "chat_123")
+    end
+
+    test "get_room_by_external_binding/4 finds room after binding created", %{state: state} do
+      room = Room.new(%{type: :group, name: "Test"})
+      {:ok, _} = ETS.save_room(state, room)
+
+      {:ok, _binding} =
+        ETS.create_room_binding(state, room.id, :telegram, "bot_1", "chat_123", %{})
+
+      {:ok, found_room} = ETS.get_room_by_external_binding(state, :telegram, "bot_1", "chat_123")
+      assert found_room.id == room.id
+    end
+
+    test "create_room_binding/6 creates a RoomBinding struct", %{state: state} do
+      room = Room.new(%{type: :group})
+      {:ok, _} = ETS.save_room(state, room)
+
+      {:ok, binding} =
+        ETS.create_room_binding(state, room.id, :discord, "guild_1", "channel_456", %{
+          direction: :both
+        })
+
+      assert binding.room_id == room.id
+      assert binding.channel == :discord
+      assert binding.instance_id == "guild_1"
+      assert binding.external_room_id == "channel_456"
+      assert binding.direction == :both
+      assert String.starts_with?(binding.id, "bind_")
+    end
+
+    test "list_room_bindings/2 returns all bindings for a room", %{state: state} do
+      room = Room.new(%{type: :group})
+      {:ok, _} = ETS.save_room(state, room)
+
+      {:ok, _} = ETS.create_room_binding(state, room.id, :telegram, "bot_1", "chat_1", %{})
+      {:ok, _} = ETS.create_room_binding(state, room.id, :discord, "guild_1", "channel_1", %{})
+
+      {:ok, bindings} = ETS.list_room_bindings(state, room.id)
+      assert length(bindings) == 2
+
+      channels = Enum.map(bindings, & &1.channel) |> Enum.sort()
+      assert channels == [:discord, :telegram]
+    end
+
+    test "list_room_bindings/2 returns empty list when no bindings", %{state: state} do
+      room = Room.new(%{type: :direct})
+      {:ok, _} = ETS.save_room(state, room)
+
+      {:ok, bindings} = ETS.list_room_bindings(state, room.id)
+      assert bindings == []
+    end
+
+    test "delete_room_binding/2 removes binding", %{state: state} do
+      room = Room.new(%{type: :group})
+      {:ok, _} = ETS.save_room(state, room)
+
+      {:ok, binding} =
+        ETS.create_room_binding(state, room.id, :telegram, "bot_1", "chat_123", %{})
+
+      assert :ok = ETS.delete_room_binding(state, binding.id)
+
+      {:ok, bindings} = ETS.list_room_bindings(state, room.id)
+      assert bindings == []
+
+      assert {:error, :not_found} =
+               ETS.get_room_by_external_binding(state, :telegram, "bot_1", "chat_123")
+    end
+
+    test "delete_room_binding/2 returns error for non-existent binding", %{state: state} do
+      assert {:error, :not_found} = ETS.delete_room_binding(state, "bind_nonexistent")
+    end
+
+    test "one room can have multiple external bindings", %{state: state} do
+      room = Room.new(%{type: :group, name: "Shared Room"})
+      {:ok, _} = ETS.save_room(state, room)
+
+      {:ok, _} = ETS.create_room_binding(state, room.id, :telegram, "bot_1", "tg_chat", %{})
+      {:ok, _} = ETS.create_room_binding(state, room.id, :discord, "guild_1", "dc_channel", %{})
+
+      {:ok, tg_room} = ETS.get_room_by_external_binding(state, :telegram, "bot_1", "tg_chat")
+      {:ok, dc_room} = ETS.get_room_by_external_binding(state, :discord, "guild_1", "dc_channel")
+
+      assert tg_room.id == room.id
+      assert dc_room.id == room.id
+      assert tg_room.id == dc_room.id
     end
   end
 end

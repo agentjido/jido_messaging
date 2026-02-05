@@ -33,3 +33,8 @@ erl_crash.dump
 
 # OS
 .DS_Store
+
+# Environment files (secrets)
+.env
+.env.local
+*.secret.exs

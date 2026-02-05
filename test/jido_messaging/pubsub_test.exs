@@ -71,7 +71,12 @@ defmodule JidoMessaging.PubSubTest do
   end
 
   describe "RoomServer broadcasts" do
+    # Phase 6: These events now use Signal Bus instead of PubSub
+    # See room_server_signals_test.exs for signal-based tests
+
+    @tag :skip
     @tag :skip_unless_pubsub
+    @tag :phase6_deprecated
     test "broadcasts message_added event when message is added" do
       if PubSub.pubsub_available?() do
         room = Room.new(%{type: :direct, name: "Test Room"})
@@ -94,7 +99,9 @@ defmodule JidoMessaging.PubSubTest do
       end
     end
 
+    @tag :skip
     @tag :skip_unless_pubsub
+    @tag :phase6_deprecated
     test "broadcasts participant_joined event when participant is added" do
       if PubSub.pubsub_available?() do
         room = Room.new(%{type: :direct, name: "Test Room"})
@@ -110,7 +117,9 @@ defmodule JidoMessaging.PubSubTest do
       end
     end
 
+    @tag :skip
     @tag :skip_unless_pubsub
+    @tag :phase6_deprecated
     test "broadcasts participant_left event when participant is removed" do
       if PubSub.pubsub_available?() do
         room = Room.new(%{type: :direct, name: "Test Room"})

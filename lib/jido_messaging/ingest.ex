@@ -29,7 +29,8 @@ defmodule JidoMessaging.Ingest do
           participant: JidoMessaging.Participant.t(),
           channel: module(),
           instance_id: String.t(),
-          external_room_id: term()
+          external_room_id: term(),
+          instance_module: module()
         }
 
   @doc """
@@ -86,7 +87,8 @@ defmodule JidoMessaging.Ingest do
         participant: participant,
         channel: channel_module,
         instance_id: instance_id,
-        external_room_id: external_room_id
+        external_room_id: external_room_id,
+        instance_module: messaging_module
       }
 
       add_to_room_server(messaging_module, room, message, participant)
@@ -185,7 +187,9 @@ defmodule JidoMessaging.Ingest do
       external_message_id: incoming[:external_message_id],
       timestamp: incoming[:timestamp],
       channel: channel_type,
-      instance_id: instance_id
+      instance_id: instance_id,
+      username: incoming[:username],
+      display_name: incoming[:display_name]
     }
     |> Enum.reject(fn {_, v} -> is_nil(v) end)
     |> Map.new()

@@ -3,10 +3,10 @@ defmodule JidoMessaging.AgentRunner do
   GenServer that manages an agent's participation in a specific room.
 
   Each agent in a room gets its own AgentRunner process that:
-  - Listens for messages in the room
+  - Subscribes to Signal Bus for `message_added` events
   - Determines whether to respond based on trigger configuration
   - Calls the agent's handler function to generate responses
-  - Sends responses via the Deliver module
+  - Emits agent lifecycle signals (triggered, started, completed, failed)
 
   ## Agent Configuration
 
@@ -35,7 +35,8 @@ defmodule JidoMessaging.AgentRunner do
   use GenServer
   require Logger
 
-  alias JidoMessaging.{Participant, RoomServer}
+  alias JidoMessaging.{Participant, RoomServer, Signal}
+  alias JidoMessaging.Supervisor, as: MessagingSupervisor
 
   @schema Zoi.struct(
             __MODULE__,
@@ -43,7 +44,8 @@ defmodule JidoMessaging.AgentRunner do
               room_id: Zoi.string(),
               agent_id: Zoi.string(),
               agent_config: Zoi.map(),
-              instance_module: Zoi.any()
+              instance_module: Zoi.any(),
+              subscribed: Zoi.boolean() |> Zoi.default(false)
             },
             coerce: false
           )
@@ -133,10 +135,14 @@ defmodule JidoMessaging.AgentRunner do
         room_id: room_id,
         agent_id: agent_id,
         agent_config: agent_config,
-        instance_module: instance_module
+        instance_module: instance_module,
+        subscribed: false
       })
 
     register_as_participant(state)
+
+    # Schedule subscription to Signal Bus
+    send(self(), :subscribe)
 
     Logger.debug("[JidoMessaging.AgentRunner] Agent #{agent_id} started in room #{room_id}")
 
@@ -149,7 +155,36 @@ defmodule JidoMessaging.AgentRunner do
   end
 
   @impl true
+  def handle_info(:subscribe, state) do
+    bus_name = MessagingSupervisor.signal_bus_name(state.instance_module)
+
+    case Jido.Signal.Bus.subscribe(bus_name, "jido.messaging.room.message_added") do
+      {:ok, _subscription_id} ->
+        Logger.debug("[AgentRunner] Agent #{state.agent_id} subscribed to Signal Bus")
+        {:noreply, %{state | subscribed: true}}
+
+      {:error, reason} ->
+        Logger.debug("[AgentRunner] Agent #{state.agent_id} failed to subscribe: #{inspect(reason)}, retrying")
+        Process.send_after(self(), :subscribe, 100)
+        {:noreply, state}
+    end
+  end
+
+  @impl true
+  def handle_info({:signal, signal}, state) do
+    handle_signal(signal, state)
+    {:noreply, state}
+  end
+
+  def handle_info(_msg, state) do
+    {:noreply, state}
+  end
+
+  @doc deprecated: "Use Signal Bus subscription instead"
+  @impl true
   def handle_cast({:process_message, message}, state) do
+    Logger.debug("[AgentRunner] Received deprecated direct process_message cast")
+
     if should_trigger?(message, state) and not from_self?(message, state) do
       handle_triggered_message(message, state)
     end
@@ -165,6 +200,20 @@ defmodule JidoMessaging.AgentRunner do
   end
 
   # Private functions
+
+  defp handle_signal(%{type: "jido.messaging.room.message_added"} = signal, state) do
+    room_id = signal.data.room_id
+    message = signal.data.message
+
+    # Only process messages for this agent's room
+    if room_id == state.room_id do
+      if should_trigger?(message, state) and not from_self?(message, state) do
+        handle_triggered_message(message, state)
+      end
+    end
+  end
+
+  defp handle_signal(_signal, _state), do: :ok
 
   defp should_trigger?(message, state) do
     case state.agent_config.trigger do
@@ -187,6 +236,12 @@ defmodule JidoMessaging.AgentRunner do
   end
 
   defp handle_triggered_message(message, state) do
+    # Emit triggered signal
+    Signal.emit_agent(:triggered, state.instance_module, state.room_id, state.agent_id, %{
+      message_id: message.id,
+      trigger: state.agent_config.trigger
+    })
+
     context = %{
       room_id: state.room_id,
       agent_id: state.agent_id,
@@ -194,15 +249,41 @@ defmodule JidoMessaging.AgentRunner do
       instance_module: state.instance_module
     }
 
+    # Emit started signal
+    Signal.emit_agent(:started, state.instance_module, state.room_id, state.agent_id, %{
+      message_id: message.id
+    })
+
     case state.agent_config.handler.(message, context) do
       {:reply, text} ->
-        send_reply(text, message, state)
+        case send_reply(text, message, state) do
+          {:ok, reply_message} ->
+            Signal.emit_agent(:completed, state.instance_module, state.room_id, state.agent_id, %{
+              message_id: message.id,
+              response: :reply,
+              reply_message_id: reply_message.id
+            })
+
+          {:error, reason} ->
+            Signal.emit_agent(:failed, state.instance_module, state.room_id, state.agent_id, %{
+              message_id: message.id,
+              error: inspect(reason)
+            })
+        end
 
       :noreply ->
-        :ok
+        Signal.emit_agent(:completed, state.instance_module, state.room_id, state.agent_id, %{
+          message_id: message.id,
+          response: :noreply
+        })
 
       {:error, reason} ->
         Logger.warning("[JidoMessaging.AgentRunner] Handler error for agent #{state.agent_id}: #{inspect(reason)}")
+
+        Signal.emit_agent(:failed, state.instance_module, state.room_id, state.agent_id, %{
+          message_id: message.id,
+          error: inspect(reason)
+        })
     end
   end
 
@@ -216,7 +297,12 @@ defmodule JidoMessaging.AgentRunner do
       content: [%Text{text: text}],
       reply_to_id: original_message.id,
       status: :sent,
-      metadata: %{agent_name: state.agent_config.name}
+      metadata: %{
+        channel: :agent,
+        username: state.agent_config.name,
+        display_name: state.agent_config.name,
+        agent_name: state.agent_config.name
+      }
     }
 
     case state.instance_module.save_message(message_attrs) do
