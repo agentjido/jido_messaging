@@ -347,11 +347,15 @@ defmodule JidoMessaging.Signal do
           source: source,
           subject: subject
         }
-        |> maybe_put_extension(:correlation_id, opts[:correlation_id])
+        |> maybe_put_correlationid(opts[:correlation_id])
         |> maybe_put_extension(:causation_id, opts[:causation_id])
 
       case Jido.Signal.new(type, data, signal_opts) do
         {:ok, signal} ->
+          # Log correlation info for debugging
+          corr_id = get_in(signal.extensions, ["correlationid", :id])
+          Logger.debug("[signal] type=#{type} correlation_id=#{corr_id || "none"}")
+
           case Jido.Signal.Bus.publish(bus_name, [signal]) do
             {:ok, _} ->
               :ok
@@ -375,6 +379,12 @@ defmodule JidoMessaging.Signal do
 
   defp maybe_put_extension(opts, _key, nil), do: opts
   defp maybe_put_extension(opts, key, value), do: Map.put(opts, key, value)
+
+  defp maybe_put_correlationid(opts, nil), do: opts
+
+  defp maybe_put_correlationid(opts, correlation_id) do
+    Map.put(opts, :correlationid, %{id: correlation_id})
+  end
 
   defp message_to_data(message, metadata) do
     %{

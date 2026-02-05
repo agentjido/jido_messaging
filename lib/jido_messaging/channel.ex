@@ -39,9 +39,15 @@ defmodule JidoMessaging.Channel do
           optional(:username) => String.t() | nil,
           optional(:display_name) => String.t() | nil,
           optional(:external_message_id) => external_message_id(),
+          optional(:external_reply_to_id) => external_message_id() | nil,
+          optional(:external_thread_id) => String.t() | nil,
           optional(:timestamp) => integer() | nil,
           optional(:chat_type) => atom(),
-          optional(:chat_title) => String.t() | nil
+          optional(:chat_title) => String.t() | nil,
+          optional(:was_mentioned) => boolean(),
+          optional(:mentions) => [map()],
+          optional(:channel_meta) => map(),
+          optional(:raw) => map()
         }
 
   @type send_result :: {:ok, map()} | {:error, term()}

@@ -23,6 +23,24 @@ defmodule JidoMessaging.StructsTest do
       assert %DateTime{} = message.updated_at
     end
 
+    test "new/1 creates message with threading fields" do
+      message =
+        Message.new(%{
+          room_id: "room_1",
+          sender_id: "user_1",
+          role: :user,
+          reply_to_id: "msg_prev",
+          external_reply_to_id: "ext_prev",
+          thread_root_id: "thread_root_123",
+          external_thread_id: "ext_thread_456"
+        })
+
+      assert message.reply_to_id == "msg_prev"
+      assert message.external_reply_to_id == "ext_prev"
+      assert message.thread_root_id == "thread_root_123"
+      assert message.external_thread_id == "ext_thread_456"
+    end
+
     test "schema/0 returns Zoi schema" do
       schema = Message.schema()
       assert is_map(schema)

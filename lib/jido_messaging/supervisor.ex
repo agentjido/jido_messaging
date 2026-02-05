@@ -14,6 +14,9 @@ defmodule JidoMessaging.Supervisor do
 
   @impl true
   def init(opts) do
+    # Ensure JidoMessaging signal extensions are registered
+    JidoMessaging.Signal.Ext.CorrelationId.ensure_registered()
+
     instance_module = Keyword.fetch!(opts, :instance_module)
     adapter = Keyword.fetch!(opts, :adapter)
     adapter_opts = Keyword.get(opts, :adapter_opts, [])
