@@ -42,6 +42,8 @@ defmodule JidoMessaging.Supervisor do
         onboarding_registry_name = Module.concat(instance_module, Registry.Onboarding)
         onboarding_supervisor_name = Module.concat(instance_module, OnboardingSupervisor)
         session_manager_supervisor_name = Module.concat(instance_module, SessionManagerSupervisor)
+        dead_letter_name = Module.concat(instance_module, DeadLetter)
+        dead_letter_replay_supervisor_name = Module.concat(instance_module, DeadLetterReplaySupervisor)
         outbound_gateway_supervisor_name = Module.concat(instance_module, OutboundGatewaySupervisor)
         deduper_name = Module.concat(instance_module, Deduper)
         signal_bus_name = Module.concat(instance_module, SignalBus)
@@ -57,6 +59,9 @@ defmodule JidoMessaging.Supervisor do
           {JidoMessaging.Onboarding.Supervisor, name: onboarding_supervisor_name, instance_module: instance_module},
           {JidoMessaging.SessionManager.Supervisor,
            name: session_manager_supervisor_name, instance_module: instance_module},
+          {JidoMessaging.DeadLetter, name: dead_letter_name, instance_module: instance_module},
+          {JidoMessaging.DeadLetter.ReplaySupervisor,
+           name: dead_letter_replay_supervisor_name, instance_module: instance_module},
           {JidoMessaging.OutboundGateway.Supervisor,
            name: outbound_gateway_supervisor_name, instance_module: instance_module},
           {JidoMessaging.InstanceSupervisor, name: instance_supervisor_name, instance_module: instance_module},

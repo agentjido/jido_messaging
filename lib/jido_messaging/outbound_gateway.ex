@@ -19,8 +19,18 @@ defmodule JidoMessaging.OutboundGateway do
   @default_base_backoff_ms 25
   @default_max_backoff_ms 500
   @default_sent_cache_size 1000
+  @default_pressure_policy [
+    warn_ratio: 0.70,
+    degraded_ratio: 0.85,
+    shed_ratio: 0.95,
+    degraded_action: :throttle,
+    degraded_throttle_ms: 5,
+    shed_action: :drop_low,
+    shed_drop_priorities: [:low]
+  ]
 
   @type operation :: :send | :edit | :send_media | :edit_media
+  @type priority :: :critical | :high | :normal | :low
   @type error_category :: :retryable | :terminal | :fatal
 
   @type request :: %{
@@ -37,7 +47,8 @@ defmodule JidoMessaging.OutboundGateway do
           optional(:idempotency_key) => String.t() | nil,
           optional(:max_attempts) => pos_integer() | nil,
           optional(:base_backoff_ms) => pos_integer() | nil,
-          optional(:max_backoff_ms) => pos_integer() | nil
+          optional(:max_backoff_ms) => pos_integer() | nil,
+          optional(:priority) => priority()
         }
 
   @type success_response :: %{
@@ -150,7 +161,8 @@ defmodule JidoMessaging.OutboundGateway do
       max_attempts: @default_max_attempts,
       base_backoff_ms: @default_base_backoff_ms,
       max_backoff_ms: @default_max_backoff_ms,
-      sent_cache_size: @default_sent_cache_size
+      sent_cache_size: @default_sent_cache_size,
+      pressure_policy: @default_pressure_policy
     ]
 
     global_opts = Application.get_env(:jido_messaging, :outbound_gateway, [])
@@ -168,6 +180,8 @@ defmodule JidoMessaging.OutboundGateway do
   @spec classify_error(term()) :: error_category()
   def classify_error(:queue_full), do: :terminal
   def classify_error({:queue_full, _}), do: :terminal
+  def classify_error(:load_shed), do: :terminal
+  def classify_error({:load_shed, _}), do: :terminal
   def classify_error(:send_failed), do: :terminal
   def classify_error({:send_failed, _}), do: :terminal
   def classify_error(:missing_external_message_id), do: :terminal
@@ -251,7 +265,8 @@ defmodule JidoMessaging.OutboundGateway do
       idempotency_key: keyword_or_map_get(opts, :idempotency_key),
       max_attempts: keyword_or_map_get(opts, :max_attempts),
       base_backoff_ms: keyword_or_map_get(opts, :base_backoff_ms),
-      max_backoff_ms: keyword_or_map_get(opts, :max_backoff_ms)
+      max_backoff_ms: keyword_or_map_get(opts, :max_backoff_ms),
+      priority: normalize_priority(keyword_or_map_get(opts, :priority))
     }
   end
 
@@ -275,6 +290,7 @@ defmodule JidoMessaging.OutboundGateway do
     |> Keyword.update(:sent_cache_size, @default_sent_cache_size, fn value ->
       sanitize_positive_integer(value, @default_sent_cache_size)
     end)
+    |> Keyword.update(:pressure_policy, @default_pressure_policy, &sanitize_pressure_policy/1)
   end
 
   defp context_instance_id(context) do
@@ -377,4 +393,73 @@ defmodule JidoMessaging.OutboundGateway do
        do: value
 
   defp sanitize_positive_integer(_value, default), do: default
+
+  defp sanitize_pressure_policy(value) do
+    policy =
+      cond do
+        is_list(value) -> value
+        is_map(value) -> Map.to_list(value)
+        true -> @default_pressure_policy
+      end
+
+    warn_ratio = sanitize_ratio(policy[:warn_ratio], @default_pressure_policy[:warn_ratio])
+    degraded_ratio = sanitize_ratio(policy[:degraded_ratio], @default_pressure_policy[:degraded_ratio])
+    shed_ratio = sanitize_ratio(policy[:shed_ratio], @default_pressure_policy[:shed_ratio])
+
+    {warn_ratio, degraded_ratio, shed_ratio} =
+      if warn_ratio < degraded_ratio and degraded_ratio < shed_ratio do
+        {warn_ratio, degraded_ratio, shed_ratio}
+      else
+        {@default_pressure_policy[:warn_ratio], @default_pressure_policy[:degraded_ratio],
+         @default_pressure_policy[:shed_ratio]}
+      end
+
+    degraded_action =
+      case policy[:degraded_action] do
+        :throttle -> :throttle
+        :none -> :none
+        _ -> @default_pressure_policy[:degraded_action]
+      end
+
+    shed_action =
+      case policy[:shed_action] do
+        :drop_low -> :drop_low
+        :none -> :none
+        _ -> @default_pressure_policy[:shed_action]
+      end
+
+    shed_drop_priorities =
+      case policy[:shed_drop_priorities] do
+        priorities when is_list(priorities) ->
+          priorities
+          |> Enum.filter(&(&1 in [:critical, :high, :normal, :low]))
+          |> Enum.uniq()
+          |> case do
+            [] -> @default_pressure_policy[:shed_drop_priorities]
+            filtered -> filtered
+          end
+
+        _ ->
+          @default_pressure_policy[:shed_drop_priorities]
+      end
+
+    [
+      warn_ratio: warn_ratio,
+      degraded_ratio: degraded_ratio,
+      shed_ratio: shed_ratio,
+      degraded_action: degraded_action,
+      degraded_throttle_ms: sanitize_non_negative_integer(policy[:degraded_throttle_ms], 0),
+      shed_action: shed_action,
+      shed_drop_priorities: shed_drop_priorities
+    ]
+  end
+
+  defp sanitize_ratio(value, _default) when is_float(value) and value > 0.0 and value < 1.0, do: value
+  defp sanitize_ratio(_value, default), do: default
+
+  defp sanitize_non_negative_integer(value, _default) when is_integer(value) and value >= 0, do: value
+  defp sanitize_non_negative_integer(_value, default), do: default
+
+  defp normalize_priority(value) when value in [:critical, :high, :normal, :low], do: value
+  defp normalize_priority(_value), do: :normal
 end

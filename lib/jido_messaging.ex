@@ -80,6 +80,8 @@ defmodule JidoMessaging do
           :onboarding_registry -> Module.concat(__MODULE__, Registry.Onboarding)
           :onboarding_supervisor -> Module.concat(__MODULE__, OnboardingSupervisor)
           :session_manager_supervisor -> Module.concat(__MODULE__, SessionManagerSupervisor)
+          :dead_letter -> Module.concat(__MODULE__, DeadLetter)
+          :dead_letter_replay_supervisor -> Module.concat(__MODULE__, DeadLetterReplaySupervisor)
           :deduper -> Module.concat(__MODULE__, Deduper)
           :adapter -> @adapter
           :adapter_opts -> @adapter_opts
@@ -387,6 +389,33 @@ defmodule JidoMessaging do
       @doc "Clear all dedupe keys"
       def clear_dedupe do
         JidoMessaging.Deduper.clear(__MODULE__)
+      end
+
+      # Dead-letter functions
+
+      @doc "List dead-letter records."
+      def list_dead_letters(opts \\ []) do
+        JidoMessaging.DeadLetter.list(__MODULE__, opts)
+      end
+
+      @doc "Get a dead-letter record by ID."
+      def get_dead_letter(dead_letter_id) do
+        JidoMessaging.DeadLetter.get(__MODULE__, dead_letter_id)
+      end
+
+      @doc "Replay a dead-letter record by ID."
+      def replay_dead_letter(dead_letter_id, opts \\ []) do
+        JidoMessaging.DeadLetter.replay(__MODULE__, dead_letter_id, opts)
+      end
+
+      @doc "Archive a dead-letter record by ID."
+      def archive_dead_letter(dead_letter_id) do
+        JidoMessaging.DeadLetter.archive(__MODULE__, dead_letter_id)
+      end
+
+      @doc "Purge dead-letter records by filter."
+      def purge_dead_letters(opts \\ []) do
+        JidoMessaging.DeadLetter.purge(__MODULE__, opts)
       end
 
       # PubSub functions

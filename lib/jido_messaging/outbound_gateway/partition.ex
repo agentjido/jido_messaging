@@ -5,6 +5,7 @@ defmodule JidoMessaging.OutboundGateway.Partition do
   require Logger
 
   alias JidoMessaging.Channel
+  alias JidoMessaging.DeadLetter
   alias JidoMessaging.MediaPolicy
   alias JidoMessaging.OutboundGateway
   alias JidoMessaging.Security
@@ -21,6 +22,7 @@ defmodule JidoMessaging.OutboundGateway.Partition do
           queue_capacity: pos_integer(),
           processing: boolean(),
           pressure_level: pressure_level(),
+          pressure_policy: keyword(),
           max_attempts: pos_integer(),
           base_backoff_ms: pos_integer(),
           max_backoff_ms: pos_integer(),
@@ -68,6 +70,7 @@ defmodule JidoMessaging.OutboundGateway.Partition do
       queue_capacity: Keyword.fetch!(opts, :queue_capacity),
       processing: false,
       pressure_level: :normal,
+      pressure_policy: Keyword.fetch!(opts, :pressure_policy),
       max_attempts: Keyword.fetch!(opts, :max_attempts),
       base_backoff_ms: Keyword.fetch!(opts, :base_backoff_ms),
       max_backoff_ms: Keyword.fetch!(opts, :max_backoff_ms),
@@ -81,31 +84,43 @@ defmodule JidoMessaging.OutboundGateway.Partition do
 
   @impl true
   def handle_call({:dispatch, request}, from, state) do
-    with :ok <- validate_request(request),
-         false <- queue_full?(state) do
-      job = %{request: request, from: from}
-      new_queue = :queue.in(job, state.queue)
-      new_size = state.queue_size + 1
-      state = %{state | queue: new_queue, queue_size: new_size} |> maybe_emit_pressure_transition(new_size)
+    case validate_request(request) do
+      :ok ->
+        if queue_full?(state) do
+          saturated_state = maybe_emit_pressure_transition(state, state.queue_capacity)
+          error = queue_full_error(request, saturated_state)
 
-      emit_outbound_event(:enqueued, %{queue_depth: new_size}, state, request, %{})
-
-      new_state =
-        if state.processing do
-          state
+          {:reply, {:error, maybe_attach_dead_letter_id(saturated_state, request, error)}, saturated_state}
         else
-          send(self(), :process_next)
-          %{state | processing: true}
+          case maybe_apply_pressure_policy(state, request) do
+            {:ok, next_state} ->
+              job = %{request: request, from: from}
+              new_queue = :queue.in(job, next_state.queue)
+              new_size = next_state.queue_size + 1
+
+              queued_state =
+                %{next_state | queue: new_queue, queue_size: new_size} |> maybe_emit_pressure_transition(new_size)
+
+              emit_outbound_event(:enqueued, %{queue_depth: new_size}, queued_state, request, %{})
+
+              final_state =
+                if queued_state.processing do
+                  queued_state
+                else
+                  send(self(), :process_next)
+                  %{queued_state | processing: true}
+                end
+
+              {:noreply, final_state}
+
+            {:error, policy_error, policy_state} ->
+              {:reply, {:error, maybe_attach_dead_letter_id(policy_state, request, policy_error)}, policy_state}
+          end
         end
 
-      {:noreply, new_state}
-    else
       {:error, reason} ->
-        {:reply, {:error, invalid_request_error(request, reason, state)}, state}
-
-      true ->
-        saturated_state = maybe_emit_pressure_transition(state, state.queue_capacity)
-        {:reply, {:error, queue_full_error(request, saturated_state)}, saturated_state}
+        error = invalid_request_error(request, reason, state)
+        {:reply, {:error, maybe_attach_dead_letter_id(state, request, error)}, state}
     end
   end
 
@@ -228,7 +243,7 @@ defmodule JidoMessaging.OutboundGateway.Partition do
             %{reason: reason, category: category, disposition: disposition}
           )
 
-          {{:error, error}, state}
+          {{:error, maybe_attach_dead_letter_id(state, request, error)}, state}
         end
     end
   end
@@ -478,9 +493,30 @@ defmodule JidoMessaging.OutboundGateway.Partition do
 
   defp queue_full?(state), do: state.queue_size >= state.queue_capacity
 
+  defp maybe_apply_pressure_policy(state, request) do
+    projected_queue_size = state.queue_size + 1
+    ratio = projected_queue_size / max(state.queue_capacity, 1)
+    projected_level = pressure_level_for_ratio(ratio, state.pressure_policy)
+    priority = request[:priority] || :normal
+
+    case pressure_action(projected_level, priority, state.pressure_policy) do
+      {:throttle, throttle_ms} ->
+        emit_pressure_action(state, request, projected_level, :throttle, throttle_ms, ratio)
+        Process.sleep(throttle_ms)
+        {:ok, state}
+
+      :shed_drop ->
+        emit_pressure_action(state, request, projected_level, :shed_drop, 0, ratio)
+        {:error, load_shed_error(request, state), state}
+
+      :allow ->
+        {:ok, state}
+    end
+  end
+
   defp maybe_emit_pressure_transition(state, queue_size) do
     ratio = queue_size / max(state.queue_capacity, 1)
-    level = pressure_level_for_ratio(ratio)
+    level = pressure_level_for_ratio(ratio, state.pressure_policy)
 
     if level != state.pressure_level do
       :telemetry.execute(
@@ -502,10 +538,62 @@ defmodule JidoMessaging.OutboundGateway.Partition do
     %{state | pressure_level: level}
   end
 
-  defp pressure_level_for_ratio(ratio) when ratio >= 0.95, do: :shed
-  defp pressure_level_for_ratio(ratio) when ratio >= 0.85, do: :degraded
-  defp pressure_level_for_ratio(ratio) when ratio >= 0.70, do: :warn
-  defp pressure_level_for_ratio(_ratio), do: :normal
+  defp pressure_level_for_ratio(ratio, policy) do
+    cond do
+      ratio >= policy[:shed_ratio] -> :shed
+      ratio >= policy[:degraded_ratio] -> :degraded
+      ratio >= policy[:warn_ratio] -> :warn
+      true -> :normal
+    end
+  end
+
+  defp pressure_action(:degraded, _priority, policy) do
+    case policy[:degraded_action] do
+      :throttle ->
+        throttle_ms = max(policy[:degraded_throttle_ms] || 0, 0)
+        if throttle_ms > 0, do: {:throttle, throttle_ms}, else: :allow
+
+      _ ->
+        :allow
+    end
+  end
+
+  defp pressure_action(:shed, priority, policy) do
+    case policy[:shed_action] do
+      :drop_low ->
+        if priority in (policy[:shed_drop_priorities] || []) do
+          :shed_drop
+        else
+          :allow
+        end
+
+      _ ->
+        :allow
+    end
+  end
+
+  defp pressure_action(_level, _priority, _policy), do: :allow
+
+  defp emit_pressure_action(state, request, pressure_level, action, throttle_ms, ratio) do
+    :telemetry.execute(
+      [:jido_messaging, :pressure, :action],
+      %{
+        queue_depth: state.queue_size,
+        queue_capacity: state.queue_capacity,
+        occupancy_ratio: ratio,
+        throttle_ms: throttle_ms
+      },
+      %{
+        component: :outbound_gateway,
+        instance_module: state.instance_module,
+        partition: state.partition,
+        pressure_level: pressure_level,
+        action: action,
+        operation: request[:operation] || :send,
+        priority: request[:priority] || :normal
+      }
+    )
+  end
 
   defp validate_request(request) when is_map(request) do
     cond do
@@ -520,6 +608,9 @@ defmodule JidoMessaging.OutboundGateway.Partition do
 
       not valid_payload?(request[:operation], request[:payload]) ->
         {:error, {:invalid_request, :payload}}
+
+      request[:priority] not in [:critical, :high, :normal, :low] ->
+        {:error, {:invalid_request, :priority}}
 
       request[:operation] in [:edit, :edit_media] and is_nil(request[:external_message_id]) ->
         {:error, :missing_external_message_id}
@@ -576,6 +667,51 @@ defmodule JidoMessaging.OutboundGateway.Partition do
       routing_key: request[:routing_key] || "unknown:unknown",
       retryable: false
     }
+  end
+
+  defp load_shed_error(request, state) do
+    %{
+      type: :outbound_error,
+      category: :terminal,
+      disposition: :terminal,
+      operation: request[:operation] || :send,
+      reason: :load_shed,
+      attempt: 1,
+      max_attempts: state.max_attempts,
+      partition: state.partition,
+      routing_key: request[:routing_key] || "unknown:unknown",
+      retryable: false
+    }
+  end
+
+  defp maybe_attach_dead_letter_id(state, request, error) do
+    if dead_letter_replay_request?(request) do
+      error
+    else
+      diagnostics = %{
+        pressure_level: state.pressure_level,
+        queue_size: state.queue_size,
+        queue_capacity: state.queue_capacity
+      }
+
+      case DeadLetter.capture_outbound_failure(state.instance_module, request, error, diagnostics) do
+        {:ok, record} -> Map.put(error, :dead_letter_id, record.id)
+        _ -> error
+      end
+    end
+  end
+
+  defp dead_letter_replay_request?(request) do
+    case request[:opts] do
+      opts when is_list(opts) ->
+        Keyword.get(opts, :dead_letter_replay, false) == true
+
+      opts when is_map(opts) ->
+        Map.get(opts, :dead_letter_replay, false) == true or Map.get(opts, "dead_letter_replay", false) == true
+
+      _ ->
+        false
+    end
   end
 
   defp emit_classification_event(state, request, metadata) do

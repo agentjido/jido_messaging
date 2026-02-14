@@ -501,3 +501,43 @@ Excluding tags: [:flaky]
 .........................................................................................................................................................................................................................................................*.....................................................................................................................................................................................................................................................................................................................*.........................................................................................***.....................................................
 Finished in 3.9 seconds (0.8s async, 3.1s sync)
 705 tests, 0 failures, 5 skipped
+1) changed files
+- `lib/jido_messaging/dead_letter.ex` (new dead-letter store API: `list/get/replay/archive/purge`, capture/replay state, telemetry, retention cap)
+- `lib/jido_messaging/dead_letter/replay_supervisor.ex` (new partitioned replay worker supervisor)
+- `lib/jido_messaging/dead_letter/replay_worker.ex` (new replay worker routing/execution with idempotency guard behavior)
+- `lib/jido_messaging/supervisor.ex` (wired dead-letter store + replay supervisor into main tree)
+- `lib/jido_messaging.ex` (added messaging-module delegates: `list_dead_letters/1`, `get_dead_letter/1`, `replay_dead_letter/2`, `archive_dead_letter/1`, `purge_dead_letters/1`)
+- `lib/jido_messaging/outbound_gateway.ex` (added pressure-policy config + request priority + `:load_shed` classification)
+- `lib/jido_messaging/outbound_gateway/supervisor.ex` (passes `pressure_policy` into partitions)
+- `lib/jido_messaging/outbound_gateway/partition.ex` (pressure actions: throttle/shed-drop telemetry; terminal failure dead-letter capture with diagnostics; replay-capture skip guard)
+- `test/jido_messaging/resilience_ops_test.exs` (new reliability tests for this story)
+
+2) tests/commands executed
+- `mix compile --warnings-as-errors` (pass)
+- `mix test test/jido_messaging/resilience_ops_test.exs test/jido_messaging/outbound_gateway_test.exs` (pass)
+- `mix precommit` (initial fail on formatting)
+- `mix format lib/jido_messaging/outbound_gateway/partition.ex && mix precommit` (pass; 709 tests, 0 failures)
+
+3) acceptance criteria coverage
+- AC1 terminal failure capture in dead-letter with diagnostics:
+  - Implemented in `OutboundGateway.Partition` via `DeadLetter.capture_outbound_failure/4`.
+  - Verified by `test/jido_messaging/resilience_ops_test.exs` test `"captures terminal outbound failures in dead-letter storage with diagnostics context"`.
+- AC2 idempotent replay + duplicate side-effect guard:
+  - Implemented by replay state gate (`prepare_replay`) and replay idempotency key preservation in `ReplayWorker`.
+  - Verified by test `"replay is idempotent and guarded against duplicate side effects"` (second replay returns already-replayed; send count unchanged).
+- AC3 pressure thresholds trigger throttle/load-shed + telemetry:
+  - Implemented pressure policy actions in partition (`:throttle`, `:shed_drop`) with `[:jido_messaging, :pressure, :action]` telemetry.
+  - Verified by test `"pressure thresholds trigger throttle and load-shed actions with operational telemetry"`.
+- AC4 replay and pressure worker crash isolation/recovery:
+  - Replay workers are under `DeadLetter.ReplaySupervisor` (`:one_for_one`); outbound partitions remain under `OutboundGateway.Supervisor`.
+  - Verified by test `"replay and pressure workers recover after crashes under supervision"`.
+
+4) blockers/assumptions
+- No blockers.
+- Assumption: in this repository’s current architecture, ST-OCM-011 dead-letter capture is implemented at outbound terminal failure points (including load-shed), with replay through outbound gateway; inbound dead-letter capture hooks were not previously present and were not expanded here to avoid crossing into other story scope.
+Running ExUnit with seed: 750398, max_cases: 20
+Excluding tags: [:flaky]
+
+....................................................................................................................................................................................................................................................................*..........................................................................................................................................................................................................................................................................................................*.........................................................................................***.........................................................
+Finished in 4.3 seconds (0.8s async, 3.4s sync)
+709 tests, 0 failures, 5 skipped

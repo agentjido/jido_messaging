@@ -30,7 +30,8 @@ defmodule JidoMessaging.OutboundGateway.Supervisor do
              max_attempts: config[:max_attempts],
              base_backoff_ms: config[:base_backoff_ms],
              max_backoff_ms: config[:max_backoff_ms],
-             sent_cache_size: config[:sent_cache_size]
+             sent_cache_size: config[:sent_cache_size],
+             pressure_policy: config[:pressure_policy]
            ]},
           id: {:outbound_gateway_partition, partition}
         )
