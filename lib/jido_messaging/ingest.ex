@@ -21,12 +21,13 @@ defmodule JidoMessaging.Ingest do
 
   require Logger
 
-  alias JidoMessaging.{Message, Content.Text, MsgContext, Signal, RoomServer, RoomSupervisor}
+  alias JidoMessaging.{Message, Content.Text, MsgContext, Security, Signal, RoomServer, RoomSupervisor}
 
   @type incoming :: JidoMessaging.Channel.incoming_message()
   @type policy_stage :: :gating | :moderation
   @type policy_denial :: {:policy_denied, policy_stage(), atom(), String.t()}
-  @type ingest_error :: policy_denial() | term()
+  @type security_denial :: Security.security_denial()
+  @type ingest_error :: policy_denial() | security_denial() | term()
   @type ingest_opts :: keyword()
 
   @type context :: %{
@@ -69,6 +70,7 @@ defmodule JidoMessaging.Ingest do
     * `:moderation_timeout_ms` - Timeout per moderator check (default: `50`)
     * `:policy_timeout_fallback` - Timeout fallback policy (`:deny` or `:allow_with_flag`)
     * `:policy_error_fallback` - Crash/error fallback policy (`:deny` or `:allow_with_flag`)
+    * `:security` - Runtime overrides for `JidoMessaging.Security` config
   """
   @spec ingest_incoming(module(), module(), String.t(), incoming(), ingest_opts()) ::
           {:ok, Message.t(), context()} | {:ok, :duplicate} | {:error, ingest_error()}
@@ -141,9 +143,14 @@ defmodule JidoMessaging.Ingest do
          incoming,
          opts
        ) do
-    with {:ok, room} <- resolve_room(messaging_module, channel_type, instance_id, incoming),
+    raw_payload = incoming_raw_payload(incoming)
+
+    with {:ok, verify_result} <-
+           Security.verify_sender(messaging_module, channel_module, incoming, raw_payload, opts),
+         {:ok, room} <- resolve_room(messaging_module, channel_type, instance_id, incoming),
          {:ok, participant} <- resolve_participant(messaging_module, channel_type, incoming),
          message <- build_message(messaging_module, room, participant, incoming, channel_type, instance_id),
+         message <- put_verify_metadata(message, verify_result),
          msg_context <- build_msg_context(channel_module, instance_id, incoming, room, participant),
          {:ok, policy_message} <- apply_policy_pipeline(message, msg_context, opts),
          {:ok, persisted_message} <- messaging_module.save_message_struct(policy_message) do
@@ -251,6 +258,27 @@ defmodule JidoMessaging.Ingest do
   end
 
   defp build_content(_), do: []
+
+  defp incoming_raw_payload(incoming) do
+    case Map.get(incoming, :raw) do
+      raw_payload when is_map(raw_payload) -> raw_payload
+      _ -> %{}
+    end
+  end
+
+  defp put_verify_metadata(%Message{} = message, %{decision: decision, metadata: metadata}) do
+    security_metadata =
+      Map.get(message.metadata, :security, %{})
+      |> Map.put(
+        :verify,
+        %{
+          decision: decision,
+          metadata: metadata
+        }
+      )
+
+    %{message | metadata: Map.put(message.metadata, :security, security_metadata)}
+  end
 
   defp build_metadata(incoming, channel_type, instance_id) do
     %{

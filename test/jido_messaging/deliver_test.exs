@@ -36,6 +36,19 @@ defmodule JidoMessaging.DeliverTest do
     end
   end
 
+  defmodule SlowSecurityAdapter do
+    @behaviour JidoMessaging.Security
+
+    @impl true
+    def verify_sender(_channel_module, _incoming_message, _raw_payload, _opts), do: :ok
+
+    @impl true
+    def sanitize_outbound(_channel_module, outbound, opts) do
+      Process.sleep(Keyword.get(opts, :sleep_ms, 200))
+      {:ok, outbound}
+    end
+  end
+
   setup do
     start_supervised!(TestMessaging)
 
@@ -79,6 +92,30 @@ defmodule JidoMessaging.DeliverTest do
       message_ids = Enum.map(messages, & &1.id)
       assert orig.id in message_ids
       assert sent_message.id in message_ids
+    end
+
+    test "persists outbound security decision metadata", %{original_message: orig, context: ctx} do
+      assert {:ok, sent_message} =
+               Deliver.deliver_outgoing(TestMessaging, orig, "Hello secure outbound", ctx)
+
+      assert is_map(sent_message.metadata.outbound_gateway.security)
+      assert sent_message.metadata.outbound_gateway.security.sanitize.decision.stage == :sanitize
+      assert sent_message.metadata.outbound_gateway.security.sanitize.decision.classification == :allow
+    end
+
+    test "returns typed security reason when sanitize timeout deny policy triggers", %{
+      original_message: orig,
+      context: ctx
+    } do
+      assert {:error, {:security_denied, :sanitize, {:security_failure, :retry}, "Security sanitize timed out"}} =
+               Deliver.deliver_outgoing(TestMessaging, orig, "sanitize timeout", ctx,
+                 security: [
+                   adapter: SlowSecurityAdapter,
+                   adapter_opts: [sleep_ms: 200],
+                   sanitize_timeout_ms: 25,
+                   sanitize_failure_policy: :deny
+                 ]
+               )
     end
   end
 

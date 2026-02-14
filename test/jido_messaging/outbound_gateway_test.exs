@@ -75,6 +75,32 @@ defmodule JidoMessaging.OutboundGatewayTest do
     end
   end
 
+  defmodule SlackSanitizeChannel do
+    @behaviour JidoMessaging.Channel
+
+    @impl true
+    def channel_type, do: :slack
+
+    @impl true
+    def transform_incoming(_raw), do: {:error, :not_implemented}
+
+    @impl true
+    def send_message(room_id, text, _opts), do: {:ok, %{message_id: "#{room_id}:#{text}"}}
+  end
+
+  defmodule SlowSecurityAdapter do
+    @behaviour JidoMessaging.Security
+
+    @impl true
+    def verify_sender(_channel_module, _incoming_message, _raw_payload, _opts), do: :ok
+
+    @impl true
+    def sanitize_outbound(_channel_module, outbound, opts) do
+      Process.sleep(Keyword.get(opts, :sleep_ms, 200))
+      {:ok, outbound <> "_slow"}
+    end
+  end
+
   setup do
     original_config = Application.get_env(TestMessaging, :outbound_gateway)
 
@@ -218,6 +244,85 @@ defmodule JidoMessaging.OutboundGatewayTest do
 
     assert invalid_edit.reason == :missing_external_message_id
     assert invalid_edit.category == :terminal
+  end
+
+  test "applies deterministic per-channel outbound sanitization before dispatch" do
+    start_messaging(partition_count: 2, queue_capacity: 8, max_attempts: 1)
+
+    context = %{
+      channel: SlackSanitizeChannel,
+      instance_id: "sanitize_inst",
+      external_room_id: "sanitize_room"
+    }
+
+    outbound = "hello @here\r\n<!channel>\x00"
+
+    assert {:ok, result} = OutboundGateway.send_message(TestMessaging, context, outbound)
+    assert result.message_id == "sanitize_room:hello @ here\n<! channel>"
+    assert result.security.sanitize.decision.stage == :sanitize
+    assert result.security.sanitize.metadata.channel_rule == :neutralize_mass_mentions
+    assert result.security.sanitize.metadata.changed == true
+  end
+
+  test "sanitize timeout deny policy returns typed security reason with retryable classification" do
+    start_messaging(partition_count: 1, queue_capacity: 8, max_attempts: 1)
+
+    context = %{
+      channel: PartitionChannel,
+      instance_id: "sanitize_timeout_deny_inst",
+      external_room_id: "sanitize_timeout_deny_room"
+    }
+
+    started_at = System.monotonic_time(:millisecond)
+
+    assert {:error, outbound_error} =
+             OutboundGateway.send_message(
+               TestMessaging,
+               context,
+               "payload",
+               security: [
+                 adapter: SlowSecurityAdapter,
+                 adapter_opts: [sleep_ms: 200],
+                 sanitize_timeout_ms: 25,
+                 sanitize_failure_policy: :deny
+               ]
+             )
+
+    elapsed_ms = System.monotonic_time(:millisecond) - started_at
+
+    assert outbound_error.reason ==
+             {:security_denied, :sanitize, {:security_failure, :retry}, "Security sanitize timed out"}
+
+    assert outbound_error.category == :retryable
+    assert elapsed_ms < 150
+  end
+
+  test "sanitize timeout allow_original policy keeps outbound flow moving" do
+    start_messaging(partition_count: 1, queue_capacity: 8, max_attempts: 1)
+
+    context = %{
+      channel: PartitionChannel,
+      instance_id: "sanitize_timeout_allow_inst",
+      external_room_id: "sanitize_timeout_allow_room"
+    }
+
+    assert {:ok, result} =
+             OutboundGateway.send_message(
+               TestMessaging,
+               context,
+               "payload",
+               security: [
+                 adapter: SlowSecurityAdapter,
+                 adapter_opts: [sleep_ms: 200],
+                 sanitize_timeout_ms: 25,
+                 sanitize_failure_policy: :allow_original
+               ]
+             )
+
+    assert result.message_id == "sanitize_timeout_allow_room:payload"
+    assert result.security.sanitize.decision.action == :allow_original
+    assert result.security.sanitize.decision.outcome == :allow_original_fallback
+    assert result.security.sanitize.metadata.fallback == true
   end
 
   defp start_messaging(opts) do

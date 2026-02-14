@@ -45,7 +45,8 @@ defmodule JidoMessaging.OutboundGateway do
           required(:attempts) => pos_integer(),
           required(:routing_key) => String.t(),
           required(:pressure_level) => :normal | :warn | :degraded | :shed,
-          required(:idempotent) => boolean()
+          required(:idempotent) => boolean(),
+          optional(:security) => map()
         }
 
   @type error_response :: %{
@@ -133,6 +134,9 @@ defmodule JidoMessaging.OutboundGateway do
   def classify_error({:send_failed, _}), do: :terminal
   def classify_error(:missing_external_message_id), do: :terminal
   def classify_error({:missing_external_message_id, _}), do: :terminal
+  def classify_error({:security_denied, :sanitize, {:security_failure, :retry}, _description}), do: :retryable
+  def classify_error({:security_denied, :sanitize, _reason, _description}), do: :terminal
+  def classify_error({:security_denied, :verify, _reason, _description}), do: :terminal
   def classify_error(:partition_unavailable), do: :fatal
   def classify_error({:partition_unavailable, _}), do: :fatal
   def classify_error(:invalid_request), do: :terminal

@@ -256,10 +256,14 @@ defmodule JidoMessaging.Deliver do
       pressure_level: send_result.pressure_level,
       idempotent: send_result.idempotent
     }
+    |> maybe_put(:security, send_result[:security])
   end
 
   defp unwrap_gateway_reason(%{type: :outbound_error, reason: reason}), do: reason
   defp unwrap_gateway_reason(reason), do: reason
+
+  defp maybe_put(map, _key, nil), do: map
+  defp maybe_put(map, key, value), do: Map.put(map, key, value)
 
   defp maybe_put_opt(opts, _key, nil), do: opts
   defp maybe_put_opt(opts, key, value), do: Keyword.put(opts, key, value)

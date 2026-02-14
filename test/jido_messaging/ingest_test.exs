@@ -113,6 +113,21 @@ defmodule JidoMessaging.IngestTest do
     end
   end
 
+  defmodule SlowSecurityAdapter do
+    @behaviour JidoMessaging.Security
+
+    @impl true
+    def verify_sender(_channel_module, _incoming_message, _raw_payload, opts) do
+      Process.sleep(Keyword.get(opts, :sleep_ms, 200))
+      :ok
+    end
+
+    @impl true
+    def sanitize_outbound(_channel_module, outbound, _opts) do
+      {:ok, outbound}
+    end
+  end
+
   setup do
     start_supervised!(TestMessaging)
     TestMessaging.clear_dedupe()
@@ -471,6 +486,67 @@ defmodule JidoMessaging.IngestTest do
       assert_receive {:telemetry_event, [:jido_messaging, :message, :received], _measurements,
                       %{instance_module: TestMessaging, message: %{id: ^message_id}}},
                      500
+    end
+  end
+
+  describe "ingest_incoming/5 security boundary" do
+    test "happy path verifies sender and persists security decision metadata" do
+      incoming = %{
+        external_room_id: "chat_security_happy",
+        external_user_id: "user_security_happy",
+        text: "Hello secure world",
+        external_message_id: 7001,
+        raw: %{claimed_sender_id: "user_security_happy"}
+      }
+
+      assert {:ok, message, _context} =
+               Ingest.ingest_incoming(TestMessaging, MockChannel, "security_inst", incoming)
+
+      assert is_map(message.metadata.security)
+      assert message.metadata.security.verify.decision.stage == :verify
+      assert message.metadata.security.verify.decision.classification == :allow
+    end
+
+    test "spoofed sender claim is denied with typed reason and no persistence occurs" do
+      incoming = %{
+        external_room_id: "chat_security_deny",
+        external_user_id: "trusted_user",
+        text: "spoof attempt",
+        external_message_id: 7002,
+        raw: %{claimed_sender_id: "spoofed_user"}
+      }
+
+      assert {:error, {:security_denied, :verify, :sender_claim_mismatch, _description}} =
+               Ingest.ingest_incoming(TestMessaging, MockChannel, "security_inst", incoming)
+
+      assert {:error, :not_found} =
+               TestMessaging.get_room_by_external_binding(:mock, "security_inst", "chat_security_deny")
+
+      assert {:error, :not_found} = TestMessaging.get_message_by_external_id(:mock, "security_inst", 7002)
+    end
+
+    test "security timeout policy deny is bounded and returns typed retry-class failure" do
+      incoming = %{
+        external_room_id: "chat_security_timeout_deny",
+        external_user_id: "user_security_timeout_deny",
+        text: "timeout deny",
+        external_message_id: 7003
+      }
+
+      started_at = System.monotonic_time(:millisecond)
+
+      assert {:error, {:security_denied, :verify, {:security_failure, :retry}, _description}} =
+               Ingest.ingest_incoming(TestMessaging, MockChannel, "security_inst", incoming,
+                 security: [
+                   adapter: SlowSecurityAdapter,
+                   adapter_opts: [sleep_ms: 200],
+                   verify_timeout_ms: 25,
+                   verify_failure_policy: :deny
+                 ]
+               )
+
+      elapsed_ms = System.monotonic_time(:millisecond) - started_at
+      assert elapsed_ms < 150
     end
   end
 end

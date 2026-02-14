@@ -201,3 +201,53 @@ Excluding tags: [:flaky]
 .........................................................................................................................................................................................................................*..................................................................................................................................................................................................................................................................................................................*.....................................................................***.................................................
 Finished in 3.2 seconds (0.8s async, 2.3s sync)
 646 tests, 0 failures, 5 skipped
+1) changed files
+- `lib/jido_messaging/security.ex`
+- `lib/jido_messaging/security/default_adapter.ex`
+- `lib/jido_messaging/ingest.ex`
+- `lib/jido_messaging/outbound_gateway/partition.ex`
+- `lib/jido_messaging/outbound_gateway.ex`
+- `lib/jido_messaging/deliver.ex`
+- `test/jido_messaging/security_test.exs`
+- `test/jido_messaging/ingest_test.exs`
+- `test/jido_messaging/outbound_gateway_test.exs`
+- `test/jido_messaging/deliver_test.exs`
+
+2) tests/commands executed
+- `mix format`
+- `mix test test/jido_messaging/security_test.exs test/jido_messaging/ingest_test.exs test/jido_messaging/outbound_gateway_test.exs test/jido_messaging/deliver_test.exs`
+- `mix precommit` (pass: 660 tests, 0 failures, 5 skipped)
+
+3) acceptance criteria coverage
+- AC1 Inbound verification deny untrusted sender:
+  - Central verify added in `JidoMessaging.Security` and enforced in `Ingest` before persistence.
+  - Covered by `test/jido_messaging/ingest_test.exs` (`spoofed sender claim is denied...`) and `test/jido_messaging/security_test.exs` (`denies spoofed sender claim...`).
+- AC2 Outbound sanitization deterministic per-channel:
+  - Central sanitize enforced in outbound partition before send/edit.
+  - Deterministic channel rules implemented in default adapter (`slack`/`discord` mass-mention neutralization + normalization).
+  - Covered by `test/jido_messaging/outbound_gateway_test.exs` (`applies deterministic per-channel outbound sanitization...`) and `test/jido_messaging/security_test.exs`.
+- AC3 Failure classification + explicit policy handling:
+  - Added typed classifications (`:deny`, `:retry`, `:degrade`) and policy controls (`verify_failure_policy`, `sanitize_failure_policy`).
+  - Timeout/error fallback behavior covered in:
+    - `test/jido_messaging/security_test.exs` (verify deny-on-timeout, sanitize allow_original fallback)
+    - `test/jido_messaging/ingest_test.exs` (verify timeout deny)
+    - `test/jido_messaging/outbound_gateway_test.exs` (sanitize timeout deny/allow_original)
+    - `test/jido_messaging/deliver_test.exs` (typed sanitize timeout denial surfaced)
+- AC4 Bounded + observable checks:
+  - Checks run with timeout budgets in `JidoMessaging.Security`.
+  - Decision telemetry emitted on `[:jido_messaging, :security, :decision]`.
+  - Bounded timing + telemetry validated in `test/jido_messaging/security_test.exs`.
+- Traceability row:
+  - Existing `ST-OCM-005` row already present in `specs/stories/00_traceability_matrix.md` (no change needed).
+
+4) blockers/assumptions
+- Blockers: none.
+- Assumptions:
+  - Runtime security overrides are provided via `security: [...]` options on ingest/outbound calls.
+  - Default mode remains permissive for compatibility; strict behavior is opt-in via policy config.
+Running ExUnit with seed: 929690, max_cases: 20
+Excluding tags: [:flaky]
+
+..........................................................................................................................................................................................................................*..........................................................................................................................................................................................................................................................................................................................*..........................................................................***.................................................
+Finished in 3.5 seconds (0.8s async, 2.6s sync)
+660 tests, 0 failures, 5 skipped

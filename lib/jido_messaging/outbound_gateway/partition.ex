@@ -4,6 +4,7 @@ defmodule JidoMessaging.OutboundGateway.Partition do
 
   alias JidoMessaging.Channel
   alias JidoMessaging.OutboundGateway
+  alias JidoMessaging.Security
 
   @default_call_timeout 15_000
 
@@ -152,8 +153,8 @@ defmodule JidoMessaging.OutboundGateway.Partition do
   defp do_attempt(request, state, attempt) do
     max_attempts = sanitize_attempts(request[:max_attempts], state.max_attempts)
 
-    case perform_operation(request) do
-      {:ok, provider_result} ->
+    case perform_operation(state.instance_module, request) do
+      {:ok, provider_result, security_result} ->
         message_id = extract_message_id(provider_result)
 
         success = %{
@@ -164,7 +165,8 @@ defmodule JidoMessaging.OutboundGateway.Partition do
           attempts: attempt,
           routing_key: request.routing_key,
           pressure_level: state.pressure_level,
-          idempotent: false
+          idempotent: false,
+          security: %{sanitize: security_result}
         }
 
         emit_outbound_event(:completed, %{attempts: attempt}, state, request, %{message_id: message_id})
@@ -222,25 +224,35 @@ defmodule JidoMessaging.OutboundGateway.Partition do
     end
   end
 
-  defp perform_operation(%{operation: :send} = request) do
-    invoke_channel(fn ->
-      request.channel.send_message(request.external_room_id, request.payload, request.opts)
-    end)
+  defp perform_operation(instance_module, %{operation: :send} = request) do
+    with {:ok, sanitized_payload, security_result} <-
+           Security.sanitize_outbound(instance_module, request.channel, request.payload, request.opts),
+         {:ok, provider_result} <-
+           invoke_channel(fn ->
+             request.channel.send_message(request.external_room_id, sanitized_payload, request.opts)
+           end) do
+      {:ok, provider_result, security_result}
+    end
   end
 
-  defp perform_operation(%{operation: :edit} = request) do
-    invoke_channel(fn ->
-      Channel.edit_message(
-        request.channel,
-        request.external_room_id,
-        request.external_message_id,
-        request.payload,
-        request.opts
-      )
-    end)
+  defp perform_operation(instance_module, %{operation: :edit} = request) do
+    with {:ok, sanitized_payload, security_result} <-
+           Security.sanitize_outbound(instance_module, request.channel, request.payload, request.opts),
+         {:ok, provider_result} <-
+           invoke_channel(fn ->
+             Channel.edit_message(
+               request.channel,
+               request.external_room_id,
+               request.external_message_id,
+               sanitized_payload,
+               request.opts
+             )
+           end) do
+      {:ok, provider_result, security_result}
+    end
   end
 
-  defp perform_operation(%{operation: operation}) do
+  defp perform_operation(_instance_module, %{operation: operation}) do
     {:error, {:unsupported_operation, operation}}
   end
 
