@@ -213,18 +213,16 @@ defmodule JidoMessaging.Adapters.ETS do
         get_room(state, room_id)
 
       [] ->
-        room =
-          Room.new(
-            Map.merge(attrs, %{
-              external_bindings: %{
-                channel => %{instance_id => external_id}
-              }
-            })
-          )
-
+        room = build_bound_room(channel, instance_id, external_id, attrs)
         {:ok, room} = save_room(state, room)
-        true = :ets.insert(state.room_bindings, {binding_key, room.id})
-        {:ok, room}
+
+        case :ets.insert_new(state.room_bindings, {binding_key, room.id}) do
+          true ->
+            {:ok, room}
+
+          false ->
+            resolve_room_binding_race(state, binding_key, room.id)
+        end
     end
   end
 
@@ -237,16 +235,16 @@ defmodule JidoMessaging.Adapters.ETS do
         get_participant(state, participant_id)
 
       [] ->
-        participant =
-          Participant.new(
-            Map.merge(attrs, %{
-              external_ids: %{channel => external_id}
-            })
-          )
-
+        participant = build_bound_participant(channel, external_id, attrs)
         {:ok, participant} = save_participant(state, participant)
-        true = :ets.insert(state.participant_bindings, {binding_key, participant.id})
-        {:ok, participant}
+
+        case :ets.insert_new(state.participant_bindings, {binding_key, participant.id}) do
+          true ->
+            {:ok, participant}
+
+          false ->
+            resolve_participant_binding_race(state, binding_key, participant.id)
+        end
     end
   end
 
@@ -516,4 +514,52 @@ defmodule JidoMessaging.Adapters.ETS do
   defp normalize_term(value) when is_atom(value), do: Atom.to_string(value)
   defp normalize_term(value) when is_integer(value), do: Integer.to_string(value)
   defp normalize_term(value), do: to_string(value)
+
+  defp build_bound_room(channel, instance_id, external_id, attrs) do
+    Room.new(
+      Map.merge(attrs, %{
+        external_bindings: %{
+          channel => %{instance_id => external_id}
+        }
+      })
+    )
+  end
+
+  defp build_bound_participant(channel, external_id, attrs) do
+    Participant.new(
+      Map.merge(attrs, %{
+        external_ids: %{channel => external_id}
+      })
+    )
+  end
+
+  defp resolve_room_binding_race(state, binding_key, candidate_room_id) do
+    case :ets.lookup(state.room_bindings, binding_key) do
+      [{^binding_key, room_id}] when room_id == candidate_room_id ->
+        get_room(state, room_id)
+
+      [{^binding_key, room_id}] ->
+        :ok = delete_room(state, candidate_room_id)
+        get_room(state, room_id)
+
+      [] ->
+        true = :ets.insert(state.room_bindings, {binding_key, candidate_room_id})
+        get_room(state, candidate_room_id)
+    end
+  end
+
+  defp resolve_participant_binding_race(state, binding_key, candidate_participant_id) do
+    case :ets.lookup(state.participant_bindings, binding_key) do
+      [{^binding_key, participant_id}] when participant_id == candidate_participant_id ->
+        get_participant(state, participant_id)
+
+      [{^binding_key, participant_id}] ->
+        :ok = delete_participant(state, candidate_participant_id)
+        get_participant(state, participant_id)
+
+      [] ->
+        true = :ets.insert(state.participant_bindings, {binding_key, candidate_participant_id})
+        get_participant(state, candidate_participant_id)
+    end
+  end
 end

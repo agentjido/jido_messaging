@@ -188,6 +188,37 @@ defmodule JidoMessaging.Adapters.ETSTest do
       assert room1.id == room2.id
     end
 
+    test "get_or_create_room_by_external_binding/5 is race-safe under concurrent first access", %{
+      state: state
+    } do
+      results =
+        1..100
+        |> Task.async_stream(
+          fn _idx ->
+            ETS.get_or_create_room_by_external_binding(
+              state,
+              :telegram,
+              "bot_1",
+              "chat_race",
+              %{type: :direct}
+            )
+          end,
+          max_concurrency: 100,
+          timeout: 5_000
+        )
+        |> Enum.map(fn {:ok, result} -> result end)
+
+      room_ids =
+        results
+        |> Enum.map(fn {:ok, room} -> room.id end)
+        |> Enum.uniq()
+
+      assert length(room_ids) == 1
+
+      {:ok, rooms} = ETS.list_rooms(state, limit: 1_000)
+      assert length(rooms) == 1
+    end
+
     test "get_or_create_participant_by_external_id/4 creates participant on first call", %{
       state: state
     } do
@@ -223,6 +254,34 @@ defmodule JidoMessaging.Adapters.ETSTest do
         )
 
       assert p1.id == p2.id
+    end
+
+    test "get_or_create_participant_by_external_id/4 is race-safe under concurrent first access", %{
+      state: state
+    } do
+      results =
+        1..100
+        |> Task.async_stream(
+          fn _idx ->
+            ETS.get_or_create_participant_by_external_id(
+              state,
+              :telegram,
+              "user_race",
+              %{type: :human}
+            )
+          end,
+          max_concurrency: 100,
+          timeout: 5_000
+        )
+        |> Enum.map(fn {:ok, result} -> result end)
+
+      participant_ids =
+        results
+        |> Enum.map(fn {:ok, participant} -> participant.id end)
+        |> Enum.uniq()
+
+      assert length(participant_ids) == 1
+      assert :ets.info(state.participants, :size) == 1
     end
   end
 
