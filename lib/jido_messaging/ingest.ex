@@ -26,6 +26,8 @@ defmodule JidoMessaging.Ingest do
     Message,
     Content.Text,
     MsgContext,
+    MsgContext.Normalizer,
+    MsgContext.CommandParser,
     RoomServer,
     RoomSupervisor,
     Security,
@@ -47,7 +49,8 @@ defmodule JidoMessaging.Ingest do
           channel: module(),
           instance_id: String.t(),
           external_room_id: term(),
-          instance_module: module()
+          instance_module: module(),
+          msg_context: MsgContext.t()
         }
 
   @default_policy_timeout_ms 50
@@ -82,6 +85,12 @@ defmodule JidoMessaging.Ingest do
     * `:policy_timeout_fallback` - Timeout fallback policy (`:deny` or `:allow_with_flag`)
     * `:policy_error_fallback` - Crash/error fallback policy (`:deny` or `:allow_with_flag`)
     * `:security` - Runtime overrides for `JidoMessaging.Security` config
+    * `:require_mention` - Require `MsgContext.was_mentioned` to be true
+    * `:allowed_prefixes` - Allowed command prefixes for parsed commands
+    * `:mention_targets` - Mention targets used to normalize `was_mentioned`
+    * `:command_prefixes` - Command parser prefix candidates
+    * `:command_max_text_bytes` - Max message size for command parsing
+    * `:mentions_max_text_bytes` - Max message size for mention adapter parsing
   """
   @spec ingest_incoming(module(), module(), String.t(), incoming(), ingest_opts()) ::
           {:ok, Message.t(), context()} | {:ok, :duplicate} | {:error, ingest_error()}
@@ -163,19 +172,29 @@ defmodule JidoMessaging.Ingest do
          {:ok, message} <-
            build_message(messaging_module, room, participant, incoming, channel_type, instance_id, opts),
          message <- put_verify_metadata(message, verify_result),
-         msg_context <- build_msg_context(channel_module, instance_id, incoming, room, participant),
+         msg_context <- build_msg_context(channel_module, instance_id, incoming, room, participant, opts),
          {:ok, policy_message} <- apply_policy_pipeline(message, msg_context, opts),
          {:ok, persisted_message} <- messaging_module.save_message_struct(policy_message) do
+      resolved_msg_context = MsgContext.with_resolved(msg_context, room, participant, persisted_message)
+
       context = %{
         room: room,
         participant: participant,
         channel: channel_module,
         instance_id: instance_id,
         external_room_id: external_room_id,
-        instance_module: messaging_module
+        instance_module: messaging_module,
+        msg_context: resolved_msg_context
       }
 
-      persist_session_route(messaging_module, msg_context, room, channel_type, instance_id, external_room_id)
+      persist_session_route(
+        messaging_module,
+        resolved_msg_context,
+        room,
+        channel_type,
+        instance_id,
+        external_room_id
+      )
 
       add_to_room_server(messaging_module, room, persisted_message, participant)
 
@@ -275,9 +294,13 @@ defmodule JidoMessaging.Ingest do
     end
   end
 
-  defp build_msg_context(channel_module, instance_id, incoming, room, participant) do
-    base_ctx = MsgContext.from_incoming(channel_module, instance_id, incoming)
-    %{base_ctx | room_id: room.id, participant_id: participant.id}
+  defp build_msg_context(channel_module, instance_id, incoming, room, participant, opts) do
+    channel_module
+    |> MsgContext.from_incoming(instance_id, incoming)
+    |> Normalizer.normalize(incoming, opts)
+    |> then(fn msg_context ->
+      %{msg_context | room_id: room.id, participant_id: participant.id}
+    end)
   end
 
   defp resolve_reply_to_id(messaging_module, channel_type, instance_id, incoming) do
@@ -380,9 +403,60 @@ defmodule JidoMessaging.Ingest do
   defp apply_policy_pipeline(message, %MsgContext{} = msg_context, opts) do
     initial_state = %{decisions: [], flags: [], modified: false}
 
-    with {:ok, gating_state} <- run_gating(msg_context, opts, initial_state),
+    with {:ok, context_policy_state} <- run_context_policy_controls(msg_context, opts, initial_state),
+         {:ok, gating_state} <- run_gating(msg_context, opts, context_policy_state),
          {:ok, moderated_message, policy_state} <- run_moderation(message, opts, gating_state) do
       {:ok, put_policy_metadata(moderated_message, policy_state)}
+    end
+  end
+
+  defp run_context_policy_controls(%MsgContext{} = msg_context, opts, state) do
+    with {:ok, state} <- enforce_require_mention(msg_context, opts, state),
+         {:ok, state} <- enforce_allowed_prefixes(msg_context, opts, state) do
+      {:ok, state}
+    end
+  end
+
+  defp enforce_require_mention(%MsgContext{} = msg_context, opts, state) do
+    if Keyword.get(opts, :require_mention, false) and not msg_context.was_mentioned do
+      description = "Message must mention a configured target"
+      decision = build_decision(:gating, :ingest_context_policy, :deny, 0, :mention_required, description)
+      emit_policy_telemetry(decision)
+      {:error, {:policy_denied, :gating, :mention_required, description}}
+    else
+      {:ok, state}
+    end
+  end
+
+  defp enforce_allowed_prefixes(%MsgContext{} = msg_context, opts, state) do
+    allowed_prefixes = normalize_prefixes(Keyword.get(opts, :allowed_prefixes))
+
+    case {allowed_prefixes, msg_context.command} do
+      {[], _} ->
+        {:ok, state}
+
+      {_, %{status: :ok, prefix: prefix}} when is_binary(prefix) ->
+        if prefix in allowed_prefixes do
+          {:ok, state}
+        else
+          description = "Command prefix is not allowed by ingest policy"
+
+          decision =
+            build_decision(
+              :gating,
+              :ingest_context_policy,
+              :deny,
+              0,
+              :command_prefix_not_allowed,
+              description
+            )
+
+          emit_policy_telemetry(decision)
+          {:error, {:policy_denied, :gating, :command_prefix_not_allowed, description}}
+        end
+
+      _ ->
+        {:ok, state}
     end
   end
 
@@ -732,6 +806,10 @@ defmodule JidoMessaging.Ingest do
   defp elapsed_ms(started_at) do
     System.monotonic_time(:millisecond) - started_at
   end
+
+  defp normalize_prefixes(nil), do: []
+  defp normalize_prefixes(prefixes) when is_list(prefixes), do: CommandParser.normalize_prefixes(prefixes)
+  defp normalize_prefixes(_), do: []
 
   defp add_to_room_server(messaging_module, room, message, participant) do
     case RoomSupervisor.get_or_start_room(messaging_module, room) do

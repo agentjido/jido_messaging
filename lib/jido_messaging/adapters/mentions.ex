@@ -127,6 +127,7 @@ defmodule JidoMessaging.Adapters.Mentions do
   def parse_mentions(module, body, raw) when is_binary(body) and is_map(raw) do
     if function_exported?(module, :parse_mentions, 2) do
       module.parse_mentions(body, raw)
+      |> normalize_mentions()
     else
       []
     end
@@ -170,6 +171,34 @@ defmodule JidoMessaging.Adapters.Mentions do
   end
 
   @doc """
+  Normalizes mention maps into canonical format.
+
+  Invalid entries are ignored. Output is sorted by offset/length and de-duplicated.
+  """
+  @spec normalize_mentions([map()]) :: [mention()]
+  def normalize_mentions(mentions) when is_list(mentions) do
+    mentions
+    |> Enum.reduce([], fn mention, acc ->
+      case normalize_mention(mention) do
+        nil -> acc
+        normalized -> [normalized | acc]
+      end
+    end)
+    |> Enum.reverse()
+    |> Enum.reduce(%{}, fn mention, acc ->
+      key = {mention.offset, mention.length, mention.user_id}
+
+      Map.update(acc, key, mention, fn existing ->
+        prefer_richer_mention(existing, mention)
+      end)
+    end)
+    |> Map.values()
+    |> Enum.sort_by(fn mention ->
+      {mention.offset, mention.length, mention.user_id, mention.username || ""}
+    end)
+  end
+
+  @doc """
   Default implementation for stripping mentions from text.
 
   Removes mention text by offset/length, processing from end to start
@@ -191,4 +220,56 @@ defmodule JidoMessaging.Adapters.Mentions do
       before <> after_mention
     end)
   end
+
+  defp normalize_mention(mention) when is_map(mention) do
+    username = map_get(mention, :username)
+    user_id = map_get(mention, :user_id) || map_get(mention, :id) || username
+    offset = to_non_neg_integer(map_get(mention, :offset), 0)
+    length = to_non_neg_integer(map_get(mention, :length), 0)
+    normalized_user_id = normalize_string(user_id)
+    normalized_username = normalize_string(username)
+
+    if is_nil(normalized_user_id) or length <= 0 do
+      nil
+    else
+      %{
+        user_id: normalized_user_id,
+        username: normalized_username,
+        offset: offset,
+        length: length
+      }
+    end
+  end
+
+  defp normalize_mention(_), do: nil
+
+  defp map_get(map, key) when is_map(map) and is_atom(key) do
+    Map.get(map, key) || Map.get(map, Atom.to_string(key))
+  end
+
+  defp to_non_neg_integer(value, _default) when is_integer(value) and value >= 0, do: value
+
+  defp to_non_neg_integer(value, default) when is_binary(value) do
+    case Integer.parse(value) do
+      {parsed, ""} when parsed >= 0 -> parsed
+      _ -> default
+    end
+  end
+
+  defp to_non_neg_integer(_, default), do: default
+
+  defp normalize_string(nil), do: nil
+
+  defp normalize_string(value) when is_binary(value) do
+    trimmed = String.trim(value)
+    if trimmed == "", do: nil, else: trimmed
+  end
+
+  defp normalize_string(value), do: value |> to_string() |> normalize_string()
+
+  defp prefer_richer_mention(%{username: nil} = _existing, %{username: username} = candidate)
+       when is_binary(username),
+       do: candidate
+
+  defp prefer_richer_mention(existing, _candidate), do: existing
 end

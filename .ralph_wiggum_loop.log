@@ -353,3 +353,56 @@ Excluding tags: [:flaky]
 ......................................................................................................................................................................................................................................................................*...................................................................................................................................................................................................................................................................................*................................................................................***.....................................................
 Finished in 3.8 seconds (0.8s async, 3.0s sync)
 675 tests, 0 failures, 5 skipped
+1) changed files
+- `lib/jido_messaging/ingest.ex`
+- `lib/jido_messaging/adapters/mentions.ex`
+- `lib/jido_messaging/msg_context/command_parser.ex`
+- `lib/jido_messaging/msg_context/normalizer.ex`
+- `lib/jido_messaging/channels/telegram/mentions.ex`
+- `lib/jido_messaging/channels/discord/mentions.ex`
+- `lib/jido_messaging/channels/slack/mentions.ex`
+- `lib/jido_messaging/channels/whatsapp/mentions.ex`
+- `test/jido_messaging/ingest_test.exs`
+- `test/jido_messaging/adapters/mentions_test.exs`
+- `test/jido_messaging/channels/mentions_normalization_test.exs`
+- `test/jido_messaging/msg_context/command_parser_test.exs`
+
+2) tests/commands executed
+- `mix format`
+- `mix compile --warnings-as-errors`
+- `mix test test/jido_messaging/msg_context/command_parser_test.exs`
+- `mix test test/jido_messaging/channels/mentions_normalization_test.exs`
+- `mix test test/jido_messaging/adapters/mentions_test.exs`
+- `mix test test/jido_messaging/ingest_test.exs`
+- `mix precommit` (pass: `691 tests, 0 failures, 5 skipped`)
+
+3) acceptance criteria coverage
+- AC1 deterministic command parse across channels:
+  - Added bounded deterministic parser in `lib/jido_messaging/msg_context/command_parser.ex`.
+  - Cross-channel normalization test in `test/jido_messaging/ingest_test.exs` asserts equivalent parsed command/mention outputs for equivalent inputs.
+- AC2 normalized mention metadata and `was_mentioned`:
+  - Added canonical mention normalization in `lib/jido_messaging/adapters/mentions.ex`.
+  - Added first-party mention adapters:
+    - `lib/jido_messaging/channels/telegram/mentions.ex`
+    - `lib/jido_messaging/channels/discord/mentions.ex`
+    - `lib/jido_messaging/channels/slack/mentions.ex`
+    - `lib/jido_messaging/channels/whatsapp/mentions.ex`
+  - Wired into ingest via `lib/jido_messaging/msg_context/normalizer.ex` and `lib/jido_messaging/ingest.ex`.
+- AC3 require-mention and allowed-prefix enforceable in ingest:
+  - Enforced in `lib/jido_messaging/ingest.ex` (`require_mention`, `allowed_prefixes`) with typed denial reasons.
+  - Verified in `test/jido_messaging/ingest_test.exs`.
+- AC4 bounded-cost parsing and safe failures:
+  - Max text bounds in parser (`command_max_text_bytes`) with typed reasons (`:text_too_long`, etc.).
+  - Verified in `test/jido_messaging/msg_context/command_parser_test.exs` and ingest edge-path test in `test/jido_messaging/ingest_test.exs`.
+
+4) blockers/assumptions
+- Blockers: none.
+- Assumptions:
+  - `:mention_targets` should be provided for reliable bot-target mention semantics; fallback target is `instance_id`.
+  - `:allowed_prefixes` is enforced only when a command is successfully parsed (`status: :ok`).
+Running ExUnit with seed: 836898, max_cases: 20
+Excluding tags: [:flaky]
+
+....................................................................................................................................................................................................................................................*.....................................................................................................................................................................................................................................................................................................................*................................................................................***.....................................................
+Finished in 3.8 seconds (0.8s async, 3.0s sync)
+691 tests, 0 failures, 5 skipped

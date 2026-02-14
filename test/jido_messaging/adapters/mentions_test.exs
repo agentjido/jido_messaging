@@ -191,4 +191,29 @@ defmodule JidoMessaging.Adapters.MentionsTest do
       assert result == "   hi"
     end
   end
+
+  describe "normalize_mentions/1" do
+    test "normalizes key formats and de-duplicates deterministically" do
+      mentions = [
+        %{"user_id" => 123, "username" => "john", "offset" => "0", "length" => "5"},
+        %{user_id: "123", username: "john", offset: 0, length: 5},
+        %{user_id: "456", username: "jane", offset: 6, length: 4}
+      ]
+
+      assert Mentions.normalize_mentions(mentions) == [
+               %{user_id: "123", username: "john", offset: 0, length: 5},
+               %{user_id: "456", username: "jane", offset: 6, length: 4}
+             ]
+    end
+
+    test "drops invalid mention entries" do
+      mentions = [
+        %{offset: 0, length: 5},
+        %{user_id: "123", offset: 0, length: 0},
+        :invalid
+      ]
+
+      assert Mentions.normalize_mentions(mentions) == []
+    end
+  end
 end

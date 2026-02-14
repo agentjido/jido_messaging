@@ -546,6 +546,130 @@ defmodule JidoMessaging.IngestTest do
     end
   end
 
+  describe "ingest_incoming/5 command and mention normalization" do
+    test "normalizes equivalent command and mention metadata across channel adapters" do
+      text = "@bot1 /deploy now"
+
+      test_cases = [
+        {JidoMessaging.Channels.Telegram,
+         %{
+           external_room_id: "norm_tg_room",
+           external_user_id: "norm_user",
+           external_message_id: 8001,
+           chat_type: :group,
+           text: text,
+           raw: %{"text" => text}
+         }},
+        {JidoMessaging.Channels.Discord,
+         %{
+           external_room_id: "norm_discord_room",
+           external_user_id: "norm_user",
+           external_message_id: 8002,
+           chat_type: :group,
+           text: text,
+           raw: %{"content" => text}
+         }},
+        {JidoMessaging.Channels.Slack,
+         %{
+           external_room_id: "norm_slack_room",
+           external_user_id: "norm_user",
+           external_message_id: 8003,
+           chat_type: :group,
+           text: text,
+           raw: %{"text" => text}
+         }},
+        {JidoMessaging.Channels.WhatsApp,
+         %{
+           external_room_id: "norm_wa_room",
+           external_user_id: "norm_user",
+           external_message_id: 8004,
+           chat_type: :group,
+           text: text,
+           raw: %{"text" => text}
+         }}
+      ]
+
+      normalized_contexts =
+        Enum.map(test_cases, fn {channel_module, incoming} ->
+          assert {:ok, _message, context} =
+                   Ingest.ingest_incoming(TestMessaging, channel_module, "bot1", incoming, mention_targets: ["bot1"])
+
+          context.msg_context
+        end)
+
+      [first_context | remaining_contexts] = normalized_contexts
+
+      expected_command =
+        Map.take(first_context.command, [:status, :source, :prefix, :name, :args, :argv, :reason])
+
+      expected_mentions =
+        Enum.map(first_context.mentions, &Map.take(&1, [:user_id, :offset, :length]))
+
+      assert first_context.was_mentioned == true
+
+      Enum.each(remaining_contexts, fn msg_context ->
+        assert msg_context.was_mentioned == true
+
+        assert Map.take(msg_context.command, [:status, :source, :prefix, :name, :args, :argv, :reason]) ==
+                 expected_command
+
+        assert Enum.map(msg_context.mentions, &Map.take(&1, [:user_id, :offset, :length])) == expected_mentions
+      end)
+    end
+
+    test "enforces require_mention policy control in ingest path" do
+      incoming = %{
+        external_room_id: "policy_require_mention",
+        external_user_id: "policy_user",
+        external_message_id: 8101,
+        chat_type: :group,
+        text: "/deploy now",
+        raw: %{"text" => "/deploy now"}
+      }
+
+      assert {:error, {:policy_denied, :gating, :mention_required, "Message must mention a configured target"}} =
+               Ingest.ingest_incoming(TestMessaging, MockChannel, "bot1", incoming,
+                 require_mention: true,
+                 mention_targets: ["bot1"]
+               )
+    end
+
+    test "enforces allowed_prefixes policy control for parsed commands" do
+      incoming = %{
+        external_room_id: "policy_allowed_prefix",
+        external_user_id: "policy_user",
+        external_message_id: 8102,
+        chat_type: :group,
+        text: "!deploy now"
+      }
+
+      assert {:error,
+              {:policy_denied, :gating, :command_prefix_not_allowed, "Command prefix is not allowed by ingest policy"}} =
+               Ingest.ingest_incoming(TestMessaging, MockChannel, "bot1", incoming, allowed_prefixes: ["/"])
+    end
+
+    test "overlong command text fails safely with typed reason and bounded parsing cost" do
+      incoming = %{
+        external_room_id: "policy_overlong_command",
+        external_user_id: "policy_user",
+        external_message_id: 8103,
+        chat_type: :group,
+        text: "/" <> String.duplicate("a", 200_000)
+      }
+
+      started_at = System.monotonic_time(:millisecond)
+
+      assert {:ok, _message, context} =
+               Ingest.ingest_incoming(TestMessaging, MockChannel, "bot1", incoming, command_max_text_bytes: 256)
+
+      elapsed_ms = System.monotonic_time(:millisecond) - started_at
+
+      assert context.msg_context.command.status == :error
+      assert context.msg_context.command.reason == :text_too_long
+      assert elapsed_ms < 500
+    end
+  end
+
   describe "ingest_incoming/5 security boundary" do
     test "happy path verifies sender and persists security decision metadata" do
       incoming = %{
