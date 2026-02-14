@@ -98,3 +98,33 @@ Excluding tags: [:flaky]
 .................................................................................................................................................................................................................................................*........................................................................................................................................................................................................................................................................................*......................................................***.................................................
 Finished in 2.3 seconds (0.5s async, 1.7s sync)
 629 tests, 0 failures, 5 skipped
+1) changed files
+- `lib/jido_messaging/instance_supervisor.ex:13`
+- `lib/jido_messaging/instance_server.ex:31`
+- `lib/jido_messaging/instance_reconnect_worker.ex:1` (new)
+- `test/jido_messaging/instance_lifecycle_runtime_test.exs:1` (new)
+
+2) tests/commands executed
+- `mix format lib/jido_messaging/instance_supervisor.ex lib/jido_messaging/instance_server.ex lib/jido_messaging/instance_reconnect_worker.ex test/jido_messaging/instance_lifecycle_runtime_test.exs`
+- `mix compile --warnings-as-errors` (pass)
+- `mix test test/jido_messaging/instance_lifecycle_runtime_test.exs test/jido_messaging/instance_supervisor_test.exs test/jido_messaging/instance_server_test.exs test/jido_messaging/health_test.exs` (pass)
+- `mix test` (pass, `633 tests, 0 failures, 5 skipped`)
+- `mix precommit` (pass, `633 tests, 0 failures, 5 skipped`)
+
+3) acceptance criteria coverage
+- AC1 (deterministic startup + child spec resolution): implemented in `InstanceSupervisor.start_instance_tree/2` with explicit channel resolution and ordered children (`InstanceServer`, reconnect worker, listener specs) in `lib/jido_messaging/instance_supervisor.ex:78`; verified by `instance startup resolves listener child specs deterministically and reports health` in `test/jido_messaging/instance_lifecycle_runtime_test.exs:235`.
+- AC2 (bounded reconnect + telemetry): implemented in reconnect worker loop/backoff/telemetry in `lib/jido_messaging/instance_reconnect_worker.ex:87` and status hooks in `lib/jido_messaging/instance_server.ex:119`; verified by `recoverable failures trigger bounded reconnect with telemetry` in `test/jido_messaging/instance_lifecycle_runtime_test.exs:266`.
+- AC3 (restart intensity + escalation policy): explicit domain/subtree restart limits set in `lib/jido_messaging/instance_supervisor.ex:15` and `lib/jido_messaging/instance_supervisor.ex:98`; crash-loop escalation tested in `test/jido_messaging/instance_lifecycle_runtime_test.exs:338`.
+- AC4 (crash isolation across subtrees): isolation behavior tested in `test/jido_messaging/instance_lifecycle_runtime_test.exs:369` by crashing one instance worker and asserting unrelated instance server stays alive.
+- Evidence of done (lifecycle/crash-isolation tests): added in `test/jido_messaging/instance_lifecycle_runtime_test.exs:1`.
+- Traceability row already existed; no change required in `specs/stories/00_traceability_matrix.md`.
+
+4) blockers/assumptions
+- No blockers.
+- Assumed supervisor `:DOWN` reason `:shutdown` is acceptable escalation evidence when restart intensity is exceeded, with supervisor PID replacement as the deterministic assertion (`test/jido_messaging/instance_lifecycle_runtime_test.exs:357`).
+Running ExUnit with seed: 14690, max_cases: 20
+Excluding tags: [:flaky]
+
+............................................................................................................................................................................................................................................*.............................................................................................................................................................................................................................................................................................*..........................................................***.................................................
+Finished in 3.4 seconds (0.4s async, 2.9s sync)
+633 tests, 0 failures, 5 skipped

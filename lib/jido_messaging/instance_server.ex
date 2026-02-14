@@ -37,7 +37,12 @@ defmodule JidoMessaging.InstanceServer do
               last_error: Zoi.any() |> Zoi.nullish(),
               connected_at: Zoi.struct(DateTime) |> Zoi.nullish(),
               started_at: Zoi.struct(DateTime) |> Zoi.nullish(),
-              consecutive_failures: Zoi.integer() |> Zoi.default(0)
+              consecutive_failures: Zoi.integer() |> Zoi.default(0),
+              reconnect_attempt: Zoi.integer() |> Zoi.default(0),
+              restart_count: Zoi.integer() |> Zoi.default(0),
+              last_restart_reason: Zoi.any() |> Zoi.nullish(),
+              last_restart_class: Zoi.enum([:recoverable, :fatal]) |> Zoi.nullish(),
+              stopped_emitted: Zoi.boolean() |> Zoi.default(false)
             },
             coerce: false
           )
@@ -111,6 +116,19 @@ defmodule JidoMessaging.InstanceServer do
     GenServer.cast(pid, :success)
   end
 
+  @doc "Record reconnect attempt progress for lifecycle observability"
+  @spec notify_reconnect_attempt(pid(), non_neg_integer(), term() | nil) :: :ok
+  def notify_reconnect_attempt(pid, attempt, reason \\ nil) do
+    GenServer.cast(pid, {:reconnect_attempt, attempt, reason})
+  end
+
+  @doc "Record a restart marker before lifecycle workers crash/escalate"
+  @spec notify_restart_marker(pid(), :recoverable | :fatal, term()) :: :ok
+  def notify_restart_marker(pid, failure_class, reason)
+      when failure_class in [:recoverable, :fatal] do
+    GenServer.cast(pid, {:restart_marker, failure_class, reason})
+  end
+
   @doc "Gracefully stop the instance"
   def stop(pid) do
     GenServer.call(pid, :stop)
@@ -177,7 +195,12 @@ defmodule JidoMessaging.InstanceServer do
       connected_at: state.connected_at,
       started_at: state.started_at,
       consecutive_failures: state.consecutive_failures,
-      last_error: state.last_error
+      last_error: state.last_error,
+      reconnect_attempt: state.reconnect_attempt,
+      restart_count: state.restart_count,
+      last_restart_reason: state.last_restart_reason,
+      last_restart_class: state.last_restart_class,
+      child_health_summary: child_health_summary(state)
     }
 
     {:reply, {:ok, status_info}, state, @idle_timeout_ms}
@@ -204,7 +227,12 @@ defmodule JidoMessaging.InstanceServer do
       connected_at: state.connected_at,
       last_error: state.last_error,
       consecutive_failures: state.consecutive_failures,
-      sender_queue_depth: sender_queue_depth
+      reconnect_attempt: state.reconnect_attempt,
+      restart_count: state.restart_count,
+      last_restart_reason: state.last_restart_reason,
+      last_restart_class: state.last_restart_class,
+      sender_queue_depth: sender_queue_depth,
+      child_health_summary: child_health_summary(state)
     }
 
     {:reply, {:ok, snapshot}, state, @idle_timeout_ms}
@@ -213,7 +241,7 @@ defmodule JidoMessaging.InstanceServer do
   @impl true
   def handle_call(:stop, _from, state) do
     emit_signal(state, :stopped, %{instance_id: state.instance.id})
-    {:stop, :normal, :ok, state}
+    {:stop, :normal, :ok, %{state | stopped_emitted: true}}
   end
 
   @impl true
@@ -230,7 +258,8 @@ defmodule JidoMessaging.InstanceServer do
       | status: :connected,
         connected_at: DateTime.utc_now(),
         consecutive_failures: 0,
-        last_error: nil
+        last_error: nil,
+        reconnect_attempt: 0
     }
 
     emit_signal(new_state, :connected, Map.merge(%{instance_id: state.instance.id}, meta))
@@ -274,8 +303,43 @@ defmodule JidoMessaging.InstanceServer do
   end
 
   @impl true
+  def handle_cast({:reconnect_attempt, attempt, reason}, state) do
+    new_status = if attempt > 0, do: :connecting, else: state.status
+
+    new_state = %{
+      state
+      | reconnect_attempt: attempt,
+        last_error: if(is_nil(reason), do: state.last_error, else: reason),
+        status: new_status
+    }
+
+    {:noreply, new_state, @idle_timeout_ms}
+  end
+
+  @impl true
+  def handle_cast({:restart_marker, failure_class, reason}, state) do
+    new_state = %{
+      state
+      | restart_count: state.restart_count + 1,
+        last_restart_reason: reason,
+        last_restart_class: failure_class
+    }
+
+    {:noreply, new_state, @idle_timeout_ms}
+  end
+
+  @impl true
   def handle_info(:timeout, state) do
     {:noreply, state, :hibernate}
+  end
+
+  @impl true
+  def terminate(reason, state) do
+    if not state.stopped_emitted do
+      emit_signal(state, :stopped, %{instance_id: state.instance.id, reason: reason})
+    end
+
+    :ok
   end
 
   defp emit_signal(state, event, metadata) do
@@ -300,4 +364,39 @@ defmodule JidoMessaging.InstanceServer do
       pid -> JidoMessaging.Sender.queue_size(pid)
     end
   end
+
+  defp child_health_summary(state) do
+    instance_supervisor_name = Module.concat([state.instance_module, Instance, state.instance.id])
+
+    case Process.whereis(instance_supervisor_name) do
+      nil ->
+        %{status: :missing, total_children: 0, running_children: 0, children: %{}}
+
+      supervisor_pid ->
+        children =
+          Supervisor.which_children(supervisor_pid)
+          |> Enum.map(fn {id, pid, _type, _modules} ->
+            {normalize_child_id(id), child_status(pid)}
+          end)
+
+        running_children =
+          Enum.count(children, fn {_id, status} ->
+            status in [:up, :restarting]
+          end)
+
+        %{
+          status: :ok,
+          total_children: length(children),
+          running_children: running_children,
+          children: Map.new(children)
+        }
+    end
+  end
+
+  defp normalize_child_id(id) when is_atom(id), do: id
+  defp normalize_child_id(id), do: inspect(id)
+
+  defp child_status(:restarting), do: :restarting
+  defp child_status(pid) when is_pid(pid), do: if(Process.alive?(pid), do: :up, else: :down)
+  defp child_status(_), do: :down
 end
