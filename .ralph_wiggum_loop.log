@@ -128,3 +128,45 @@ Excluding tags: [:flaky]
 ............................................................................................................................................................................................................................................*.............................................................................................................................................................................................................................................................................................*..........................................................***.................................................
 Finished in 3.4 seconds (0.4s async, 2.9s sync)
 633 tests, 0 failures, 5 skipped
+1) changed files
+- `lib/jido_messaging/outbound_gateway.ex`
+- `lib/jido_messaging/outbound_gateway/supervisor.ex`
+- `lib/jido_messaging/outbound_gateway/partition.ex`
+- `lib/jido_messaging/supervisor.ex`
+- `lib/jido_messaging/deliver.ex`
+- `test/jido_messaging/outbound_gateway_test.exs`
+- `test/jido_messaging/deliver_test.exs`
+
+2) tests/commands executed
+- `mix format`
+- `mix test test/jido_messaging/outbound_gateway_test.exs test/jido_messaging/deliver_test.exs test/jido_messaging/signal_test.exs`
+- `mix precommit` (passed; 640 tests, 0 failures, 5 skipped)
+
+3) acceptance criteria coverage
+- AC1 (`Deliver` sends/edits through gateway APIs only):
+  - `Deliver.deliver_outgoing/5` and `Deliver.send_to_room/5` now route through `JidoMessaging.OutboundGateway.send_message/4`.
+  - Added `Deliver.edit_outgoing/5`, routed through `JidoMessaging.OutboundGateway.edit_message/5`.
+  - `test/jido_messaging/deliver_test.exs` asserts send/edit gateway metadata + outbound completion telemetry.
+- AC2 (partitioned workers with stable routing key):
+  - Added partitioned gateway worker pool (`OutboundGateway.Supervisor` + `OutboundGateway.Partition`).
+  - Stable route key: `instance_id <> ":" <> external_room_id` hashed via `route_partition/3`.
+  - `test/jido_messaging/outbound_gateway_test.exs` verifies multi-room distribution and stable partition assignment.
+- AC3 (queue bounds + pressure signals):
+  - Per-partition bounded queue (`queue_capacity`) with `:queue_full` rejection.
+  - Pressure transition telemetry on `[:jido_messaging, :pressure, :transition]` with level changes (`:normal/:warn/:degraded/:shed`).
+  - `test/jido_messaging/outbound_gateway_test.exs` verifies queue rejection and `:shed` pressure transition.
+- AC4 (normalized error categories for retry/terminal handling):
+  - Added normalized taxonomy (`:retryable | :terminal | :fatal`) in gateway classification.
+  - Retry loop only for retryable failures with bounded attempts/backoff.
+  - Classification telemetry emitted on `[:jido_messaging, :outbound, :classified_error]`.
+  - `test/jido_messaging/outbound_gateway_test.exs` verifies retryable classification, bounded retry behavior, and terminal give-up envelope.
+
+4) blockers/assumptions
+- No blockers.
+- Assumption: scope for this story is `Deliver` integration; `Streaming`’s direct channel edit path was left unchanged.
+Running ExUnit with seed: 600915, max_cases: 20
+Excluding tags: [:flaky]
+
+...............................................................................................................................................................................................................................................................*......................................................................................................................................................................................................................................................................*.....................................................................***.................................................
+Finished in 3.2 seconds (0.8s async, 2.4s sync)
+640 tests, 0 failures, 5 skipped
