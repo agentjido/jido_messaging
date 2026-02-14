@@ -29,7 +29,7 @@ defmodule JidoMessaging.Channels.Slack do
       }}
   """
 
-  @behaviour JidoMessaging.Channel
+  use JidoMessaging.Channel
 
   require Logger
 
@@ -50,7 +50,7 @@ defmodule JidoMessaging.Channels.Slack do
   def channel_type, do: :slack
 
   @impl true
-  def capabilities, do: [:text, :image, :file, :reactions, :threads]
+  def capabilities, do: [:text, :image, :file, :reactions, :threads, :message_edit]
 
   @impl true
   def transform_incoming(%{event: %{type: "message"} = event}) do
@@ -115,6 +115,7 @@ defmodule JidoMessaging.Channels.Slack do
 
   - `:thread_ts` - Thread timestamp for threaded replies
   """
+  @impl true
   def edit_message(channel_id, message_ts, text, opts \\ []) do
     token = Keyword.get(opts, :token) || get_token()
 

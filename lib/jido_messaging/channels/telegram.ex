@@ -31,7 +31,7 @@ defmodule JidoMessaging.Channels.Telegram do
       }}
   """
 
-  @behaviour JidoMessaging.Channel
+  use JidoMessaging.Channel
 
   require Logger
 
@@ -39,7 +39,7 @@ defmodule JidoMessaging.Channels.Telegram do
   def channel_type, do: :telegram
 
   @impl true
-  def capabilities, do: [:text, :image, :audio, :video, :file, :streaming]
+  def capabilities, do: [:text, :image, :audio, :video, :file, :streaming, :message_edit]
 
   @impl true
   def transform_incoming(%Telegex.Type.Update{message: nil}) do
@@ -98,6 +98,7 @@ defmodule JidoMessaging.Channels.Telegram do
 
   - `:parse_mode` - "Markdown", "MarkdownV2", or "HTML"
   """
+  @impl true
   def edit_message(chat_id, message_id, text, opts \\ []) do
     telegram_opts =
       opts

@@ -55,3 +55,46 @@ Excluding tags: [:flaky]
 ...........................................................................................................................................................................................................................................................................*........................................................................................................................................................................................................................................................*......................................................***.................................................
 Finished in 2.2 seconds (0.5s async, 1.6s sync)
 623 tests, 0 failures, 5 skipped
+1) changed files
+- `lib/jido_messaging/channel.ex`
+- `lib/jido_messaging/capabilities.ex`
+- `lib/jido_messaging/plugin.ex`
+- `lib/jido_messaging/channels/telegram.ex`
+- `lib/jido_messaging/channels/discord.ex`
+- `lib/jido_messaging/channels/slack.ex`
+- `lib/jido_messaging/channels/whatsapp.ex`
+- `test/jido_messaging/channel_test.exs`
+- `test/jido_messaging/capabilities_test.exs`
+
+2) tests/commands executed
+- `mix format`
+- `mix test test/jido_messaging/channel_test.exs test/jido_messaging/capabilities_test.exs test/jido_messaging/channels/telegram_test.exs test/jido_messaging/channels/discord_test.exs test/jido_messaging/channels/slack_test.exs test/jido_messaging/channels/whatsapp_test.exs`
+- `mix test test/jido_messaging/channel_test.exs test/jido_messaging/capabilities_test.exs`
+- `mix precommit` (final run passing: `629 tests, 0 failures, 5 skipped`)
+
+3) acceptance criteria coverage
+- AC1: New callbacks are optional with deterministic defaults.
+  - Added v2 optional callbacks and default wrappers in `JidoMessaging.Channel` (`listener_child_specs`, `extract_routing_metadata`, `verify_sender`, `sanitize_outbound`, `send_media`, `edit_media`, `extract_command_hint`, `edit_message`).
+  - Covered in `test/jido_messaging/channel_test.exs` (`v2 optional callbacks default deterministically for v1-only channels`).
+- AC2: First-party channels compile and existing behavior tests remain green.
+  - First-party modules updated to `use JidoMessaging.Channel`.
+  - `mix precommit` passes with all tests green.
+- AC3: Capability declarations align with callback support and are testable.
+  - Added `Channel.validate_capability_contract/1` with typed failures.
+  - Added compile-time enforcement for modules using `use JidoMessaging.Channel`.
+  - Added `:message_edit` only on channels that implement `edit_message/4` (Telegram/Discord/Slack).
+  - Covered in `test/jido_messaging/channel_test.exs` (aligned/mismatch/unknown capability tests + first-party validation test).
+- AC4: Callback failure classification is explicit.
+  - Added typed callback failure envelope (`:class`, `:disposition`, `:reason`) and classification/disposition helpers.
+  - Covered in `test/jido_messaging/channel_test.exs` (recoverable timeout => retry, raised exception => fatal/crash).
+
+4) blockers/assumptions
+- No blockers.
+- Assumed capability atom names for v2 primitives from the story/spec text (no canonical atom list provided).
+- Traceability row for `ST-OCM-001` already existed in `specs/stories/00_traceability_matrix.md`, so no matrix edit was needed.
+Running ExUnit with seed: 195678, max_cases: 20
+Excluding tags: [:flaky]
+
+.................................................................................................................................................................................................................................................*........................................................................................................................................................................................................................................................................................*......................................................***.................................................
+Finished in 2.3 seconds (0.5s async, 1.7s sync)
+629 tests, 0 failures, 5 skipped

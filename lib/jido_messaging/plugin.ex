@@ -73,12 +73,7 @@ defmodule JidoMessaging.Plugin do
     label = Keyword.get(opts, :label, humanize_channel_type(id))
     adapters = Keyword.get(opts, :adapters, %{})
 
-    capabilities =
-      if function_exported?(channel_module, :capabilities, 0) do
-        channel_module.capabilities()
-      else
-        [:text]
-      end
+    capabilities = JidoMessaging.Channel.capabilities(channel_module)
 
     struct!(__MODULE__, %{
       id: id,

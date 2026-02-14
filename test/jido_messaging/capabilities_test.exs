@@ -123,6 +123,7 @@ defmodule JidoMessaging.CapabilitiesTest do
       assert :text in caps
       assert :image in caps
       assert :streaming in caps
+      assert :message_edit in caps
     end
 
     test "returns capabilities for Discord channel" do
@@ -130,6 +131,7 @@ defmodule JidoMessaging.CapabilitiesTest do
       assert :text in caps
       assert :reactions in caps
       assert :threads in caps
+      assert :message_edit in caps
     end
 
     test "returns capabilities for Slack channel" do
@@ -137,6 +139,7 @@ defmodule JidoMessaging.CapabilitiesTest do
       assert :text in caps
       assert :reactions in caps
       assert :threads in caps
+      assert :message_edit in caps
       refute :audio in caps
     end
 
@@ -145,6 +148,7 @@ defmodule JidoMessaging.CapabilitiesTest do
       assert :text in caps
       assert :image in caps
       assert :audio in caps
+      refute :message_edit in caps
       refute :reactions in caps
     end
 
@@ -179,6 +183,14 @@ defmodule JidoMessaging.CapabilitiesTest do
       assert :streaming in all
       assert :reactions in all
       assert :threads in all
+      assert :listener_lifecycle in all
+      assert :routing_metadata in all
+      assert :sender_verification in all
+      assert :outbound_sanitization in all
+      assert :media_send in all
+      assert :media_edit in all
+      assert :command_hints in all
+      assert :message_edit in all
     end
   end
 end

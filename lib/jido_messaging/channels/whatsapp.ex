@@ -30,7 +30,7 @@ defmodule JidoMessaging.Channels.WhatsApp do
       }}
   """
 
-  @behaviour JidoMessaging.Channel
+  use JidoMessaging.Channel
 
   require Logger
 

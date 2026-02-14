@@ -19,6 +19,14 @@ defmodule JidoMessaging.Capabilities do
   - `:typing` - Typing indicators
   - `:presence` - Presence status updates
   - `:read_receipts` - Delivery and read receipts
+  - `:listener_lifecycle` - Listener child-spec lifecycle hook
+  - `:routing_metadata` - Routing metadata extraction hook
+  - `:sender_verification` - Sender verification hook
+  - `:outbound_sanitization` - Outbound sanitization hook
+  - `:media_send` - Outbound media send hook
+  - `:media_edit` - Outbound media edit hook
+  - `:command_hints` - Command hint extraction hook
+  - `:message_edit` - Text message edit hook
 
   ## Examples
 
@@ -50,6 +58,14 @@ defmodule JidoMessaging.Capabilities do
           | :typing
           | :presence
           | :read_receipts
+          | :listener_lifecycle
+          | :routing_metadata
+          | :sender_verification
+          | :outbound_sanitization
+          | :media_send
+          | :media_edit
+          | :command_hints
+          | :message_edit
 
   @type capabilities :: [capability()]
 
@@ -65,7 +81,15 @@ defmodule JidoMessaging.Capabilities do
     :threads,
     :typing,
     :presence,
-    :read_receipts
+    :read_receipts,
+    :listener_lifecycle,
+    :routing_metadata,
+    :sender_verification,
+    :outbound_sanitization,
+    :media_send,
+    :media_edit,
+    :command_hints,
+    :message_edit
   ]
 
   @doc """
@@ -173,12 +197,6 @@ defmodule JidoMessaging.Capabilities do
   """
   @spec channel_capabilities(module()) :: capabilities()
   def channel_capabilities(channel_module) when is_atom(channel_module) do
-    Code.ensure_loaded(channel_module)
-
-    if function_exported?(channel_module, :capabilities, 0) do
-      channel_module.capabilities()
-    else
-      [:text]
-    end
+    JidoMessaging.Channel.capabilities(channel_module)
   end
 end

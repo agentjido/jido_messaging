@@ -30,7 +30,7 @@ defmodule JidoMessaging.Channels.Discord do
       }}
   """
 
-  @behaviour JidoMessaging.Channel
+  use JidoMessaging.Channel
 
   require Logger
 
@@ -38,7 +38,7 @@ defmodule JidoMessaging.Channels.Discord do
   def channel_type, do: :discord
 
   @impl true
-  def capabilities, do: [:text, :image, :audio, :video, :file, :reactions, :threads]
+  def capabilities, do: [:text, :image, :audio, :video, :file, :reactions, :threads, :message_edit]
 
   @impl true
   def transform_incoming(%Nostrum.Struct.Message{} = msg) do
@@ -120,6 +120,7 @@ defmodule JidoMessaging.Channels.Discord do
 
   - `:embeds` - List of embed objects to include
   """
+  @impl true
   def edit_message(channel_id, message_id, text, opts \\ []) do
     edit_opts = build_edit_opts(text, opts)
 
