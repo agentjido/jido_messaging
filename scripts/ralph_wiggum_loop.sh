@@ -188,7 +188,7 @@ run_precommit_with_fix_loops() {
   while true; do
     log "Running mix precommit for ${story_id}"
 
-    if mix precommit >"$precommit_log" 2>&1; then
+    if MIX_OS_CONCURRENCY_LOCK="${MIX_OS_CONCURRENCY_LOCK:-0}" mix precommit >"$precommit_log" 2>&1; then
       cat "$precommit_log" >> "$LOG_FILE"
       rm -f "$precommit_log"
       return 0

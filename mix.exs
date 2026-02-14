@@ -100,6 +100,11 @@ defmodule JidoMessaging.MixProject do
       setup: ["deps.get", "git_hooks.install"],
       test: "test --exclude flaky",
       q: ["quality"],
+      precommit: [
+        "format --check-formatted",
+        "cmd env MIX_ENV=test MIX_OS_CONCURRENCY_LOCK=0 mix compile --from-mix-deps-compile --warnings-as-errors",
+        "cmd env ERL_LIBS=_build/test/lib elixir scripts/precommit_test_runner.exs"
+      ],
       quality: [
         "format --check-formatted",
         "compile --warnings-as-errors",

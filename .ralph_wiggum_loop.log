@@ -1,0 +1,28 @@
+1) changed files
+- `specs/stories/00-runtime-topology-and-slos.md`
+- `test/specs/story_00_runtime_topology_and_slos_test.exs`
+
+2) tests/commands executed
+- `mix format --check-formatted` (pass)
+- `mix compile --warnings-as-errors` (pass)
+- `mix test test/specs/story_00_runtime_topology_and_slos_test.exs` (pass, 7 tests)
+- `mix test` (pass, 623 tests, 0 failures, 5 skipped)
+- `mix precommit` (fails in this environment with Mix PubSub socket `:eperm`)
+- `MIX_OS_CONCURRENCY_LOCK=0 elixir -pa /tmp/mix_override_ebin -S mix precommit` (fails with `The task "precommit" could not be found`)
+
+3) acceptance criteria coverage
+- AC1 (canonical topology with owner/strategy/restart intensity): implemented in `specs/stories/00-runtime-topology-and-slos.md:9` and matrix at `specs/stories/00-runtime-topology-and-slos.md:35`; validated by `test/specs/story_00_runtime_topology_and_slos_test.exs:20`.
+- AC2 (fatal/recoverable/degraded crash matrix with guidance): implemented at `specs/stories/00-runtime-topology-and-slos.md:51`; validated by `test/specs/story_00_runtime_topology_and_slos_test.exs:38`.
+- AC3 (SLO baselines + pressure thresholds mapped to telemetry dimensions): implemented at `specs/stories/00-runtime-topology-and-slos.md:69`; validated by `test/specs/story_00_runtime_topology_and_slos_test.exs:54`.
+- AC4 (partitioning/sharding guidance for hot-path workers): implemented at `specs/stories/00-runtime-topology-and-slos.md:87`; validated by `test/specs/story_00_runtime_topology_and_slos_test.exs:68`.
+- Evidence/traceability checks:
+  - ST-OCM-000 row presence validated by `test/specs/story_00_runtime_topology_and_slos_test.exs:91`.
+  - downstream Story-00 references validated by `test/specs/story_00_runtime_topology_and_slos_test.exs:98`.
+  - architecture review block condition validated by `test/specs/story_00_runtime_topology_and_slos_test.exs:84`.
+
+4) blockers/assumptions
+- Blocker: `mix precommit` cannot be left passing in current environment because:
+  - plain `mix precommit` fails with Mix PubSub socket permission error (`:eperm`), and
+  - with socket workaround, the repo has no `precommit` task/alias defined.
+- Assumption: ST-OCM-000 is a documentation contract story; tests were added as documentation contract guards rather than runtime behavior tests.
+** (Mix) The task "precommit" could not be found
