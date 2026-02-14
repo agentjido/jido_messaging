@@ -68,6 +68,7 @@ defmodule JidoMessaging do
           :agent_supervisor -> Module.concat(__MODULE__, AgentSupervisor)
           :instance_registry -> Module.concat(__MODULE__, Registry.Instances)
           :instance_supervisor -> Module.concat(__MODULE__, InstanceSupervisor)
+          :session_manager_supervisor -> Module.concat(__MODULE__, SessionManagerSupervisor)
           :deduper -> Module.concat(__MODULE__, Deduper)
           :adapter -> @adapter
           :adapter_opts -> @adapter_opts

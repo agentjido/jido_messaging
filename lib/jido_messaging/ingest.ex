@@ -21,7 +21,17 @@ defmodule JidoMessaging.Ingest do
 
   require Logger
 
-  alias JidoMessaging.{Message, Content.Text, MsgContext, Security, Signal, RoomServer, RoomSupervisor}
+  alias JidoMessaging.{
+    Message,
+    Content.Text,
+    MsgContext,
+    RoomServer,
+    RoomSupervisor,
+    Security,
+    SessionKey,
+    SessionManager,
+    Signal
+  }
 
   @type incoming :: JidoMessaging.Channel.incoming_message()
   @type policy_stage :: :gating | :moderation
@@ -163,6 +173,8 @@ defmodule JidoMessaging.Ingest do
         instance_module: messaging_module
       }
 
+      persist_session_route(messaging_module, msg_context, room, channel_type, instance_id, external_room_id)
+
       add_to_room_server(messaging_module, room, persisted_message, participant)
 
       Logger.debug("[JidoMessaging.Ingest] Message #{persisted_message.id} ingested in room #{room.id}")
@@ -170,6 +182,32 @@ defmodule JidoMessaging.Ingest do
       Signal.emit_received(persisted_message, context)
 
       {:ok, persisted_message, context}
+    end
+  end
+
+  defp persist_session_route(
+         messaging_module,
+         %MsgContext{} = msg_context,
+         room,
+         channel_type,
+         instance_id,
+         external_room_id
+       ) do
+    route = %{
+      channel_type: channel_type,
+      instance_id: instance_id,
+      room_id: room.id,
+      thread_id: msg_context.thread_root_id || msg_context.external_thread_id,
+      external_room_id: to_string(external_room_id)
+    }
+
+    case SessionManager.set(messaging_module, SessionKey.from_context(msg_context), route) do
+      :ok ->
+        :ok
+
+      {:error, reason} ->
+        Logger.warning("[JidoMessaging.Ingest] Session route update skipped: #{inspect(reason)}")
+        :ok
     end
   end
 

@@ -251,3 +251,49 @@ Excluding tags: [:flaky]
 ..........................................................................................................................................................................................................................*..........................................................................................................................................................................................................................................................................................................................*..........................................................................***.................................................
 Finished in 3.5 seconds (0.8s async, 2.6s sync)
 660 tests, 0 failures, 5 skipped
+1) changed files
+- `lib/jido_messaging/session_manager.ex` (new)
+- `lib/jido_messaging/session_manager/partition.ex` (new)
+- `lib/jido_messaging/session_manager/supervisor.ex` (new)
+- `lib/jido_messaging/supervisor.ex`
+- `lib/jido_messaging/ingest.ex`
+- `lib/jido_messaging/outbound_gateway.ex`
+- `lib/jido_messaging/outbound_gateway/partition.ex`
+- `lib/jido_messaging/deliver.ex`
+- `lib/jido_messaging.ex`
+- `test/jido_messaging/session_manager_test.exs` (new)
+
+2) tests/commands executed
+- `mix format`
+- `mix test test/jido_messaging/session_manager_test.exs`
+- `mix test test/jido_messaging/ingest_test.exs test/jido_messaging/outbound_gateway_test.exs test/jido_messaging/deliver_test.exs`
+- `mix precommit` (initial run failed formatting check on new test file)
+- `mix format test/jido_messaging/session_manager_test.exs`
+- `mix precommit` (passing; `664 tests, 0 failures, 5 skipped`)
+
+3) acceptance criteria coverage
+- AC1 partitioned route state:
+  - Added partitioned `JidoMessaging.SessionManager` with hash-based shard routing and per-partition workers under `JidoMessaging.SessionManager.Supervisor`.
+  - Added root supervision wiring in `JidoMessaging.Supervisor`.
+  - Covered by `test/jido_messaging/session_manager_test.exs` test: `"partitions route state with deterministic hash resolution and hit telemetry"`.
+- AC2 TTL + eviction:
+  - Added TTL expiry checks, periodic pruning, and bounded-capacity eviction in `SessionManager.Partition`.
+  - Covered by `test/jido_messaging/session_manager_test.exs` test: `"enforces TTL expiration and bounded eviction to prevent unbounded growth"`.
+- AC3 outbound uses route state with stale fallback:
+  - `Ingest` now writes session route state after successful inbound processing.
+  - `OutboundGateway` now resolves route via `SessionManager.resolve/3` before dispatch and falls back when stale/unavailable.
+  - Added fallback/hit/stale telemetry and surfaced route resolution in outbound metadata.
+  - Covered by `test/jido_messaging/session_manager_test.exs` test: `"outbound resolution uses session route state and stale-route fallback telemetry"`.
+- AC4 crash recovery via supervision:
+  - Session manager partitions are supervised with one-for-one restart under root tree.
+  - Covered by `test/jido_messaging/session_manager_test.exs` test: `"partition crashes recover via supervision without global routing outage"`.
+
+4) blockers/assumptions
+- Blockers: none.
+- Assumption: stale/missing route fallback uses the outbound context’s provided `external_room_id` as the valid alternative route.
+Running ExUnit with seed: 237707, max_cases: 20
+Excluding tags: [:flaky]
+
+...............................................................................................................................................................................................................................................*.....................................................................................................................................................................................................................................................................................................*..........................................................................***.....................................................
+Finished in 3.8 seconds (0.8s async, 2.9s sync)
+664 tests, 0 failures, 5 skipped

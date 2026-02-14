@@ -133,7 +133,9 @@ defmodule JidoMessaging.Deliver do
     with {:ok, message} <- messaging_module.save_message(message_attrs) do
       request_opts = Keyword.put_new(opts, :idempotency_key, message.id)
 
-      case OutboundGateway.send_message(messaging_module, channel_context, text, request_opts) do
+      gateway_context = Map.put_new(channel_context, :room_id, room_id)
+
+      case OutboundGateway.send_message(messaging_module, gateway_context, text, request_opts) do
         {:ok, send_result} ->
           updated_message = %{
             message
@@ -256,6 +258,7 @@ defmodule JidoMessaging.Deliver do
       pressure_level: send_result.pressure_level,
       idempotent: send_result.idempotent
     }
+    |> maybe_put(:route_resolution, send_result[:route_resolution])
     |> maybe_put(:security, send_result[:security])
   end
 

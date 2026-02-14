@@ -165,6 +165,7 @@ defmodule JidoMessaging.OutboundGateway.Partition do
           attempts: attempt,
           routing_key: request.routing_key,
           pressure_level: state.pressure_level,
+          route_resolution: request[:route_resolution],
           idempotent: false,
           security: %{sanitize: security_result}
         }

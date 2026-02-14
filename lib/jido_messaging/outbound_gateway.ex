@@ -11,6 +11,7 @@ defmodule JidoMessaging.OutboundGateway do
 
   alias JidoMessaging.Channel
   alias JidoMessaging.OutboundGateway.Partition
+  alias JidoMessaging.SessionManager
 
   @default_partition_count max(2, System.schedulers_online() * 2)
   @default_queue_capacity 128
@@ -30,7 +31,9 @@ defmodule JidoMessaging.OutboundGateway do
           required(:payload) => String.t(),
           required(:opts) => keyword(),
           required(:routing_key) => String.t(),
+          required(:session_key) => SessionManager.session_key(),
           optional(:external_message_id) => term(),
+          optional(:route_resolution) => SessionManager.resolution(),
           optional(:idempotency_key) => String.t() | nil,
           optional(:max_attempts) => pos_integer() | nil,
           optional(:base_backoff_ms) => pos_integer() | nil,
@@ -46,6 +49,7 @@ defmodule JidoMessaging.OutboundGateway do
           required(:routing_key) => String.t(),
           required(:pressure_level) => :normal | :warn | :degraded | :shed,
           required(:idempotent) => boolean(),
+          optional(:route_resolution) => SessionManager.resolution(),
           optional(:security) => map()
         }
 
@@ -69,7 +73,7 @@ defmodule JidoMessaging.OutboundGateway do
           {:ok, success_response()} | {:error, error_response()}
   def send_message(instance_module, context, text, opts \\ [])
       when is_atom(instance_module) and is_map(context) and is_binary(text) and is_list(opts) do
-    dispatch(instance_module, build_request(:send, context, text, nil, opts))
+    dispatch(instance_module, build_request(instance_module, :send, context, text, nil, opts))
   end
 
   @doc """
@@ -79,7 +83,7 @@ defmodule JidoMessaging.OutboundGateway do
           {:ok, success_response()} | {:error, error_response()}
   def edit_message(instance_module, context, external_message_id, text, opts \\ [])
       when is_atom(instance_module) and is_map(context) and is_binary(text) and is_list(opts) do
-    dispatch(instance_module, build_request(:edit, context, text, external_message_id, opts))
+    dispatch(instance_module, build_request(instance_module, :edit, context, text, external_message_id, opts))
   end
 
   @doc """
@@ -183,9 +187,19 @@ defmodule JidoMessaging.OutboundGateway do
     end
   end
 
-  defp build_request(operation, context, text, external_message_id, opts) do
+  defp build_request(instance_module, operation, context, text, external_message_id, opts) do
     instance_id = context_instance_id(context)
-    external_room_id = Map.get(context, :external_room_id)
+    context_external_room_id = Map.get(context, :external_room_id)
+    session_key = context_session_key(context, instance_id, context_external_room_id)
+
+    {external_room_id, route_resolution} =
+      resolve_route_context(
+        instance_module,
+        session_key,
+        context,
+        instance_id,
+        context_external_room_id
+      )
 
     %{
       operation: operation,
@@ -196,6 +210,8 @@ defmodule JidoMessaging.OutboundGateway do
       opts: opts,
       external_message_id: external_message_id,
       routing_key: routing_key(instance_id, external_room_id),
+      session_key: session_key,
+      route_resolution: route_resolution,
       idempotency_key: keyword_or_map_get(opts, :idempotency_key),
       max_attempts: keyword_or_map_get(opts, :max_attempts),
       base_backoff_ms: keyword_or_map_get(opts, :base_backoff_ms),
@@ -229,6 +245,91 @@ defmodule JidoMessaging.OutboundGateway do
     context
     |> Map.get(:instance_id, "unknown")
     |> to_string()
+  end
+
+  defp resolve_route_context(instance_module, session_key, context, instance_id, nil) do
+    fallback_route = fallback_route(context, instance_id, nil)
+    {nil, fallback_resolution(instance_module, session_key, fallback_route, :miss, nil)}
+  end
+
+  defp resolve_route_context(instance_module, session_key, context, instance_id, context_external_room_id) do
+    fallback_route = fallback_route(context, instance_id, context_external_room_id)
+
+    case SessionManager.resolve(instance_module, session_key, [fallback_route]) do
+      {:ok, resolution} ->
+        {resolution.external_room_id, resolution}
+
+      {:error, _reason} ->
+        {context_external_room_id,
+         fallback_resolution(
+           instance_module,
+           session_key,
+           fallback_route,
+           :session_unavailable,
+           context_external_room_id
+         )}
+    end
+  end
+
+  defp fallback_resolution(instance_module, session_key, route, reason, external_room_id) do
+    %{
+      external_room_id: external_room_id,
+      route: route,
+      partition: SessionManager.route_partition(instance_module, session_key),
+      session_key: session_key,
+      source: :provided_fallback,
+      fallback: true,
+      stale: false,
+      fallback_reason: reason
+    }
+  end
+
+  defp fallback_route(context, instance_id, external_room_id) do
+    %{
+      channel_type: context_channel_type(context),
+      instance_id: instance_id,
+      room_id: context_room_id(context),
+      thread_id: context_thread_id(context),
+      external_room_id: external_room_id
+    }
+  end
+
+  defp context_session_key(context, instance_id, external_room_id) do
+    channel_type = context_channel_type(context)
+    room_scope = context_room_id(context) || to_string(external_room_id || "unknown_room")
+
+    {channel_type, instance_id, room_scope, context_thread_id(context)}
+  end
+
+  defp context_channel_type(context) do
+    cond do
+      is_atom(context[:channel_type]) and not is_nil(context[:channel_type]) ->
+        context[:channel_type]
+
+      is_atom(context[:channel]) and function_exported?(context[:channel], :channel_type, 0) ->
+        context[:channel].channel_type()
+
+      true ->
+        :unknown
+    end
+  end
+
+  defp context_room_id(context) do
+    cond do
+      is_binary(context[:room_id]) ->
+        context[:room_id]
+
+      is_map(context[:room]) and is_binary(Map.get(context[:room], :id)) ->
+        Map.get(context[:room], :id)
+
+      true ->
+        nil
+    end
+  end
+
+  defp context_thread_id(context) do
+    thread_id = context[:thread_root_id] || context[:external_thread_id] || context[:thread_id]
+    if is_binary(thread_id), do: thread_id, else: nil
   end
 
   defp keyword_or_map_get(opts, key) when is_list(opts), do: Keyword.get(opts, key)
