@@ -132,12 +132,14 @@ defmodule JidoMessaging.Channels.Telegram do
        external_room_id: msg.chat.id,
        external_user_id: get_user_id(msg),
        text: msg.text,
+       media: extract_media(msg),
        username: get_username(msg),
        display_name: get_display_name(msg),
        external_message_id: msg.message_id,
        timestamp: msg.date,
        chat_type: parse_chat_type(msg.chat.type),
-       chat_title: msg.chat.title
+       chat_title: msg.chat.title,
+       raw: Map.from_struct(msg)
      }}
   end
 
@@ -150,12 +152,14 @@ defmodule JidoMessaging.Channels.Telegram do
        external_room_id: get_map_value(chat, [:id, "id"]),
        external_user_id: get_map_value(from, [:id, "id"]),
        text: get_map_value(msg, [:text, "text"]),
+       media: extract_media(msg),
        username: get_map_value(from, [:username, "username"]),
        display_name: get_map_value(from, [:first_name, "first_name"]),
        external_message_id: get_map_value(msg, [:message_id, "message_id"]),
        timestamp: get_map_value(msg, [:date, "date"]),
        chat_type: parse_chat_type(get_map_value(chat, [:type, "type"])),
-       chat_title: get_map_value(chat, [:title, "title"])
+       chat_title: get_map_value(chat, [:title, "title"]),
+       raw: msg
      }}
   end
 
@@ -188,4 +192,94 @@ defmodule JidoMessaging.Channels.Telegram do
     opts
     |> Keyword.take([:parse_mode, :reply_to_message_id, :disable_notification, :reply_markup])
   end
+
+  defp extract_media(%Telegex.Type.Message{} = message) do
+    message
+    |> Map.from_struct()
+    |> extract_media()
+  end
+
+  defp extract_media(message) when is_map(message) do
+    photos = get_map_value(message, [:photo, "photo"])
+    audio = get_map_value(message, [:audio, "audio"])
+    voice = get_map_value(message, [:voice, "voice"])
+    video = get_map_value(message, [:video, "video"])
+    document = get_map_value(message, [:document, "document"])
+
+    []
+    |> maybe_append_photo(photos)
+    |> maybe_append_media(:audio, audio)
+    |> maybe_append_media(:audio, voice)
+    |> maybe_append_media(:video, video)
+    |> maybe_append_media(:file, document)
+  end
+
+  defp extract_media(_), do: []
+
+  defp maybe_append_photo(media, photos) when is_list(photos) and photos != [] do
+    photo = List.last(photos)
+
+    case normalize_telegram_media(:image, photo) do
+      nil -> media
+      entry -> media ++ [entry]
+    end
+  end
+
+  defp maybe_append_photo(media, _), do: media
+
+  defp maybe_append_media(media, kind, value) do
+    case normalize_telegram_media(kind, value) do
+      nil -> media
+      entry -> media ++ [entry]
+    end
+  end
+
+  defp normalize_telegram_media(_kind, nil), do: nil
+
+  defp normalize_telegram_media(kind, %_{} = media) do
+    normalize_telegram_media(kind, Map.from_struct(media))
+  end
+
+  defp normalize_telegram_media(kind, media) when is_map(media) do
+    media_type = get_map_value(media, [:mime_type, "mime_type"])
+    resolved_kind = resolve_kind(kind, media_type)
+
+    media_ref =
+      get_map_value(media, [:file_id, "file_id", :id, "id"])
+      |> normalize_file_ref()
+
+    if is_nil(media_ref) do
+      nil
+    else
+      %{
+        kind: resolved_kind,
+        url: media_ref,
+        media_type: media_type,
+        filename: get_map_value(media, [:file_name, "file_name"]),
+        size_bytes: get_map_value(media, [:file_size, "file_size"]),
+        width: get_map_value(media, [:width, "width"]),
+        height: get_map_value(media, [:height, "height"]),
+        duration: get_map_value(media, [:duration, "duration"])
+      }
+      |> Enum.reject(fn {_k, v} -> is_nil(v) end)
+      |> Map.new()
+    end
+  end
+
+  defp normalize_telegram_media(_kind, _media), do: nil
+
+  defp normalize_file_ref(nil), do: nil
+  defp normalize_file_ref(value) when is_binary(value), do: "telegram://file/#{value}"
+  defp normalize_file_ref(value), do: "telegram://file/#{to_string(value)}"
+
+  defp resolve_kind(:file, media_type) when is_binary(media_type) do
+    cond do
+      String.starts_with?(media_type, "image/") -> :image
+      String.starts_with?(media_type, "audio/") -> :audio
+      String.starts_with?(media_type, "video/") -> :video
+      true -> :file
+    end
+  end
+
+  defp resolve_kind(kind, _media_type), do: kind
 end

@@ -22,6 +22,7 @@ defmodule JidoMessaging.Ingest do
   require Logger
 
   alias JidoMessaging.{
+    MediaPolicy,
     Message,
     Content.Text,
     MsgContext,
@@ -159,7 +160,8 @@ defmodule JidoMessaging.Ingest do
            Security.verify_sender(messaging_module, channel_module, incoming, raw_payload, opts),
          {:ok, room} <- resolve_room(messaging_module, channel_type, instance_id, incoming),
          {:ok, participant} <- resolve_participant(messaging_module, channel_type, incoming),
-         message <- build_message(messaging_module, room, participant, incoming, channel_type, instance_id),
+         {:ok, message} <-
+           build_message(messaging_module, room, participant, incoming, channel_type, instance_id, opts),
          message <- put_verify_metadata(message, verify_result),
          msg_context <- build_msg_context(channel_module, instance_id, incoming, room, participant),
          {:ok, policy_message} <- apply_policy_pipeline(message, msg_context, opts),
@@ -254,23 +256,23 @@ defmodule JidoMessaging.Ingest do
     )
   end
 
-  defp build_message(messaging_module, room, participant, incoming, channel_type, instance_id) do
-    content = build_content(incoming)
+  defp build_message(messaging_module, room, participant, incoming, channel_type, instance_id, opts) do
+    with {:ok, content, media_metadata} <- build_content(incoming, opts) do
+      reply_to_id = resolve_reply_to_id(messaging_module, channel_type, instance_id, incoming)
 
-    reply_to_id = resolve_reply_to_id(messaging_module, channel_type, instance_id, incoming)
+      message_attrs = %{
+        room_id: room.id,
+        sender_id: participant.id,
+        role: :user,
+        content: content,
+        reply_to_id: reply_to_id,
+        external_id: incoming[:external_message_id],
+        status: :sent,
+        metadata: build_metadata(incoming, channel_type, instance_id, media_metadata)
+      }
 
-    message_attrs = %{
-      room_id: room.id,
-      sender_id: participant.id,
-      role: :user,
-      content: content,
-      reply_to_id: reply_to_id,
-      external_id: incoming[:external_message_id],
-      status: :sent,
-      metadata: build_metadata(incoming, channel_type, instance_id)
-    }
-
-    Message.new(message_attrs)
+      {:ok, Message.new(message_attrs)}
+    end
   end
 
   defp build_msg_context(channel_module, instance_id, incoming, room, participant) do
@@ -291,11 +293,29 @@ defmodule JidoMessaging.Ingest do
     end
   end
 
-  defp build_content(%{text: text}) when is_binary(text) and text != "" do
-    [%Text{text: text}]
-  end
+  defp build_content(incoming, opts) do
+    text_content =
+      case incoming do
+        %{text: text} when is_binary(text) and text != "" -> [%Text{text: text}]
+        _ -> []
+      end
 
-  defp build_content(_), do: []
+    media_payload = Map.get(incoming, :media, [])
+    media_opts = media_policy_opts(opts)
+
+    case MediaPolicy.normalize_inbound(media_payload, media_opts) do
+      {:ok, media_content, media_metadata} ->
+        {:ok, text_content ++ media_content, media_metadata}
+
+      {:error, {:media_policy_denied, reason}, media_metadata} ->
+        Logger.warning("[JidoMessaging.Ingest] Media policy rejection: #{inspect(reason)}")
+        {:error, {:media_policy_denied, reason, media_metadata}}
+
+      {:error, reason, media_metadata} ->
+        Logger.warning("[JidoMessaging.Ingest] Media normalization rejection: #{inspect(reason)}")
+        {:error, {:media_policy_denied, reason, media_metadata}}
+    end
+  end
 
   defp incoming_raw_payload(incoming) do
     case Map.get(incoming, :raw) do
@@ -318,7 +338,7 @@ defmodule JidoMessaging.Ingest do
     %{message | metadata: Map.put(message.metadata, :security, security_metadata)}
   end
 
-  defp build_metadata(incoming, channel_type, instance_id) do
+  defp build_metadata(incoming, channel_type, instance_id, media_metadata) do
     %{
       external_message_id: incoming[:external_message_id],
       timestamp: incoming[:timestamp],
@@ -329,6 +349,26 @@ defmodule JidoMessaging.Ingest do
     }
     |> Enum.reject(fn {_, v} -> is_nil(v) end)
     |> Map.new()
+    |> maybe_put_media_metadata(media_metadata)
+  end
+
+  defp media_policy_opts(opts) do
+    case Keyword.get(opts, :media_policy, []) do
+      value when is_list(value) -> value
+      value when is_map(value) -> Map.to_list(value)
+      _ -> []
+    end
+  end
+
+  defp maybe_put_media_metadata(metadata, media_metadata) do
+    has_media = media_metadata[:count] > 0
+    has_rejections = media_metadata[:rejected] != []
+
+    if has_media or has_rejections do
+      Map.put(metadata, :media, media_metadata)
+    else
+      metadata
+    end
   end
 
   defp map_chat_type(:private), do: :direct

@@ -20,7 +20,7 @@ defmodule JidoMessaging.OutboundGateway do
   @default_max_backoff_ms 500
   @default_sent_cache_size 1000
 
-  @type operation :: :send | :edit
+  @type operation :: :send | :edit | :send_media | :edit_media
   @type error_category :: :retryable | :terminal | :fatal
 
   @type request :: %{
@@ -28,7 +28,7 @@ defmodule JidoMessaging.OutboundGateway do
           required(:channel) => module(),
           required(:instance_id) => String.t(),
           required(:external_room_id) => term(),
-          required(:payload) => String.t(),
+          required(:payload) => String.t() | map(),
           required(:opts) => keyword(),
           required(:routing_key) => String.t(),
           required(:session_key) => SessionManager.session_key(),
@@ -50,7 +50,8 @@ defmodule JidoMessaging.OutboundGateway do
           required(:pressure_level) => :normal | :warn | :degraded | :shed,
           required(:idempotent) => boolean(),
           optional(:route_resolution) => SessionManager.resolution(),
-          optional(:security) => map()
+          optional(:security) => map(),
+          optional(:media) => map()
         }
 
   @type error_response :: %{
@@ -84,6 +85,39 @@ defmodule JidoMessaging.OutboundGateway do
   def edit_message(instance_module, context, external_message_id, text, opts \\ [])
       when is_atom(instance_module) and is_map(context) and is_binary(text) and is_list(opts) do
     dispatch(instance_module, build_request(instance_module, :edit, context, text, external_message_id, opts))
+  end
+
+  @doc """
+  Send media through the outbound gateway.
+  """
+  @spec send_media(module(), map(), map(), keyword()) ::
+          {:ok, success_response()} | {:error, error_response()}
+  def send_media(instance_module, context, media_payload, opts \\ [])
+      when is_atom(instance_module) and is_map(context) and is_map(media_payload) and is_list(opts) do
+    dispatch(
+      instance_module,
+      build_request(instance_module, :send_media, context, media_payload, nil, opts)
+    )
+  end
+
+  @doc """
+  Edit media through the outbound gateway.
+  """
+  @spec edit_media(module(), map(), term(), map(), keyword()) ::
+          {:ok, success_response()} | {:error, error_response()}
+  def edit_media(instance_module, context, external_message_id, media_payload, opts \\ [])
+      when is_atom(instance_module) and is_map(context) and is_map(media_payload) and is_list(opts) do
+    dispatch(
+      instance_module,
+      build_request(
+        instance_module,
+        :edit_media,
+        context,
+        media_payload,
+        external_message_id,
+        opts
+      )
+    )
   end
 
   @doc """
@@ -146,6 +180,8 @@ defmodule JidoMessaging.OutboundGateway do
   def classify_error(:invalid_request), do: :terminal
   def classify_error({:invalid_request, _}), do: :terminal
   def classify_error({:unsupported_operation, _}), do: :fatal
+  def classify_error({:unsupported_media, _kind, _causes}), do: :terminal
+  def classify_error({:media_policy_denied, _reason}), do: :terminal
 
   def classify_error(reason) do
     case Channel.classify_failure(reason) do
@@ -187,7 +223,7 @@ defmodule JidoMessaging.OutboundGateway do
     end
   end
 
-  defp build_request(instance_module, operation, context, text, external_message_id, opts) do
+  defp build_request(instance_module, operation, context, payload, external_message_id, opts) do
     instance_id = context_instance_id(context)
     context_external_room_id = Map.get(context, :external_room_id)
     session_key = context_session_key(context, instance_id, context_external_room_id)
@@ -206,7 +242,7 @@ defmodule JidoMessaging.OutboundGateway do
       channel: Map.get(context, :channel),
       instance_id: instance_id,
       external_room_id: external_room_id,
-      payload: text,
+      payload: payload,
       opts: opts,
       external_message_id: external_message_id,
       routing_key: routing_key(instance_id, external_room_id),

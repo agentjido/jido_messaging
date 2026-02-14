@@ -132,6 +132,7 @@ defmodule JidoMessaging.Channels.WhatsAppTest do
       assert {:ok, incoming} = WhatsApp.transform_incoming(payload)
       assert incoming.text == nil
       assert incoming.external_message_id == "wamid.IMAGE"
+      assert [%{kind: :image, url: "whatsapp://media/img123"}] = incoming.media
     end
   end
 
@@ -229,6 +230,7 @@ defmodule JidoMessaging.Channels.WhatsAppTest do
 
       assert {:ok, incoming} = WhatsApp.transform_incoming(payload)
       assert incoming.text == nil
+      assert [%{kind: :audio, url: "whatsapp://media/audio123"}] = incoming.media
     end
   end
 

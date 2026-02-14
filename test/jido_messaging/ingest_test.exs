@@ -260,6 +260,63 @@ defmodule JidoMessaging.IngestTest do
       assert message.content == []
     end
 
+    test "normalizes inbound media payloads into canonical content blocks and persists media metadata" do
+      incoming = %{
+        external_room_id: "chat_media",
+        external_user_id: "user_media",
+        text: "Media payload",
+        external_message_id: 4002,
+        media: [
+          %{kind: :image, url: "https://example.com/image.png", media_type: "image/png", size_bytes: 128},
+          %{kind: :audio, url: "https://example.com/audio.ogg", media_type: "audio/ogg", size_bytes: 256},
+          %{kind: :video, url: "https://example.com/video.mp4", media_type: "video/mp4", size_bytes: 512},
+          %{
+            kind: :file,
+            url: "https://example.com/spec.pdf",
+            media_type: "application/pdf",
+            filename: "spec.pdf",
+            size_bytes: 1024
+          }
+        ]
+      }
+
+      assert {:ok, message, _context} =
+               Ingest.ingest_incoming(TestMessaging, MockChannel, "inst", incoming)
+
+      assert [
+               %JidoMessaging.Content.Text{text: "Media payload"},
+               %JidoMessaging.Content.Image{url: "https://example.com/image.png", media_type: "image/png"},
+               %JidoMessaging.Content.Audio{url: "https://example.com/audio.ogg", media_type: "audio/ogg"},
+               %JidoMessaging.Content.Video{url: "https://example.com/video.mp4", media_type: "video/mp4"},
+               %JidoMessaging.Content.File{
+                 url: "https://example.com/spec.pdf",
+                 media_type: "application/pdf",
+                 filename: "spec.pdf"
+               }
+             ] = message.content
+
+      assert message.metadata.media.count == 4
+      assert message.metadata.media.total_bytes == 1920
+      assert length(message.metadata.media.accepted) == 4
+      assert message.metadata.media.rejected == []
+    end
+
+    test "rejects inbound media that exceeds bounded media policy limits" do
+      incoming = %{
+        external_room_id: "chat_media_reject",
+        external_user_id: "user_media_reject",
+        text: nil,
+        external_message_id: 4003,
+        media: [%{kind: :image, url: "https://example.com/too-big.png", media_type: "image/png", size_bytes: 128}]
+      }
+
+      assert {:error, {:media_policy_denied, :max_item_bytes_exceeded, media_metadata}} =
+               Ingest.ingest_incoming(TestMessaging, MockChannel, "inst", incoming, media_policy: [max_item_bytes: 64])
+
+      assert media_metadata.count == 0
+      assert [%{reason: :max_item_bytes_exceeded}] = media_metadata.rejected
+    end
+
     test "maps chat types to room types correctly" do
       msg_id = 5000
 

@@ -99,12 +99,14 @@ defmodule JidoMessaging.Channels.WhatsApp do
        external_room_id: Map.get(message, "from"),
        external_user_id: Map.get(message, "from"),
        text: get_text_content(message),
+       media: extract_media(message),
        username: nil,
        display_name: get_contact_name(contact),
        external_message_id: Map.get(message, "id"),
        timestamp: Map.get(message, "timestamp"),
        chat_type: :private,
-       chat_title: nil
+       chat_title: nil,
+       raw: message
      }}
   end
 
@@ -116,12 +118,14 @@ defmodule JidoMessaging.Channels.WhatsApp do
        external_room_id: Map.get(message, :from),
        external_user_id: Map.get(message, :from),
        text: get_text_content_struct(message),
+       media: extract_media(message),
        username: nil,
        display_name: get_contact_name_struct(contact),
        external_message_id: Map.get(message, :id),
        timestamp: Map.get(message, :timestamp),
        chat_type: :private,
-       chat_title: nil
+       chat_title: nil,
+       raw: message
      }}
   end
 
@@ -131,12 +135,14 @@ defmodule JidoMessaging.Channels.WhatsApp do
        external_room_id: Map.get(message, "from"),
        external_user_id: Map.get(message, "from"),
        text: get_text_content(message),
+       media: extract_media(message),
        username: nil,
        display_name: nil,
        external_message_id: Map.get(message, "id"),
        timestamp: Map.get(message, "timestamp"),
        chat_type: :private,
-       chat_title: nil
+       chat_title: nil,
+       raw: message
      }}
   end
 
@@ -146,12 +152,14 @@ defmodule JidoMessaging.Channels.WhatsApp do
        external_room_id: Map.get(message, :from),
        external_user_id: Map.get(message, :from),
        text: get_text_content_struct(message),
+       media: extract_media(message),
        username: nil,
        display_name: nil,
        external_message_id: Map.get(message, :id),
        timestamp: Map.get(message, :timestamp),
        chat_type: :private,
-       chat_title: nil
+       chat_title: nil,
+       raw: message
      }}
   end
 
@@ -196,5 +204,67 @@ defmodule JidoMessaging.Channels.WhatsApp do
         body: text
       }
     }
+  end
+
+  defp extract_media(message) when is_map(message) do
+    type = get_value(message, :type)
+
+    case normalize_media_type(type) do
+      nil ->
+        []
+
+      media_type ->
+        media_payload = get_value(message, media_type)
+
+        case normalize_whatsapp_media(media_type, media_payload) do
+          nil -> []
+          media -> [media]
+        end
+    end
+  end
+
+  defp extract_media(_), do: []
+
+  defp normalize_whatsapp_media(_media_type, nil), do: nil
+
+  defp normalize_whatsapp_media(media_type, payload) when is_map(payload) do
+    kind = media_kind(media_type)
+    media_id = get_value(payload, :id)
+
+    if is_nil(media_id) do
+      nil
+    else
+      %{
+        kind: kind,
+        url: "whatsapp://media/#{media_id}",
+        media_type: get_value(payload, :mime_type),
+        filename: get_value(payload, :filename),
+        size_bytes: get_value(payload, :file_size),
+        alt_text: get_value(payload, :caption)
+      }
+      |> Enum.reject(fn {_k, v} -> is_nil(v) end)
+      |> Map.new()
+    end
+  end
+
+  defp normalize_whatsapp_media(_media_type, _payload), do: nil
+
+  defp normalize_media_type("image"), do: :image
+  defp normalize_media_type("audio"), do: :audio
+  defp normalize_media_type("video"), do: :video
+  defp normalize_media_type("document"), do: :document
+  defp normalize_media_type(:image), do: :image
+  defp normalize_media_type(:audio), do: :audio
+  defp normalize_media_type(:video), do: :video
+  defp normalize_media_type(:document), do: :document
+  defp normalize_media_type(_), do: nil
+
+  defp media_kind(:image), do: :image
+  defp media_kind(:audio), do: :audio
+  defp media_kind(:video), do: :video
+  defp media_kind(:document), do: :file
+
+  defp get_value(map, key) when is_map(map) do
+    Map.get(map, key) || Map.get(map, Atom.to_string(key))
   end
 end

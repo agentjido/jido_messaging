@@ -1,7 +1,7 @@
 defmodule JidoMessaging.DeliverTest do
   use ExUnit.Case, async: false
 
-  alias JidoMessaging.{Deliver, Ingest, Content.Text}
+  alias JidoMessaging.{Deliver, Ingest, Content.Image, Content.Text}
 
   defmodule TestMessaging do
     use JidoMessaging,
@@ -34,6 +34,32 @@ defmodule JidoMessaging.DeliverTest do
         {:ok, %{message_id: 12345, edited: true}}
       end
     end
+  end
+
+  defmodule MediaChannel do
+    @behaviour JidoMessaging.Channel
+
+    @impl true
+    def channel_type, do: :media_mock
+
+    @impl true
+    def capabilities, do: [:text, :image]
+
+    @impl true
+    def transform_incoming(_), do: {:error, :not_implemented}
+
+    @impl true
+    def send_message(_chat_id, text, _opts), do: {:ok, %{message_id: "text:#{text}"}}
+
+    @impl true
+    def edit_message(_chat_id, message_id, text, _opts), do: {:ok, %{message_id: "#{message_id}:#{text}"}}
+
+    @impl true
+    def send_media(_chat_id, payload, _opts), do: {:ok, %{message_id: "media:#{payload.kind}", payload: payload}}
+
+    @impl true
+    def edit_media(_chat_id, message_id, payload, _opts),
+      do: {:ok, %{message_id: "#{message_id}:media_edit:#{payload.kind}", payload: payload}}
   end
 
   defmodule SlowSecurityAdapter do
@@ -179,6 +205,47 @@ defmodule JidoMessaging.DeliverTest do
       assert is_integer(partition)
 
       :telemetry.detach(handler_id)
+    end
+  end
+
+  describe "deliver_media_outgoing/5" do
+    test "delivers media through outbound gateway and persists media metadata", %{
+      original_message: orig,
+      context: ctx
+    } do
+      media_payload = %{kind: :image, url: "https://example.com/photo.png", media_type: "image/png", size_bytes: 128}
+      media_context = %{ctx | channel: MediaChannel}
+
+      assert {:ok, sent_message} =
+               Deliver.deliver_media_outgoing(TestMessaging, orig, media_payload, media_context)
+
+      assert sent_message.status == :sent
+      assert sent_message.metadata.outbound_gateway.operation == :send_media
+      assert sent_message.metadata.outbound_gateway.media.count == 1
+      assert sent_message.metadata.outbound_gateway.media.fallback == false
+      assert sent_message.metadata.media.count == 1
+      assert [%Image{url: "https://example.com/photo.png", media_type: "image/png"}] = sent_message.content
+    end
+
+    test "applies deterministic media fallback behavior when channel does not support media", %{
+      original_message: orig,
+      context: ctx
+    } do
+      media_payload = %{
+        kind: :image,
+        url: "https://example.com/unsupported.png",
+        media_type: "image/png",
+        fallback_text: "media fallback"
+      }
+
+      assert {:ok, sent_message} =
+               Deliver.deliver_media_outgoing(TestMessaging, orig, media_payload, ctx,
+                 media_policy: [unsupported_policy: :fallback_text]
+               )
+
+      assert sent_message.metadata.outbound_gateway.operation == :send_media
+      assert sent_message.metadata.outbound_gateway.media.fallback == true
+      assert sent_message.metadata.outbound_gateway.media.fallback_mode == :text_send
     end
   end
 end

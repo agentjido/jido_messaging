@@ -98,6 +98,34 @@ defmodule JidoMessaging.Channels.DiscordTest do
       assert {:ok, incoming} = Discord.transform_incoming(msg)
       assert incoming.text == nil
     end
+
+    test "extracts attachment media into normalized media payloads" do
+      msg =
+        build_nostrum_message(%{
+          id: 1,
+          channel_id: 2,
+          content: nil,
+          timestamp: ~U[2024-01-31 12:00:00.000000Z],
+          guild_id: 3,
+          author: %{id: 4, username: "user", global_name: "User"}
+        })
+
+      msg =
+        Map.put(msg, :attachments, [
+          %{
+            id: 9,
+            url: "https://cdn.discordapp.com/file.png",
+            filename: "file.png",
+            content_type: "image/png",
+            size: 256,
+            width: 128,
+            height: 128
+          }
+        ])
+
+      assert {:ok, incoming} = Discord.transform_incoming(msg)
+      assert [%{kind: :image, url: "https://cdn.discordapp.com/file.png", media_type: "image/png"}] = incoming.media
+    end
   end
 
   describe "transform_incoming/1 with atom key maps" do

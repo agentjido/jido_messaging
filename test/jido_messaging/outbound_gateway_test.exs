@@ -88,6 +88,33 @@ defmodule JidoMessaging.OutboundGatewayTest do
     def send_message(room_id, text, _opts), do: {:ok, %{message_id: "#{room_id}:#{text}"}}
   end
 
+  defmodule MediaChannel do
+    @behaviour JidoMessaging.Channel
+
+    @impl true
+    def channel_type, do: :media_channel
+
+    @impl true
+    def capabilities, do: [:text, :image]
+
+    @impl true
+    def transform_incoming(_raw), do: {:error, :not_implemented}
+
+    @impl true
+    def send_message(room_id, text, _opts), do: {:ok, %{message_id: "#{room_id}:#{text}"}}
+
+    @impl true
+    def edit_message(room_id, message_id, text, _opts), do: {:ok, %{message_id: "#{room_id}:#{message_id}:#{text}"}}
+
+    @impl true
+    def send_media(room_id, payload, _opts),
+      do: {:ok, %{message_id: "#{room_id}:media:#{payload.kind}", payload: payload}}
+
+    @impl true
+    def edit_media(room_id, message_id, payload, _opts),
+      do: {:ok, %{message_id: "#{room_id}:#{message_id}:media_edit:#{payload.kind}", payload: payload}}
+  end
+
   defmodule SlowSecurityAdapter do
     @behaviour JidoMessaging.Security
 
@@ -244,6 +271,102 @@ defmodule JidoMessaging.OutboundGatewayTest do
 
     assert invalid_edit.reason == :missing_external_message_id
     assert invalid_edit.category == :terminal
+  end
+
+  test "routes supported media payloads through gateway media operations" do
+    start_messaging(partition_count: 2, queue_capacity: 8, max_attempts: 1)
+
+    context = %{
+      channel: MediaChannel,
+      instance_id: "media_inst",
+      external_room_id: "media_room"
+    }
+
+    media_payload = %{kind: :image, url: "https://example.com/pic.png", media_type: "image/png", size_bytes: 64}
+
+    assert {:ok, send_result} = OutboundGateway.send_media(TestMessaging, context, media_payload)
+    assert send_result.operation == :send_media
+    assert send_result.message_id == "media_room:media:image"
+    assert send_result.media.count == 1
+    assert send_result.media.fallback == false
+
+    assert {:ok, edit_result} =
+             OutboundGateway.edit_media(TestMessaging, context, "msg-1", media_payload)
+
+    assert edit_result.operation == :edit_media
+    assert edit_result.message_id == "media_room:msg-1:media_edit:image"
+    assert edit_result.media.count == 1
+  end
+
+  test "applies deterministic media text fallback for unsupported channels when configured" do
+    start_messaging(partition_count: 2, queue_capacity: 8, max_attempts: 1)
+
+    context = %{
+      channel: PartitionChannel,
+      instance_id: "media_fallback_inst",
+      external_room_id: "media_fallback_room"
+    }
+
+    media_payload = %{
+      kind: :image,
+      url: "https://example.com/missing.png",
+      media_type: "image/png",
+      fallback_text: "media unavailable"
+    }
+
+    assert {:ok, result} =
+             OutboundGateway.send_media(
+               TestMessaging,
+               context,
+               media_payload,
+               media_policy: [unsupported_policy: :fallback_text]
+             )
+
+    assert result.operation == :send_media
+    assert result.message_id == "media_fallback_room:media unavailable"
+    assert result.media.fallback == true
+    assert result.media.fallback_mode == :text_send
+  end
+
+  test "rejects unsupported media deterministically when fallback policy is reject" do
+    start_messaging(partition_count: 2, queue_capacity: 8, max_attempts: 1)
+
+    context = %{
+      channel: PartitionChannel,
+      instance_id: "media_reject_inst",
+      external_room_id: "media_reject_room"
+    }
+
+    media_payload = %{kind: :image, url: "https://example.com/missing.png", media_type: "image/png"}
+
+    assert {:error, outbound_error} = OutboundGateway.send_media(TestMessaging, context, media_payload)
+    assert outbound_error.category == :terminal
+    assert {:unsupported_media, :image, causes} = outbound_error.reason
+    assert :missing_capability in causes
+    assert :missing_send_media_callback in causes
+  end
+
+  test "enforces outbound media size limits via policy preflight" do
+    start_messaging(partition_count: 2, queue_capacity: 8, max_attempts: 1)
+
+    context = %{
+      channel: MediaChannel,
+      instance_id: "media_limit_inst",
+      external_room_id: "media_limit_room"
+    }
+
+    media_payload = %{kind: :image, url: "https://example.com/large.png", media_type: "image/png", size_bytes: 999}
+
+    assert {:error, outbound_error} =
+             OutboundGateway.send_media(
+               TestMessaging,
+               context,
+               media_payload,
+               media_policy: [max_item_bytes: 128]
+             )
+
+    assert outbound_error.category == :terminal
+    assert outbound_error.reason == {:media_policy_denied, :max_item_bytes_exceeded}
   end
 
   test "applies deterministic per-channel outbound sanitization before dispatch" do

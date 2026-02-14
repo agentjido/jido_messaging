@@ -299,5 +299,30 @@ defmodule JidoMessaging.Channels.SlackTest do
       assert {:ok, incoming} = Slack.transform_incoming(payload)
       assert incoming.text == "Message with blocks"
     end
+
+    test "extracts files into normalized media payloads" do
+      payload = %{
+        "event" => %{
+          "type" => "message",
+          "channel" => "C1234567890",
+          "user" => "U9876543210",
+          "text" => "Message with file",
+          "ts" => "1706745600.333333",
+          "files" => [
+            %{
+              "id" => "F12345",
+              "mimetype" => "image/png",
+              "url_private" => "https://files.slack.com/image.png",
+              "name" => "image.png",
+              "size" => 2048
+            }
+          ],
+          "channel_type" => "channel"
+        }
+      }
+
+      assert {:ok, incoming} = Slack.transform_incoming(payload)
+      assert [%{kind: :image, url: "https://files.slack.com/image.png", media_type: "image/png"}] = incoming.media
+    end
   end
 end

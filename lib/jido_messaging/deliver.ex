@@ -20,7 +20,7 @@ defmodule JidoMessaging.Deliver do
 
   require Logger
 
-  alias JidoMessaging.{Capabilities, Content.Text, Message, OutboundGateway, RoomServer, Signal}
+  alias JidoMessaging.{Capabilities, Content.Text, MediaPolicy, Message, OutboundGateway, RoomServer, Signal}
 
   @type context :: JidoMessaging.Ingest.context()
 
@@ -94,6 +94,67 @@ defmodule JidoMessaging.Deliver do
 
           Signal.emit_failed(original_message.room_id, reason, context)
 
+          {:error, reason}
+      end
+    end
+  end
+
+  @doc """
+  Deliver an outgoing media payload as a reply.
+  """
+  @spec deliver_media_outgoing(module(), Message.t(), map(), context(), keyword()) ::
+          {:ok, Message.t()} | {:error, term()}
+  def deliver_media_outgoing(messaging_module, original_message, media_payload, context, opts \\ [])
+      when is_map(media_payload) do
+    channel = context.channel
+    channel_type = channel.channel_type()
+    instance_id = context.instance_id
+    external_reply_to_id = resolve_external_reply_to(messaging_module, original_message, context)
+
+    with {:ok, media_content, media_metadata} <- normalize_media_content(media_payload, opts),
+         {:ok, message} <-
+           messaging_module.save_message(%{
+             room_id: original_message.room_id,
+             sender_id: "system",
+             role: :assistant,
+             content: media_content,
+             reply_to_id: original_message.id,
+             status: :sending,
+             metadata: %{
+               channel: channel_type,
+               instance_id: instance_id,
+               media: media_metadata
+             }
+           }) do
+      request_opts =
+        opts
+        |> maybe_put_opt(:reply_to_id, external_reply_to_id)
+        |> Keyword.put_new(:idempotency_key, message.id)
+
+      case OutboundGateway.send_media(messaging_module, context, media_payload, request_opts) do
+        {:ok, send_result} ->
+          external_message_id = send_result.message_id
+
+          updated_message = %{
+            message
+            | status: :sent,
+              external_id: external_message_id,
+              metadata:
+                message.metadata
+                |> Map.put(:external_message_id, external_message_id)
+                |> Map.put(:outbound_gateway, gateway_metadata(send_result))
+          }
+
+          {:ok, persisted_message} = messaging_module.save_message_struct(updated_message)
+          add_to_room_server(messaging_module, original_message.room_id, persisted_message)
+          Signal.emit_sent(persisted_message, context)
+          {:ok, persisted_message}
+
+        {:error, outbound_error} ->
+          reason = unwrap_gateway_reason(outbound_error)
+          failed_message = mark_message_failed(message, outbound_error)
+          _ = messaging_module.save_message_struct(failed_message)
+          Signal.emit_failed(original_message.room_id, reason, context)
           {:error, reason}
       end
     end
@@ -205,6 +266,48 @@ defmodule JidoMessaging.Deliver do
     end
   end
 
+  @doc """
+  Edit a previously-sent media message through the outbound gateway.
+  """
+  @spec edit_outgoing_media(module(), Message.t(), map(), context() | map(), keyword()) ::
+          {:ok, Message.t()} | {:error, term()}
+  def edit_outgoing_media(messaging_module, message, media_payload, context, opts \\ [])
+
+  def edit_outgoing_media(_messaging_module, %Message{external_id: nil}, _media_payload, _context, _opts) do
+    {:error, :missing_external_message_id}
+  end
+
+  def edit_outgoing_media(messaging_module, message, media_payload, context, opts)
+      when is_map(media_payload) do
+    request_opts = Keyword.put_new(opts, :idempotency_key, "#{message.id}:edit_media")
+
+    with {:ok, media_content, media_metadata} <- normalize_media_content(media_payload, opts) do
+      case OutboundGateway.edit_media(
+             messaging_module,
+             context,
+             message.external_id,
+             media_payload,
+             request_opts
+           ) do
+        {:ok, edit_result} ->
+          updated_message = %{
+            message
+            | content: media_content,
+              metadata:
+                message.metadata
+                |> Map.put(:media, media_metadata)
+                |> Map.put(:external_message_id, edit_result.message_id || message.external_id)
+                |> Map.put(:outbound_gateway, gateway_metadata(edit_result))
+          }
+
+          messaging_module.save_message_struct(updated_message)
+
+        {:error, outbound_error} ->
+          {:error, unwrap_gateway_reason(outbound_error)}
+      end
+    end
+  end
+
   defp add_to_room_server(messaging_module, room_id, message) do
     case RoomServer.whereis(messaging_module, room_id) do
       nil ->
@@ -260,6 +363,27 @@ defmodule JidoMessaging.Deliver do
     }
     |> maybe_put(:route_resolution, send_result[:route_resolution])
     |> maybe_put(:security, send_result[:security])
+    |> maybe_put(:media, send_result[:media])
+  end
+
+  defp normalize_media_content(media_payload, opts) do
+    media_opts = media_policy_opts(opts)
+
+    case MediaPolicy.normalize_inbound([media_payload], media_opts) do
+      {:ok, media_content, media_metadata} ->
+        {:ok, media_content, media_metadata}
+
+      {:error, reason, _metadata} ->
+        {:error, reason}
+    end
+  end
+
+  defp media_policy_opts(opts) do
+    case Keyword.get(opts, :media_policy, []) do
+      value when is_list(value) -> value
+      value when is_map(value) -> Map.to_list(value)
+      _ -> []
+    end
   end
 
   defp unwrap_gateway_reason(%{type: :outbound_error, reason: reason}), do: reason

@@ -297,3 +297,59 @@ Excluding tags: [:flaky]
 ...............................................................................................................................................................................................................................................*.....................................................................................................................................................................................................................................................................................................*..........................................................................***.....................................................
 Finished in 3.8 seconds (0.8s async, 2.9s sync)
 664 tests, 0 failures, 5 skipped
+1) changed files
+- `lib/jido_messaging/media_policy.ex` (new)
+- `lib/jido_messaging/ingest.ex`
+- `lib/jido_messaging/outbound_gateway.ex`
+- `lib/jido_messaging/outbound_gateway/partition.ex`
+- `lib/jido_messaging/deliver.ex`
+- `lib/jido_messaging/channel.ex`
+- `lib/jido_messaging/channels/discord.ex`
+- `lib/jido_messaging/channels/telegram.ex`
+- `lib/jido_messaging/channels/slack.ex`
+- `lib/jido_messaging/channels/whatsapp.ex`
+- `test/jido_messaging/ingest_test.exs`
+- `test/jido_messaging/outbound_gateway_test.exs`
+- `test/jido_messaging/deliver_test.exs`
+- `test/jido_messaging/channels/discord_test.exs`
+- `test/jido_messaging/channels/telegram_test.exs`
+- `test/jido_messaging/channels/slack_test.exs`
+- `test/jido_messaging/channels/whatsapp_test.exs`
+
+2) tests/commands executed
+- `mix compile`
+- `mix test test/jido_messaging/ingest_test.exs test/jido_messaging/deliver_test.exs test/jido_messaging/outbound_gateway_test.exs test/jido_messaging/channels/discord_test.exs test/jido_messaging/channels/telegram_test.exs test/jido_messaging/channels/slack_test.exs test/jido_messaging/channels/whatsapp_test.exs`
+- `mix test`
+- `mix format lib/jido_messaging/media_policy.ex lib/jido_messaging/outbound_gateway/partition.ex test/jido_messaging/ingest_test.exs`
+- `mix precommit` (passing)
+
+3) acceptance criteria coverage
+- AC1 Inbound payloads map to canonical media blocks:
+  - Added `MediaPolicy.normalize_inbound/2` and wired ingest content building to produce canonical `%Content.Image{}`, `%Content.Audio{}`, `%Content.Video{}`, `%Content.File{}`.
+  - Extended first-party channel transforms to extract inbound media into `incoming[:media]`.
+  - Covered by new tests in `test/jido_messaging/ingest_test.exs` and channel mapper tests.
+- AC2 Outbound media operations route through gateway capability checks:
+  - Added `OutboundGateway.send_media/4` and `OutboundGateway.edit_media/5`.
+  - Partition preflight now checks channel media capability + required media callback before dispatch.
+  - Covered by new gateway tests in `test/jido_messaging/outbound_gateway_test.exs`.
+- AC3 Type/size limits enforce bounded resource usage:
+  - Added bounded media policy (`max_items`, `max_item_bytes`, `max_total_bytes`, media-type checks) in `MediaPolicy`.
+  - Enforced in both ingest and outbound media preflight.
+  - Covered by inbound and outbound limit tests.
+- AC4 Unsupported media paths deterministic fallback/reject:
+  - Implemented deterministic unsupported policy: `:reject` or `:fallback_text`.
+  - Fallback routes to text send/edit operations; reject returns typed terminal errors.
+  - Covered by new outbound gateway tests and deliver media fallback test.
+
+4) blockers/assumptions
+- Blockers: none.
+- Assumptions:
+  - Canonical inbound media shape is `incoming[:media]` as a list of maps with `kind` + media attributes.
+  - First-party channels now parse inbound media, but outbound media callbacks are still channel-specific; channels without `send_media/edit_media` deterministically reject or fallback per policy.
+  - Traceability row for `ST-OCM-007` already existed in `specs/stories/00_traceability_matrix.md`, so no change was needed.
+Running ExUnit with seed: 25252, max_cases: 20
+Excluding tags: [:flaky]
+
+......................................................................................................................................................................................................................................................................*...................................................................................................................................................................................................................................................................................*................................................................................***.....................................................
+Finished in 3.8 seconds (0.8s async, 3.0s sync)
+675 tests, 0 failures, 5 skipped

@@ -155,6 +155,28 @@ defmodule JidoMessaging.Channels.TelegramTest do
       assert incoming.chat_title == "Test Group"
     end
 
+    test "extracts media payloads from telegram message fields" do
+      update = %{
+        "message" => %{
+          "message_id" => 456,
+          "date" => 1_706_745_600,
+          "chat" => %{
+            "id" => 789,
+            "type" => "group",
+            "title" => "Media Group"
+          },
+          "photo" => [
+            %{"file_id" => "photo-small", "width" => 64, "height" => 64, "file_size" => 128},
+            %{"file_id" => "photo-large", "width" => 512, "height" => 512, "file_size" => 4096}
+          ],
+          "text" => nil
+        }
+      }
+
+      assert {:ok, incoming} = Telegram.transform_incoming(update)
+      assert [%{kind: :image, url: "telegram://file/photo-large"}] = incoming.media
+    end
+
     test "returns error for update without message" do
       update = %Telegex.Type.Update{update_id: 123, message: nil}
       assert {:error, :no_message} = Telegram.transform_incoming(update)

@@ -154,12 +154,14 @@ defmodule JidoMessaging.Channels.Slack do
        external_room_id: Map.get(event, :channel),
        external_user_id: Map.get(event, :user),
        text: Map.get(event, :text),
+       media: extract_media(event),
        username: nil,
        display_name: nil,
        external_message_id: Map.get(event, :ts),
        timestamp: Map.get(event, :ts),
        chat_type: parse_channel_type(Map.get(event, :channel_type)),
-       chat_title: nil
+       chat_title: nil,
+       raw: event
      }}
   end
 
@@ -169,12 +171,14 @@ defmodule JidoMessaging.Channels.Slack do
        external_room_id: Map.get(event, "channel"),
        external_user_id: Map.get(event, "user"),
        text: Map.get(event, "text"),
+       media: extract_media(event),
        username: nil,
        display_name: nil,
        external_message_id: Map.get(event, "ts"),
        timestamp: Map.get(event, "ts"),
        chat_type: parse_channel_type(Map.get(event, "channel_type")),
-       chat_title: nil
+       chat_title: nil,
+       raw: event
      }}
   end
 
@@ -194,4 +198,67 @@ defmodule JidoMessaging.Channels.Slack do
       value -> Map.put(payload, key, value)
     end
   end
+
+  defp extract_media(event) when is_map(event) do
+    files = Map.get(event, :files) || Map.get(event, "files")
+
+    case files do
+      list when is_list(list) ->
+        list
+        |> Enum.map(&normalize_file/1)
+        |> Enum.reject(&is_nil/1)
+
+      _ ->
+        []
+    end
+  end
+
+  defp extract_media(_), do: []
+
+  defp normalize_file(%_{} = file), do: normalize_file(Map.from_struct(file))
+
+  defp normalize_file(file) when is_map(file) do
+    media_type = Map.get(file, :mimetype) || Map.get(file, "mimetype")
+    kind = media_kind_from_type(media_type)
+
+    file_ref =
+      Map.get(file, :url_private_download) || Map.get(file, "url_private_download") ||
+        Map.get(file, :url_private) || Map.get(file, "url_private") ||
+        Map.get(file, :permalink) || Map.get(file, "permalink") ||
+        slack_file_ref(file)
+
+    if is_nil(file_ref) do
+      nil
+    else
+      %{
+        kind: kind,
+        url: file_ref,
+        media_type: media_type,
+        filename: Map.get(file, :name) || Map.get(file, "name"),
+        size_bytes: Map.get(file, :size) || Map.get(file, "size")
+      }
+      |> Enum.reject(fn {_k, v} -> is_nil(v) end)
+      |> Map.new()
+    end
+  end
+
+  defp normalize_file(_), do: nil
+
+  defp slack_file_ref(file) do
+    case Map.get(file, :id) || Map.get(file, "id") do
+      nil -> nil
+      id -> "slack://file/#{id}"
+    end
+  end
+
+  defp media_kind_from_type(media_type) when is_binary(media_type) do
+    cond do
+      String.starts_with?(media_type, "image/") -> :image
+      String.starts_with?(media_type, "audio/") -> :audio
+      String.starts_with?(media_type, "video/") -> :video
+      true -> :file
+    end
+  end
+
+  defp media_kind_from_type(_), do: :file
 end

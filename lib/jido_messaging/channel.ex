@@ -86,6 +86,7 @@ defmodule JidoMessaging.Channel do
           optional(:chat_title) => String.t() | nil,
           optional(:was_mentioned) => boolean(),
           optional(:mentions) => [map()],
+          optional(:media) => [map()],
           optional(:channel_meta) => map(),
           optional(:raw) => map()
         }

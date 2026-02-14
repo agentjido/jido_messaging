@@ -2,7 +2,10 @@ defmodule JidoMessaging.OutboundGateway.Partition do
   @moduledoc false
   use GenServer
 
+  require Logger
+
   alias JidoMessaging.Channel
+  alias JidoMessaging.MediaPolicy
   alias JidoMessaging.OutboundGateway
   alias JidoMessaging.Security
 
@@ -156,19 +159,24 @@ defmodule JidoMessaging.OutboundGateway.Partition do
     case perform_operation(state.instance_module, request) do
       {:ok, provider_result, security_result} ->
         message_id = extract_message_id(provider_result)
+        success = build_success(state, request, attempt, message_id, provider_result, security_result, %{})
 
-        success = %{
-          operation: request.operation,
-          message_id: message_id,
-          result: provider_result,
-          partition: state.partition,
-          attempts: attempt,
-          routing_key: request.routing_key,
-          pressure_level: state.pressure_level,
-          route_resolution: request[:route_resolution],
-          idempotent: false,
-          security: %{sanitize: security_result}
-        }
+        emit_outbound_event(:completed, %{attempts: attempt}, state, request, %{message_id: message_id})
+        {{:ok, success}, state}
+
+      {:ok, provider_result, security_result, operation_metadata} ->
+        message_id = extract_message_id(provider_result)
+
+        success =
+          build_success(
+            state,
+            request,
+            attempt,
+            message_id,
+            provider_result,
+            security_result,
+            operation_metadata
+          )
 
         emit_outbound_event(:completed, %{attempts: attempt}, state, request, %{message_id: message_id})
         {{:ok, success}, state}
@@ -225,6 +233,30 @@ defmodule JidoMessaging.OutboundGateway.Partition do
     end
   end
 
+  defp build_success(
+         state,
+         request,
+         attempt,
+         message_id,
+         provider_result,
+         security_result,
+         operation_metadata
+       ) do
+    %{
+      operation: request.operation,
+      message_id: message_id,
+      result: provider_result,
+      partition: state.partition,
+      attempts: attempt,
+      routing_key: request.routing_key,
+      pressure_level: state.pressure_level,
+      route_resolution: request[:route_resolution],
+      idempotent: false,
+      security: %{sanitize: security_result}
+    }
+    |> maybe_put(:media, operation_metadata[:media])
+  end
+
   defp perform_operation(instance_module, %{operation: :send} = request) do
     with {:ok, sanitized_payload, security_result} <-
            Security.sanitize_outbound(instance_module, request.channel, request.payload, request.opts),
@@ -253,9 +285,136 @@ defmodule JidoMessaging.OutboundGateway.Partition do
     end
   end
 
+  defp perform_operation(instance_module, %{operation: :send_media} = request) do
+    case media_preflight(request) do
+      {:ok_media, payload, media_metadata} ->
+        with {:ok, sanitized_payload, security_result} <-
+               Security.sanitize_outbound(instance_module, request.channel, payload, request.opts),
+             {:ok, provider_result} <-
+               invoke_channel(fn ->
+                 Channel.send_media(request.channel, request.external_room_id, sanitized_payload, request.opts)
+               end) do
+          {:ok, provider_result, security_result, %{media: media_metadata}}
+        end
+
+      {:fallback_text, fallback_text, media_metadata} ->
+        with {:ok, sanitized_payload, security_result} <-
+               Security.sanitize_outbound(instance_module, request.channel, fallback_text, request.opts),
+             {:ok, provider_result} <-
+               invoke_channel(fn ->
+                 request.channel.send_message(request.external_room_id, sanitized_payload, request.opts)
+               end) do
+          {:ok, provider_result, security_result, %{media: media_metadata}}
+        end
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp perform_operation(instance_module, %{operation: :edit_media} = request) do
+    case media_preflight(request) do
+      {:ok_media, payload, media_metadata} ->
+        with {:ok, sanitized_payload, security_result} <-
+               Security.sanitize_outbound(instance_module, request.channel, payload, request.opts),
+             {:ok, provider_result} <-
+               invoke_channel(fn ->
+                 Channel.edit_media(
+                   request.channel,
+                   request.external_room_id,
+                   request.external_message_id,
+                   sanitized_payload,
+                   request.opts
+                 )
+               end) do
+          {:ok, provider_result, security_result, %{media: media_metadata}}
+        end
+
+      {:fallback_text, fallback_text, media_metadata} ->
+        with {:ok, sanitized_payload, security_result} <-
+               Security.sanitize_outbound(instance_module, request.channel, fallback_text, request.opts),
+             {:ok, provider_result} <-
+               invoke_channel(fn ->
+                 Channel.edit_message(
+                   request.channel,
+                   request.external_room_id,
+                   request.external_message_id,
+                   sanitized_payload,
+                   request.opts
+                 )
+               end) do
+          {:ok, provider_result, security_result, %{media: media_metadata}}
+        end
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
   defp perform_operation(_instance_module, %{operation: operation}) do
     {:error, {:unsupported_operation, operation}}
   end
+
+  defp media_preflight(request) do
+    media_opts = media_policy_opts(request.opts)
+
+    case MediaPolicy.prepare_outbound(request.payload, request.channel, request.operation, media_opts) do
+      {:ok, payload, metadata} ->
+        {:ok_media, payload, Map.put(metadata, :operation, request.operation)}
+
+      {:fallback_text, fallback_text, metadata} ->
+        Logger.warning(
+          "[JidoMessaging.OutboundGateway] Media fallback applied for #{inspect(request.channel)}: #{inspect(metadata.rejected)}"
+        )
+
+        case media_text_fallback(request, fallback_text, metadata) do
+          {:ok, text_payload, fallback_metadata} ->
+            {:fallback_text, text_payload, fallback_metadata}
+
+          {:error, reason} ->
+            {:error, reason}
+        end
+
+      {:error, reason, metadata} ->
+        Logger.warning(
+          "[JidoMessaging.OutboundGateway] Media dispatch rejected for #{inspect(request.channel)}: #{inspect(reason)} metadata=#{inspect(metadata)}"
+        )
+
+        {:error, reason}
+    end
+  end
+
+  defp media_text_fallback(%{operation: :send_media}, fallback_text, metadata) do
+    {:ok, fallback_text,
+     Map.merge(metadata, %{
+       fallback: true,
+       fallback_mode: :text_send,
+       fallback_operation: :send
+     })}
+  end
+
+  defp media_text_fallback(%{operation: :edit_media, external_message_id: nil}, _fallback_text, _metadata) do
+    {:error, :missing_external_message_id}
+  end
+
+  defp media_text_fallback(%{operation: :edit_media}, fallback_text, metadata) do
+    {:ok, fallback_text,
+     Map.merge(metadata, %{
+       fallback: true,
+       fallback_mode: :text_edit,
+       fallback_operation: :edit
+     })}
+  end
+
+  defp media_policy_opts(opts) when is_list(opts) do
+    case Keyword.get(opts, :media_policy, []) do
+      value when is_list(value) -> value
+      value when is_map(value) -> Map.to_list(value)
+      _ -> []
+    end
+  end
+
+  defp media_policy_opts(_opts), do: []
 
   defp invoke_channel(fun) when is_function(fun, 0) do
     try do
@@ -350,7 +509,7 @@ defmodule JidoMessaging.OutboundGateway.Partition do
 
   defp validate_request(request) when is_map(request) do
     cond do
-      request[:operation] not in [:send, :edit] ->
+      request[:operation] not in [:send, :edit, :send_media, :edit_media] ->
         {:error, {:invalid_request, :operation}}
 
       not is_atom(request[:channel]) ->
@@ -359,10 +518,10 @@ defmodule JidoMessaging.OutboundGateway.Partition do
       is_nil(request[:external_room_id]) ->
         {:error, {:invalid_request, :external_room_id}}
 
-      not is_binary(request[:payload]) ->
+      not valid_payload?(request[:operation], request[:payload]) ->
         {:error, {:invalid_request, :payload}}
 
-      request[:operation] == :edit and is_nil(request[:external_message_id]) ->
+      request[:operation] in [:edit, :edit_media] and is_nil(request[:external_message_id]) ->
         {:error, :missing_external_message_id}
 
       true ->
@@ -371,6 +530,10 @@ defmodule JidoMessaging.OutboundGateway.Partition do
   end
 
   defp validate_request(_request), do: {:error, :invalid_request}
+
+  defp valid_payload?(operation, payload) when operation in [:send, :edit], do: is_binary(payload)
+  defp valid_payload?(operation, payload) when operation in [:send_media, :edit_media], do: is_map(payload)
+  defp valid_payload?(_operation, _payload), do: false
 
   defp invalid_request_error(request, reason, state) do
     %{
@@ -456,6 +619,9 @@ defmodule JidoMessaging.OutboundGateway.Partition do
   end
 
   defp extract_message_id(result), do: result
+
+  defp maybe_put(map, _key, nil), do: map
+  defp maybe_put(map, key, value), do: Map.put(map, key, value)
 
   defp sanitize_attempts(value, _default) when is_integer(value) and value > 0, do: value
   defp sanitize_attempts(_value, default), do: default

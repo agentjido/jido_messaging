@@ -47,12 +47,14 @@ defmodule JidoMessaging.Channels.Discord do
        external_room_id: msg.channel_id,
        external_user_id: get_user_id(msg),
        text: msg.content,
+       media: extract_media(msg),
        username: get_username(msg),
        display_name: get_display_name(msg),
        external_message_id: msg.id,
        timestamp: msg.timestamp,
        chat_type: parse_chat_type(msg),
-       chat_title: nil
+       chat_title: nil,
+       raw: Map.from_struct(msg)
      }}
   end
 
@@ -62,12 +64,14 @@ defmodule JidoMessaging.Channels.Discord do
        external_room_id: channel_id,
        external_user_id: get_map_value(msg, [:author, "author"]) |> get_nested_id(),
        text: get_map_value(msg, [:content, "content"]),
+       media: extract_media(msg),
        username: get_map_value(msg, [:author, "author"]) |> get_nested_username(),
        display_name: get_map_value(msg, [:author, "author"]) |> get_nested_display_name(),
        external_message_id: get_map_value(msg, [:id, "id"]),
        timestamp: get_map_value(msg, [:timestamp, "timestamp"]),
        chat_type: parse_map_chat_type(msg),
-       chat_title: nil
+       chat_title: nil,
+       raw: msg
      }}
   end
 
@@ -77,12 +81,14 @@ defmodule JidoMessaging.Channels.Discord do
        external_room_id: channel_id,
        external_user_id: get_map_value(msg, [:author, "author"]) |> get_nested_id(),
        text: get_map_value(msg, [:content, "content"]),
+       media: extract_media(msg),
        username: get_map_value(msg, [:author, "author"]) |> get_nested_username(),
        display_name: get_map_value(msg, [:author, "author"]) |> get_nested_display_name(),
        external_message_id: get_map_value(msg, [:id, "id"]),
        timestamp: get_map_value(msg, [:timestamp, "timestamp"]),
        chat_type: parse_map_chat_type(msg),
-       chat_title: nil
+       chat_title: nil,
+       raw: msg
      }}
   end
 
@@ -180,6 +186,66 @@ defmodule JidoMessaging.Channels.Discord do
     guild_id = get_map_value(msg, [:guild_id, "guild_id"])
     if guild_id, do: :guild, else: :dm
   end
+
+  defp extract_media(%Nostrum.Struct.Message{attachments: attachments}) when is_list(attachments) do
+    attachments
+    |> Enum.map(&normalize_attachment/1)
+    |> Enum.reject(&is_nil/1)
+  end
+
+  defp extract_media(msg) when is_map(msg) do
+    msg
+    |> get_map_value([:attachments, "attachments"])
+    |> normalize_attachments()
+  end
+
+  defp extract_media(_), do: []
+
+  defp normalize_attachments(attachments) when is_list(attachments) do
+    attachments
+    |> Enum.map(&normalize_attachment/1)
+    |> Enum.reject(&is_nil/1)
+  end
+
+  defp normalize_attachments(_), do: []
+
+  defp normalize_attachment(%_{} = attachment) do
+    attachment
+    |> Map.from_struct()
+    |> normalize_attachment()
+  end
+
+  defp normalize_attachment(attachment) when is_map(attachment) do
+    media_type = get_map_value(attachment, [:content_type, "content_type"])
+    filename = get_map_value(attachment, [:filename, "filename", :name, "name"])
+    url = get_map_value(attachment, [:url, "url", :proxy_url, "proxy_url"])
+    kind = attachment_kind(media_type)
+
+    %{
+      kind: kind,
+      url: url,
+      media_type: media_type,
+      filename: filename,
+      size_bytes: get_map_value(attachment, [:size, "size"]),
+      width: get_map_value(attachment, [:width, "width"]),
+      height: get_map_value(attachment, [:height, "height"])
+    }
+    |> Enum.reject(fn {_k, v} -> is_nil(v) end)
+    |> Map.new()
+  end
+
+  defp normalize_attachment(_), do: nil
+
+  defp attachment_kind(media_type) when is_binary(media_type) do
+    cond do
+      String.starts_with?(media_type, "image/") -> :image
+      String.starts_with?(media_type, "audio/") -> :audio
+      String.starts_with?(media_type, "video/") -> :video
+      true -> :file
+    end
+  end
+
+  defp attachment_kind(_), do: :file
 
   defp build_message_opts(text, opts) do
     base = %{content: text}
