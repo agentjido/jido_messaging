@@ -7,6 +7,8 @@ defmodule JidoMessaging.Supervisor do
   """
   use Supervisor
 
+  alias JidoMessaging.PluginRegistry
+
   def start_link(opts) do
     name = Keyword.fetch!(opts, :name)
     Supervisor.start_link(__MODULE__, opts, name: name)
@@ -20,41 +22,54 @@ defmodule JidoMessaging.Supervisor do
     instance_module = Keyword.fetch!(opts, :instance_module)
     adapter = Keyword.fetch!(opts, :adapter)
     adapter_opts = Keyword.get(opts, :adapter_opts, [])
+    plugin_manifest_paths = Keyword.get(opts, :plugin_manifest_paths, [])
+    required_plugins = Keyword.get(opts, :required_plugins, [])
+    plugin_collision_policy = Keyword.get(opts, :plugin_collision_policy, :prefer_last)
 
-    runtime_name = Module.concat(instance_module, Runtime)
-    room_registry_name = Module.concat(instance_module, Registry.Rooms)
-    room_supervisor_name = Module.concat(instance_module, RoomSupervisor)
-    agent_registry_name = Module.concat(instance_module, Registry.Agents)
-    agent_supervisor_name = Module.concat(instance_module, AgentSupervisor)
-    instance_registry_name = Module.concat(instance_module, Registry.Instances)
-    instance_supervisor_name = Module.concat(instance_module, InstanceSupervisor)
-    onboarding_registry_name = Module.concat(instance_module, Registry.Onboarding)
-    onboarding_supervisor_name = Module.concat(instance_module, OnboardingSupervisor)
-    session_manager_supervisor_name = Module.concat(instance_module, SessionManagerSupervisor)
-    outbound_gateway_supervisor_name = Module.concat(instance_module, OutboundGatewaySupervisor)
-    deduper_name = Module.concat(instance_module, Deduper)
-    signal_bus_name = Module.concat(instance_module, SignalBus)
+    case PluginRegistry.bootstrap_from_manifests(
+           manifest_paths: plugin_manifest_paths,
+           required_plugins: required_plugins,
+           collision_policy: plugin_collision_policy
+         ) do
+      {:ok, _bootstrap_result} ->
+        runtime_name = Module.concat(instance_module, Runtime)
+        room_registry_name = Module.concat(instance_module, Registry.Rooms)
+        room_supervisor_name = Module.concat(instance_module, RoomSupervisor)
+        agent_registry_name = Module.concat(instance_module, Registry.Agents)
+        agent_supervisor_name = Module.concat(instance_module, AgentSupervisor)
+        instance_registry_name = Module.concat(instance_module, Registry.Instances)
+        instance_supervisor_name = Module.concat(instance_module, InstanceSupervisor)
+        onboarding_registry_name = Module.concat(instance_module, Registry.Onboarding)
+        onboarding_supervisor_name = Module.concat(instance_module, OnboardingSupervisor)
+        session_manager_supervisor_name = Module.concat(instance_module, SessionManagerSupervisor)
+        outbound_gateway_supervisor_name = Module.concat(instance_module, OutboundGatewaySupervisor)
+        deduper_name = Module.concat(instance_module, Deduper)
+        signal_bus_name = Module.concat(instance_module, SignalBus)
 
-    children = [
-      {Registry, keys: :unique, name: room_registry_name},
-      {Registry, keys: :unique, name: agent_registry_name},
-      {Registry, keys: :unique, name: instance_registry_name},
-      {Registry, keys: :unique, name: onboarding_registry_name},
-      {Jido.Signal.Bus, name: signal_bus_name},
-      {JidoMessaging.RoomSupervisor, name: room_supervisor_name, instance_module: instance_module},
-      {JidoMessaging.AgentSupervisor, name: agent_supervisor_name, instance_module: instance_module},
-      {JidoMessaging.Onboarding.Supervisor, name: onboarding_supervisor_name, instance_module: instance_module},
-      {JidoMessaging.SessionManager.Supervisor,
-       name: session_manager_supervisor_name, instance_module: instance_module},
-      {JidoMessaging.OutboundGateway.Supervisor,
-       name: outbound_gateway_supervisor_name, instance_module: instance_module},
-      {JidoMessaging.InstanceSupervisor, name: instance_supervisor_name, instance_module: instance_module},
-      {JidoMessaging.Deduper, name: deduper_name, instance_module: instance_module},
-      {JidoMessaging.Runtime,
-       name: runtime_name, instance_module: instance_module, adapter: adapter, adapter_opts: adapter_opts}
-    ]
+        children = [
+          {Registry, keys: :unique, name: room_registry_name},
+          {Registry, keys: :unique, name: agent_registry_name},
+          {Registry, keys: :unique, name: instance_registry_name},
+          {Registry, keys: :unique, name: onboarding_registry_name},
+          {Jido.Signal.Bus, name: signal_bus_name},
+          {JidoMessaging.RoomSupervisor, name: room_supervisor_name, instance_module: instance_module},
+          {JidoMessaging.AgentSupervisor, name: agent_supervisor_name, instance_module: instance_module},
+          {JidoMessaging.Onboarding.Supervisor, name: onboarding_supervisor_name, instance_module: instance_module},
+          {JidoMessaging.SessionManager.Supervisor,
+           name: session_manager_supervisor_name, instance_module: instance_module},
+          {JidoMessaging.OutboundGateway.Supervisor,
+           name: outbound_gateway_supervisor_name, instance_module: instance_module},
+          {JidoMessaging.InstanceSupervisor, name: instance_supervisor_name, instance_module: instance_module},
+          {JidoMessaging.Deduper, name: deduper_name, instance_module: instance_module},
+          {JidoMessaging.Runtime,
+           name: runtime_name, instance_module: instance_module, adapter: adapter, adapter_opts: adapter_opts}
+        ]
 
-    Supervisor.init(children, strategy: :one_for_one)
+        Supervisor.init(children, strategy: :one_for_one)
+
+      {:error, {:fatal_required_plugin_error, diagnostic}} ->
+        {:stop, {:fatal_required_plugin_error, diagnostic}}
+    end
   end
 
   @doc """

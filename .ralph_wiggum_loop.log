@@ -454,3 +454,50 @@ Excluding tags: [:flaky]
 .............................................................................................................................................................................................................................................................*.................................................................................................................................................................................................................................................................................................................*....................................................................................***.....................................................
 Finished in 3.9 seconds (0.8s async, 3.1s sync)
 700 tests, 0 failures, 5 skipped
+1) changed files
+- `lib/jido_messaging/plugin_registry.ex`
+  - Added `bootstrap_from_manifests/1` for manifest parsing/validation, required-vs-optional failure policy, deterministic collision resolution (`:prefer_first` / `:prefer_last`), and manifest/bootstrap telemetry.
+  - Added typed diagnostics using policy tags `:fatal_required_plugin_error` and `:degraded_optional_plugin_error`.
+- `lib/jido_messaging/supervisor.ex`
+  - Added startup bootstrap call to `PluginRegistry.bootstrap_from_manifests/1` in `init/1`, returning `{:stop, {:fatal_required_plugin_error, diagnostic}}` on required-plugin failures.
+- `lib/jido_messaging.ex`
+  - Added `use JidoMessaging` config/runtime opts passthrough:
+    - `:plugin_manifest_paths`
+    - `:required_plugins`
+    - `:plugin_collision_policy`
+- `test/jido_messaging/plugin_manifest_bootstrap_test.exs`
+  - Added end-to-end manifest bootstrap tests covering happy path, required-fatal path, optional-degraded path (with telemetry/log assertion), deterministic collision policy, and startup fail-fast integration.
+
+2) tests/commands executed
+- `mix format lib/jido_messaging/plugin_registry.ex lib/jido_messaging/supervisor.ex lib/jido_messaging.ex test/jido_messaging/plugin_manifest_bootstrap_test.exs`
+- `mix test test/jido_messaging/plugin_test.exs test/jido_messaging/plugin_registry_test.exs test/jido_messaging/plugin_manifest_bootstrap_test.exs`
+- `mix test test/jido_messaging/plugin_manifest_bootstrap_test.exs` (during iteration)
+- `mix precommit` (run multiple times; final run passing)
+- Final `mix precommit` result: pass (`705 tests, 0 failures, 5 skipped`)
+
+3) acceptance criteria coverage
+- AC1: Valid manifests parsed/validated/registered deterministically
+  - Covered by `test/jido_messaging/plugin_manifest_bootstrap_test.exs` test `"registers valid manifests with deterministic precedence"`.
+- AC2: Invalid required plugins fail startup fast with explicit diagnostics
+  - Covered by tests:
+    - `"fails fast with typed diagnostics for malformed required plugin manifests"`
+    - `"startup bootstrap fails fast when required plugin manifests are invalid"`
+- AC3: Invalid optional plugins degrade safely and emit warnings/telemetry
+  - Covered by `"degrades optional malformed manifests with warning and telemetry"` (asserts degraded diagnostic, warning log, and telemetry event).
+- AC4: Collision policy deterministic and testable
+  - Covered by:
+    - `"registers valid manifests with deterministic precedence"` (`:prefer_last`)
+    - `"supports deterministic prefer_first collision policy"` (`:prefer_first`)
+
+4) blockers/assumptions
+- Blockers: none.
+- Assumptions:
+  - Manifest schema is JSON object with keys: `manifest_version`, `id`, `channel_module`, optional `label`, `capabilities`, `adapters`.
+  - Supported manifest version is `1`.
+  - Required plugin policy is driven by `required_plugins` option (IDs), and startup options are passed via `use JidoMessaging` and/or `start_link/1`.
+Running ExUnit with seed: 269845, max_cases: 20
+Excluding tags: [:flaky]
+
+.........................................................................................................................................................................................................................................................*.....................................................................................................................................................................................................................................................................................................................*.........................................................................................***.....................................................
+Finished in 3.9 seconds (0.8s async, 3.1s sync)
+705 tests, 0 failures, 5 skipped

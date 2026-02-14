@@ -35,6 +35,9 @@ defmodule JidoMessaging do
     quote bind_quoted: [opts: opts] do
       @adapter Keyword.get(opts, :adapter, JidoMessaging.Adapters.ETS)
       @adapter_opts Keyword.get(opts, :adapter_opts, [])
+      @plugin_manifest_paths Keyword.get(opts, :plugin_manifest_paths, [])
+      @required_plugins Keyword.get(opts, :required_plugins, [])
+      @plugin_collision_policy Keyword.get(opts, :plugin_collision_policy, :prefer_last)
       @pubsub Keyword.get(opts, :pubsub)
 
       def child_spec(init_opts) do
@@ -48,12 +51,18 @@ defmodule JidoMessaging do
       def start_link(opts \\ []) do
         adapter = Keyword.get(opts, :adapter, @adapter)
         adapter_opts = Keyword.get(opts, :adapter_opts, @adapter_opts)
+        plugin_manifest_paths = Keyword.get(opts, :plugin_manifest_paths, @plugin_manifest_paths)
+        required_plugins = Keyword.get(opts, :required_plugins, @required_plugins)
+        plugin_collision_policy = Keyword.get(opts, :plugin_collision_policy, @plugin_collision_policy)
 
         JidoMessaging.Supervisor.start_link(
           name: __jido_messaging__(:supervisor),
           instance_module: __MODULE__,
           adapter: adapter,
-          adapter_opts: adapter_opts
+          adapter_opts: adapter_opts,
+          plugin_manifest_paths: plugin_manifest_paths,
+          required_plugins: required_plugins,
+          plugin_collision_policy: plugin_collision_policy
         )
       end
 
@@ -74,6 +83,9 @@ defmodule JidoMessaging do
           :deduper -> Module.concat(__MODULE__, Deduper)
           :adapter -> @adapter
           :adapter_opts -> @adapter_opts
+          :plugin_manifest_paths -> @plugin_manifest_paths
+          :required_plugins -> @required_plugins
+          :plugin_collision_policy -> @plugin_collision_policy
           :pubsub -> @pubsub
         end
       end
