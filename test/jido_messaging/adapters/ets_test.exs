@@ -219,6 +219,32 @@ defmodule JidoMessaging.Adapters.ETSTest do
       assert length(rooms) == 1
     end
 
+    test "get_or_create_room_by_external_binding/5 recovers from stale binding", %{state: state} do
+      {:ok, room1} =
+        ETS.get_or_create_room_by_external_binding(
+          state,
+          :telegram,
+          "bot_1",
+          "chat_stale",
+          %{type: :direct}
+        )
+
+      :ok = ETS.delete_room(state, room1.id)
+
+      {:ok, room2} =
+        ETS.get_or_create_room_by_external_binding(
+          state,
+          :telegram,
+          "bot_1",
+          "chat_stale",
+          %{type: :direct}
+        )
+
+      assert room2.id != room1.id
+      assert {:ok, found_room} = ETS.get_room_by_external_binding(state, :telegram, "bot_1", "chat_stale")
+      assert found_room.id == room2.id
+    end
+
     test "get_or_create_participant_by_external_id/4 creates participant on first call", %{
       state: state
     } do
@@ -282,6 +308,30 @@ defmodule JidoMessaging.Adapters.ETSTest do
 
       assert length(participant_ids) == 1
       assert :ets.info(state.participants, :size) == 1
+    end
+
+    test "get_or_create_participant_by_external_id/4 recovers from stale binding", %{state: state} do
+      {:ok, p1} =
+        ETS.get_or_create_participant_by_external_id(
+          state,
+          :telegram,
+          "user_stale",
+          %{type: :human}
+        )
+
+      :ok = ETS.delete_participant(state, p1.id)
+
+      {:ok, p2} =
+        ETS.get_or_create_participant_by_external_id(
+          state,
+          :telegram,
+          "user_stale",
+          %{type: :human}
+        )
+
+      assert p2.id != p1.id
+      assert {:ok, found_participant} = ETS.get_participant(state, p2.id)
+      assert found_participant.id == p2.id
     end
   end
 

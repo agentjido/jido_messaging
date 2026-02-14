@@ -210,7 +210,15 @@ defmodule JidoMessaging.Adapters.ETS do
 
     case :ets.lookup(state.room_bindings, binding_key) do
       [{^binding_key, room_id}] ->
-        get_room(state, room_id)
+        case get_room(state, room_id) do
+          {:ok, _room} = ok ->
+            ok
+
+          {:error, :not_found} ->
+            # Remove stale binding only if it still points at the missing room.
+            true = :ets.delete_object(state.room_bindings, {binding_key, room_id})
+            get_or_create_room_by_external_binding(state, channel, instance_id, external_id, attrs)
+        end
 
       [] ->
         room = build_bound_room(channel, instance_id, external_id, attrs)
@@ -232,7 +240,15 @@ defmodule JidoMessaging.Adapters.ETS do
 
     case :ets.lookup(state.participant_bindings, binding_key) do
       [{^binding_key, participant_id}] ->
-        get_participant(state, participant_id)
+        case get_participant(state, participant_id) do
+          {:ok, _participant} = ok ->
+            ok
+
+          {:error, :not_found} ->
+            # Remove stale binding only if it still points at the missing participant.
+            true = :ets.delete_object(state.participant_bindings, {binding_key, participant_id})
+            get_or_create_participant_by_external_id(state, channel, external_id, attrs)
+        end
 
       [] ->
         participant = build_bound_participant(channel, external_id, attrs)
