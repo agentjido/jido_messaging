@@ -406,3 +406,51 @@ Excluding tags: [:flaky]
 ....................................................................................................................................................................................................................................................*.....................................................................................................................................................................................................................................................................................................................*................................................................................***.....................................................
 Finished in 3.8 seconds (0.8s async, 3.0s sync)
 691 tests, 0 failures, 5 skipped
+1) changed files
+- `lib/jido_messaging.ex`
+- `lib/jido_messaging/adapter.ex`
+- `lib/jido_messaging/adapters/ets.ex`
+- `lib/jido_messaging/supervisor.ex`
+- `lib/jido_messaging/directory.ex`
+- `lib/jido_messaging/onboarding.ex`
+- `lib/jido_messaging/onboarding/flow.ex`
+- `lib/jido_messaging/onboarding/state_machine.ex`
+- `lib/jido_messaging/onboarding/supervisor.ex`
+- `lib/jido_messaging/onboarding/worker.ex`
+- `test/jido_messaging/adapters/ets_test.exs`
+- `test/jido_messaging/directory_test.exs`
+- `test/jido_messaging/onboarding_test.exs`
+
+2) tests/commands executed
+- `mix test test/jido_messaging/adapters/ets_test.exs test/jido_messaging/directory_test.exs test/jido_messaging/onboarding_test.exs`
+- `mix format`
+- `mix test test/jido_messaging/adapters/ets_test.exs test/jido_messaging/directory_test.exs test/jido_messaging/onboarding_test.exs`
+- `mix precommit` (passing: 700 tests, 0 failures, 5 skipped)
+
+3) acceptance criteria coverage
+- AC1 (Directory lookup/search consistent adapter contract):
+  - Added directory contract callbacks on adapter and unified API via `JidoMessaging.Directory`.
+  - Implemented deterministic lookup/search behavior (including `{:ambiguous, matches}`) in ETS adapter.
+  - Covered by `test/jido_messaging/directory_test.exs` and `test/jido_messaging/adapters/ets_test.exs`.
+- AC2 (Deterministic, validated, idempotent onboarding transitions):
+  - Added explicit transition map/guards in `JidoMessaging.Onboarding.StateMachine`.
+  - Added persisted idempotency-key handling to prevent duplicate side effects.
+  - Covered by `test/jido_messaging/onboarding_test.exs` (“invalid transitions…”, “happy path…”).
+- AC3 (Resume after interruption):
+  - Added persisted onboarding flow storage and `resume_onboarding` path loading persisted state.
+  - Covered by `test/jido_messaging/onboarding_test.exs` (“resume restores persisted state…”).
+- AC4 (Supervised workers + crash isolation):
+  - Added `JidoMessaging.Onboarding.Supervisor` (DynamicSupervisor) and worker registry wiring in root supervisor.
+  - Per-flow worker processes are isolated by onboarding ID.
+  - Covered by `test/jido_messaging/onboarding_test.exs` (“worker crashes are isolated…”).
+
+4) blockers/assumptions
+- No blockers.
+- Assumption: onboarding flow is intentionally linear for MVP (`:started -> :directory_resolved -> :paired -> :completed`, with `:cancel` from non-terminal states).
+- Assumption: traceability row for `ST-OCM-009` already existed in `specs/stories/00_traceability_matrix.md`, so no update was needed.
+Running ExUnit with seed: 124212, max_cases: 20
+Excluding tags: [:flaky]
+
+.............................................................................................................................................................................................................................................................*.................................................................................................................................................................................................................................................................................................................*....................................................................................***.....................................................
+Finished in 3.9 seconds (0.8s async, 3.1s sync)
+700 tests, 0 failures, 5 skipped

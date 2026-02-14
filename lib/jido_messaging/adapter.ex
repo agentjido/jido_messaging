@@ -30,6 +30,10 @@ defmodule JidoMessaging.Adapter do
   @type channel :: atom()
   @type instance_id :: String.t()
   @type external_id :: String.t()
+  @type directory_target :: :participant | :room
+  @type directory_query :: map()
+  @type onboarding_id :: String.t()
+  @type onboarding_flow :: map()
 
   # Initialization
   @doc "Initialize the adapter with options. Returns adapter state."
@@ -147,4 +151,26 @@ defmodule JidoMessaging.Adapter do
   Delete a room binding by ID.
   """
   @callback delete_room_binding(state, binding_id :: String.t()) :: :ok | {:error, term()}
+
+  # Directory operations
+
+  @doc """
+  Lookup a single directory entry by target and query.
+
+  Returns `{:error, {:ambiguous, matches}}` when multiple entries satisfy the query.
+  """
+  @callback directory_lookup(state, directory_target(), directory_query(), opts :: keyword()) ::
+              {:ok, map()} | {:error, :not_found | {:ambiguous, [map()]} | term()}
+
+  @doc "Search directory entries by target and query."
+  @callback directory_search(state, directory_target(), directory_query(), opts :: keyword()) ::
+              {:ok, [map()]} | {:error, term()}
+
+  # Onboarding operations
+
+  @doc "Persist onboarding flow state."
+  @callback save_onboarding(state, onboarding_flow()) :: {:ok, onboarding_flow()} | {:error, term()}
+
+  @doc "Fetch onboarding flow state by onboarding ID."
+  @callback get_onboarding(state, onboarding_id()) :: {:ok, onboarding_flow()} | {:error, :not_found}
 end

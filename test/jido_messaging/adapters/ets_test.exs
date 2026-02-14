@@ -21,6 +21,8 @@ defmodule JidoMessaging.Adapters.ETSTest do
       assert is_reference(state.room_bindings_by_room)
       assert is_reference(state.room_bindings_by_id)
       assert is_reference(state.participant_bindings)
+      assert is_reference(state.message_external_ids)
+      assert is_reference(state.onboarding_flows)
     end
   end
 
@@ -315,6 +317,86 @@ defmodule JidoMessaging.Adapters.ETSTest do
       assert tg_room.id == room.id
       assert dc_room.id == room.id
       assert tg_room.id == dc_room.id
+    end
+  end
+
+  describe "directory operations" do
+    test "directory_search/4 and directory_lookup/4 return consistent participant results", %{
+      state: state
+    } do
+      {:ok, participant_a} =
+        ETS.save_participant(
+          state,
+          Participant.new(%{
+            type: :human,
+            identity: %{name: "Alex Rivera"},
+            external_ids: %{slack: "alex_1"}
+          })
+        )
+
+      {:ok, participant_b} =
+        ETS.save_participant(
+          state,
+          Participant.new(%{
+            type: :human,
+            identity: %{name: "Alex Kim"},
+            external_ids: %{slack: "alex_2"}
+          })
+        )
+
+      assert {:ok, matches} = ETS.directory_search(state, :participant, %{name: "alex"}, [])
+      assert Enum.map(matches, & &1.id) == Enum.sort([participant_a.id, participant_b.id])
+
+      assert {:error, {:ambiguous, ambiguous_matches}} =
+               ETS.directory_lookup(state, :participant, %{name: "alex"}, [])
+
+      assert Enum.map(ambiguous_matches, & &1.id) == Enum.map(matches, & &1.id)
+
+      assert {:ok, found} =
+               ETS.directory_lookup(
+                 state,
+                 :participant,
+                 %{channel: :slack, external_id: "alex_2"},
+                 []
+               )
+
+      assert found.id == participant_b.id
+    end
+
+    test "directory search supports room lookup by external binding", %{state: state} do
+      room = Room.new(%{type: :group, name: "Ops Room"})
+      {:ok, _} = ETS.save_room(state, room)
+      {:ok, _binding} = ETS.create_room_binding(state, room.id, :discord, "guild_1", "chan_22", %{})
+
+      assert {:ok, [found_room]} =
+               ETS.directory_search(
+                 state,
+                 :room,
+                 %{channel: :discord, instance_id: "guild_1", external_id: "chan_22"},
+                 []
+               )
+
+      assert found_room.id == room.id
+    end
+  end
+
+  describe "onboarding persistence operations" do
+    test "save_onboarding/2 and get_onboarding/2 round trip flow state", %{state: state} do
+      flow = %{
+        onboarding_id: "onboarding_1",
+        status: :started,
+        request: %{source: "test"},
+        transitions: [],
+        idempotency: %{},
+        side_effects: [],
+        inserted_at: DateTime.utc_now(),
+        updated_at: DateTime.utc_now()
+      }
+
+      assert {:ok, ^flow} = ETS.save_onboarding(state, flow)
+      assert {:ok, loaded_flow} = ETS.get_onboarding(state, "onboarding_1")
+      assert loaded_flow.onboarding_id == "onboarding_1"
+      assert loaded_flow.request == %{source: "test"}
     end
   end
 end

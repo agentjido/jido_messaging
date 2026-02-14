@@ -21,9 +21,11 @@ defmodule JidoMessaging.Adapters.ETS do
   - `:room_messages` - Index of message_ids by room_id (bag table)
   - `:room_bindings` - External binding to room_id mapping
   - `:participant_bindings` - External ID to participant_id mapping
+  - `:onboarding_flows` - Onboarding flow records keyed by onboarding_id
   """
 
   @behaviour JidoMessaging.Adapter
+  @behaviour JidoMessaging.Directory
 
   @schema Zoi.struct(
             __MODULE__,
@@ -36,7 +38,8 @@ defmodule JidoMessaging.Adapters.ETS do
               room_bindings_by_room: Zoi.any(),
               room_bindings_by_id: Zoi.any(),
               participant_bindings: Zoi.any(),
-              message_external_ids: Zoi.any()
+              message_external_ids: Zoi.any(),
+              onboarding_flows: Zoi.any()
             },
             coerce: false
           )
@@ -63,7 +66,8 @@ defmodule JidoMessaging.Adapters.ETS do
         room_bindings_by_room: :ets.new(:room_bindings_by_room, [:bag, :public]),
         room_bindings_by_id: :ets.new(:room_bindings_by_id, [:set, :public]),
         participant_bindings: :ets.new(:participant_bindings, [:set, :public]),
-        message_external_ids: :ets.new(:message_external_ids, [:set, :public])
+        message_external_ids: :ets.new(:message_external_ids, [:set, :public]),
+        onboarding_flows: :ets.new(:onboarding_flows, [:set, :public])
       })
 
     {:ok, state}
@@ -343,4 +347,173 @@ defmodule JidoMessaging.Adapters.ETS do
         {:error, :not_found}
     end
   end
+
+  # Directory operations
+
+  @impl JidoMessaging.Directory
+  def lookup(state, target, query) when is_map(query) do
+    directory_lookup(state, target, query, [])
+  end
+
+  @impl JidoMessaging.Directory
+  def search(state, target, query) when is_map(query) do
+    directory_search(state, target, query, [])
+  end
+
+  @impl true
+  def directory_lookup(state, target, query, opts \\ []) when is_map(query) do
+    case directory_search(state, target, query, opts) do
+      {:ok, [entry]} ->
+        {:ok, entry}
+
+      {:ok, []} ->
+        {:error, :not_found}
+
+      {:ok, matches} ->
+        {:error, {:ambiguous, matches}}
+
+      {:error, _reason} = error ->
+        error
+    end
+  end
+
+  @impl true
+  def directory_search(state, :participant, query, _opts) when is_map(query) do
+    participants =
+      :ets.tab2list(state.participants)
+      |> Enum.map(&elem(&1, 1))
+      |> Enum.filter(&participant_matches?(&1, query))
+      |> Enum.sort_by(& &1.id)
+
+    {:ok, participants}
+  end
+
+  def directory_search(state, :room, query, _opts) when is_map(query) do
+    rooms =
+      :ets.tab2list(state.rooms)
+      |> Enum.map(&elem(&1, 1))
+      |> Enum.filter(&room_matches?(&1, state, query))
+      |> Enum.sort_by(& &1.id)
+
+    {:ok, rooms}
+  end
+
+  def directory_search(_state, target, _query, _opts) do
+    {:error, {:invalid_directory_target, target}}
+  end
+
+  # Onboarding operations
+
+  @impl true
+  def save_onboarding(state, onboarding_flow) when is_map(onboarding_flow) do
+    onboarding_id = Map.get(onboarding_flow, :onboarding_id) || Map.get(onboarding_flow, "onboarding_id")
+
+    if is_binary(onboarding_id) and onboarding_id != "" do
+      true = :ets.insert(state.onboarding_flows, {onboarding_id, onboarding_flow})
+      {:ok, onboarding_flow}
+    else
+      {:error, :invalid_onboarding_id}
+    end
+  end
+
+  @impl true
+  def get_onboarding(state, onboarding_id) when is_binary(onboarding_id) do
+    case :ets.lookup(state.onboarding_flows, onboarding_id) do
+      [{^onboarding_id, onboarding_flow}] -> {:ok, onboarding_flow}
+      [] -> {:error, :not_found}
+    end
+  end
+
+  defp participant_matches?(participant, query) do
+    id_matches?(participant.id, query) and
+      name_matches?(participant_name(participant), query) and
+      participant_external_id_matches?(participant, query)
+  end
+
+  defp room_matches?(room, state, query) do
+    id_matches?(room.id, query) and
+      name_matches?(room.name, query) and
+      room_external_binding_matches?(room.id, state, query)
+  end
+
+  defp participant_external_id_matches?(participant, query) do
+    channel = query_value(query, :channel)
+    external_id = query_value(query, :external_id)
+
+    cond do
+      is_nil(channel) and is_nil(external_id) ->
+        true
+
+      is_nil(channel) or is_nil(external_id) ->
+        false
+
+      true ->
+        expected_channel = normalize_term(channel)
+        expected_external_id = normalize_term(external_id)
+
+        Enum.any?(participant.external_ids, fn {key, value} ->
+          normalize_term(key) == expected_channel and normalize_term(value) == expected_external_id
+        end)
+    end
+  end
+
+  defp room_external_binding_matches?(room_id, state, query) do
+    channel = query_value(query, :channel)
+    instance_id = query_value(query, :instance_id)
+    external_id = query_value(query, :external_id)
+
+    cond do
+      is_nil(channel) and is_nil(instance_id) and is_nil(external_id) ->
+        true
+
+      is_nil(channel) or is_nil(instance_id) or is_nil(external_id) ->
+        false
+
+      true ->
+        expected_channel = normalize_term(channel)
+        expected_instance_id = normalize_term(instance_id)
+        expected_external_id = normalize_term(external_id)
+
+        :ets.tab2list(state.room_bindings)
+        |> Enum.any?(fn {{binding_channel, binding_instance_id, binding_external_id}, binding_room_id} ->
+          binding_room_id == room_id and
+            normalize_term(binding_channel) == expected_channel and
+            normalize_term(binding_instance_id) == expected_instance_id and
+            normalize_term(binding_external_id) == expected_external_id
+        end)
+    end
+  end
+
+  defp id_matches?(id, query) do
+    case query_value(query, :id) do
+      nil -> true
+      expected_id -> normalize_term(id) == normalize_term(expected_id)
+    end
+  end
+
+  defp name_matches?(name, query) do
+    case query_value(query, :name) do
+      nil -> true
+      expected_name -> contains_ci?(name, expected_name)
+    end
+  end
+
+  defp contains_ci?(value, expected) when is_binary(value) do
+    String.contains?(String.downcase(value), String.downcase(to_string(expected)))
+  end
+
+  defp contains_ci?(_value, _expected), do: false
+
+  defp participant_name(participant) do
+    get_in(participant.identity, [:name]) || get_in(participant.identity, ["name"])
+  end
+
+  defp query_value(query, key) do
+    Map.get(query, key) || Map.get(query, Atom.to_string(key))
+  end
+
+  defp normalize_term(value) when is_binary(value), do: value
+  defp normalize_term(value) when is_atom(value), do: Atom.to_string(value)
+  defp normalize_term(value) when is_integer(value), do: Integer.to_string(value)
+  defp normalize_term(value), do: to_string(value)
 end

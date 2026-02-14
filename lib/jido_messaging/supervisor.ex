@@ -28,6 +28,8 @@ defmodule JidoMessaging.Supervisor do
     agent_supervisor_name = Module.concat(instance_module, AgentSupervisor)
     instance_registry_name = Module.concat(instance_module, Registry.Instances)
     instance_supervisor_name = Module.concat(instance_module, InstanceSupervisor)
+    onboarding_registry_name = Module.concat(instance_module, Registry.Onboarding)
+    onboarding_supervisor_name = Module.concat(instance_module, OnboardingSupervisor)
     session_manager_supervisor_name = Module.concat(instance_module, SessionManagerSupervisor)
     outbound_gateway_supervisor_name = Module.concat(instance_module, OutboundGatewaySupervisor)
     deduper_name = Module.concat(instance_module, Deduper)
@@ -37,9 +39,11 @@ defmodule JidoMessaging.Supervisor do
       {Registry, keys: :unique, name: room_registry_name},
       {Registry, keys: :unique, name: agent_registry_name},
       {Registry, keys: :unique, name: instance_registry_name},
+      {Registry, keys: :unique, name: onboarding_registry_name},
       {Jido.Signal.Bus, name: signal_bus_name},
       {JidoMessaging.RoomSupervisor, name: room_supervisor_name, instance_module: instance_module},
       {JidoMessaging.AgentSupervisor, name: agent_supervisor_name, instance_module: instance_module},
+      {JidoMessaging.Onboarding.Supervisor, name: onboarding_supervisor_name, instance_module: instance_module},
       {JidoMessaging.SessionManager.Supervisor,
        name: session_manager_supervisor_name, instance_module: instance_module},
       {JidoMessaging.OutboundGateway.Supervisor,

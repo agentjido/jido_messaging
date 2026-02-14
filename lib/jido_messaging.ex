@@ -29,7 +29,7 @@ defmodule JidoMessaging do
       {:ok, messages} = MyApp.Messaging.list_messages(room.id)
   """
 
-  alias JidoMessaging.{Room, Message, Participant, Runtime}
+  alias JidoMessaging.{Onboarding, Room, Message, Participant, Runtime}
 
   defmacro __using__(opts) do
     quote bind_quoted: [opts: opts] do
@@ -68,6 +68,8 @@ defmodule JidoMessaging do
           :agent_supervisor -> Module.concat(__MODULE__, AgentSupervisor)
           :instance_registry -> Module.concat(__MODULE__, Registry.Instances)
           :instance_supervisor -> Module.concat(__MODULE__, InstanceSupervisor)
+          :onboarding_registry -> Module.concat(__MODULE__, Registry.Onboarding)
+          :onboarding_supervisor -> Module.concat(__MODULE__, OnboardingSupervisor)
           :session_manager_supervisor -> Module.concat(__MODULE__, SessionManagerSupervisor)
           :deduper -> Module.concat(__MODULE__, Deduper)
           :adapter -> @adapter
@@ -208,6 +210,55 @@ defmodule JidoMessaging do
       @doc "Delete a room binding"
       def delete_room_binding(binding_id) do
         JidoMessaging.delete_room_binding(__jido_messaging__(:runtime), binding_id)
+      end
+
+      # Directory functions
+
+      @doc "Lookup a single directory entry."
+      def directory_lookup(target, query, opts \\ []) do
+        JidoMessaging.directory_lookup(__jido_messaging__(:runtime), target, query, opts)
+      end
+
+      @doc "Search directory entries."
+      def directory_search(target, query, opts \\ []) do
+        JidoMessaging.directory_search(__jido_messaging__(:runtime), target, query, opts)
+      end
+
+      # Onboarding functions
+
+      @doc "Start (or resume) an onboarding flow."
+      def start_onboarding(attrs, opts \\ []) do
+        JidoMessaging.start_onboarding(__MODULE__, attrs, opts)
+      end
+
+      @doc "Advance an onboarding flow."
+      def advance_onboarding(onboarding_id, transition, metadata \\ %{}, opts \\ []) do
+        JidoMessaging.advance_onboarding(__MODULE__, onboarding_id, transition, metadata, opts)
+      end
+
+      @doc "Resume an onboarding flow."
+      def resume_onboarding(onboarding_id) do
+        JidoMessaging.resume_onboarding(__MODULE__, onboarding_id)
+      end
+
+      @doc "Cancel an onboarding flow."
+      def cancel_onboarding(onboarding_id, metadata \\ %{}, opts \\ []) do
+        JidoMessaging.cancel_onboarding(__MODULE__, onboarding_id, metadata, opts)
+      end
+
+      @doc "Complete an onboarding flow."
+      def complete_onboarding(onboarding_id, metadata \\ %{}, opts \\ []) do
+        JidoMessaging.complete_onboarding(__MODULE__, onboarding_id, metadata, opts)
+      end
+
+      @doc "Fetch onboarding flow state."
+      def get_onboarding(onboarding_id) do
+        JidoMessaging.get_onboarding(__MODULE__, onboarding_id)
+      end
+
+      @doc "Find the onboarding worker PID for a flow."
+      def whereis_onboarding_worker(onboarding_id) do
+        JidoMessaging.whereis_onboarding_worker(__MODULE__, onboarding_id)
       end
 
       # Room Server functions
@@ -470,5 +521,62 @@ defmodule JidoMessaging do
   def delete_room_binding(runtime, binding_id) do
     {adapter, adapter_state} = Runtime.get_adapter(runtime)
     adapter.delete_room_binding(adapter_state, binding_id)
+  end
+
+  @doc "Lookup a single directory entry."
+  def directory_lookup(runtime, target, query, opts \\ [])
+      when is_atom(target) and is_map(query) and is_list(opts) do
+    {adapter, adapter_state} = Runtime.get_adapter(runtime)
+    adapter.directory_lookup(adapter_state, target, query, opts)
+  end
+
+  @doc "Search directory entries."
+  def directory_search(runtime, target, query, opts \\ [])
+      when is_atom(target) and is_map(query) and is_list(opts) do
+    {adapter, adapter_state} = Runtime.get_adapter(runtime)
+    adapter.directory_search(adapter_state, target, query, opts)
+  end
+
+  @doc "Start (or resume) an onboarding flow."
+  def start_onboarding(instance_module, attrs, opts \\ [])
+      when is_atom(instance_module) and is_map(attrs) and is_list(opts) do
+    Onboarding.start(instance_module, attrs, opts)
+  end
+
+  @doc "Advance an onboarding flow."
+  def advance_onboarding(instance_module, onboarding_id, transition, metadata \\ %{}, opts \\ [])
+      when is_atom(instance_module) and is_binary(onboarding_id) and is_atom(transition) and is_map(metadata) and
+             is_list(opts) do
+    Onboarding.advance(instance_module, onboarding_id, transition, metadata, opts)
+  end
+
+  @doc "Resume an onboarding flow."
+  def resume_onboarding(instance_module, onboarding_id)
+      when is_atom(instance_module) and is_binary(onboarding_id) do
+    Onboarding.resume(instance_module, onboarding_id)
+  end
+
+  @doc "Cancel an onboarding flow."
+  def cancel_onboarding(instance_module, onboarding_id, metadata \\ %{}, opts \\ [])
+      when is_atom(instance_module) and is_binary(onboarding_id) and is_map(metadata) and is_list(opts) do
+    Onboarding.cancel(instance_module, onboarding_id, metadata, opts)
+  end
+
+  @doc "Complete an onboarding flow."
+  def complete_onboarding(instance_module, onboarding_id, metadata \\ %{}, opts \\ [])
+      when is_atom(instance_module) and is_binary(onboarding_id) and is_map(metadata) and is_list(opts) do
+    Onboarding.complete(instance_module, onboarding_id, metadata, opts)
+  end
+
+  @doc "Fetch an onboarding flow."
+  def get_onboarding(instance_module, onboarding_id)
+      when is_atom(instance_module) and is_binary(onboarding_id) do
+    Onboarding.get(instance_module, onboarding_id)
+  end
+
+  @doc "Find onboarding worker PID."
+  def whereis_onboarding_worker(instance_module, onboarding_id)
+      when is_atom(instance_module) and is_binary(onboarding_id) do
+    Onboarding.whereis_worker(instance_module, onboarding_id)
   end
 end
