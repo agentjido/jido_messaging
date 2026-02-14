@@ -223,8 +223,6 @@ defmodule JidoMessaging.Channels.WhatsApp do
     end
   end
 
-  defp extract_media(_), do: []
-
   defp normalize_whatsapp_media(_media_type, nil), do: nil
 
   defp normalize_whatsapp_media(media_type, payload) when is_map(payload) do

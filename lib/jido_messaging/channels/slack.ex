@@ -213,8 +213,6 @@ defmodule JidoMessaging.Channels.Slack do
     end
   end
 
-  defp extract_media(_), do: []
-
   defp normalize_file(%_{} = file), do: normalize_file(Map.from_struct(file))
 
   defp normalize_file(file) when is_map(file) do

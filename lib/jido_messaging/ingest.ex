@@ -333,10 +333,6 @@ defmodule JidoMessaging.Ingest do
       {:error, {:media_policy_denied, reason}, media_metadata} ->
         Logger.warning("[JidoMessaging.Ingest] Media policy rejection: #{inspect(reason)}")
         {:error, {:media_policy_denied, reason, media_metadata}}
-
-      {:error, reason, media_metadata} ->
-        Logger.warning("[JidoMessaging.Ingest] Media normalization rejection: #{inspect(reason)}")
-        {:error, {:media_policy_denied, reason, media_metadata}}
     end
   end
 

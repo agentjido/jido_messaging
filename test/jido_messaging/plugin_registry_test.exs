@@ -234,5 +234,16 @@ defmodule JidoMessaging.PluginRegistryTest do
 
       assert PluginRegistry.list_plugins() == []
     end
+
+    test "remains safe under concurrent calls" do
+      tasks =
+        for _ <- 1..100 do
+          Task.async(fn -> PluginRegistry.clear() end)
+        end
+
+      results = Enum.map(tasks, &Task.await(&1, 1_000))
+      assert Enum.all?(results, &(&1 == :ok))
+      assert PluginRegistry.list_plugins() == []
+    end
   end
 end

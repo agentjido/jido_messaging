@@ -147,8 +147,6 @@ defmodule JidoMessaging.MsgContext.CommandParser do
     Regex.match?(~r/^[A-Za-z0-9][A-Za-z0-9_-]*$/, name)
   end
 
-  defp valid_command_name?(_), do: false
-
   defp argv(nil), do: []
 
   defp argv(args) when is_binary(args) do

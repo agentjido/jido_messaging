@@ -28,14 +28,17 @@ defmodule JidoMessaging.Onboarding.Worker do
     registry = registry_name(instance_module)
 
     case Registry.lookup(registry, {:onboarding_worker, onboarding_id}) do
-      [{pid, _}] -> pid
-      [] -> nil
+      [{pid, _}] when is_pid(pid) ->
+        if Process.alive?(pid), do: pid, else: nil
+
+      [] ->
+        nil
     end
   end
 
   @spec get_flow(pid(), timeout()) :: {:ok, Flow.t()} | {:error, term()}
   def get_flow(pid, timeout \\ @default_call_timeout) when is_pid(pid) do
-    GenServer.call(pid, :get_flow, timeout)
+    safe_call(pid, :get_flow, timeout)
   end
 
   @spec transition(pid(), StateMachine.transition(), map(), keyword(), timeout()) ::
@@ -43,7 +46,7 @@ defmodule JidoMessaging.Onboarding.Worker do
           | {:error, term()}
   def transition(pid, transition, metadata, opts \\ [], timeout \\ @default_call_timeout)
       when is_pid(pid) and is_atom(transition) and is_map(metadata) and is_list(opts) do
-    GenServer.call(pid, {:transition, transition, metadata, opts}, timeout)
+    safe_call(pid, {:transition, transition, metadata, opts}, timeout)
   end
 
   @impl true
@@ -130,6 +133,15 @@ defmodule JidoMessaging.Onboarding.Worker do
 
   defp normalize_flow(flow) when is_map(flow) do
     struct!(Flow, Map.new(flow))
+  end
+
+  defp safe_call(pid, request, timeout) do
+    try do
+      GenServer.call(pid, request, timeout)
+    catch
+      :exit, reason ->
+        {:error, {:worker_unavailable, reason}}
+    end
   end
 
   defp registry_name(instance_module), do: Module.concat(instance_module, Registry.Onboarding)

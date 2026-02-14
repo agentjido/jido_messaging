@@ -31,10 +31,20 @@ defmodule JidoMessaging.Onboarding.Supervisor do
        ]}
 
     case DynamicSupervisor.start_child(supervisor, child_spec) do
-      {:ok, pid} -> {:ok, pid}
-      {:error, {:already_started, pid}} -> {:ok, pid}
-      {:error, :already_present} -> {:ok, Worker.whereis(instance_module, onboarding_id)}
-      {:error, reason} -> {:error, reason}
+      {:ok, pid} ->
+        {:ok, pid}
+
+      {:error, {:already_started, pid}} ->
+        {:ok, pid}
+
+      {:error, :already_present} ->
+        case Worker.whereis(instance_module, onboarding_id) do
+          pid when is_pid(pid) -> {:ok, pid}
+          nil -> {:error, :worker_unavailable}
+        end
+
+      {:error, reason} ->
+        {:error, reason}
     end
   end
 
@@ -42,8 +52,8 @@ defmodule JidoMessaging.Onboarding.Supervisor do
   def get_or_start_worker(instance_module, onboarding_id, opts \\ [])
       when is_atom(instance_module) and is_binary(onboarding_id) and is_list(opts) do
     case Worker.whereis(instance_module, onboarding_id) do
+      pid when is_pid(pid) -> {:ok, pid}
       nil -> start_worker(instance_module, onboarding_id, opts)
-      pid -> {:ok, pid}
     end
   end
 

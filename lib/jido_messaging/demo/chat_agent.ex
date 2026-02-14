@@ -28,6 +28,8 @@ defmodule JidoMessaging.Demo.ChatAgent do
   contain questions it can help with.
   """
 
+  @dialyzer {:nowarn_function, plugin_specs: 0}
+
   use Jido.AI.ReActAgent,
     name: "chat_agent",
     description: "Helpful chat assistant for cross-platform messaging",

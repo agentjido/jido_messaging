@@ -121,11 +121,11 @@ defmodule Mix.Tasks.JidoMessaging.Demo do
     env_file = Path.join(File.cwd!(), ".env")
 
     if File.exists?(env_file) do
-      Dotenvy.source!([env_file, System.get_env()])
+      Dotenvy.source!([env_file])
       Logger.info("[Demo] Loaded .env file")
-    else
-      Dotenvy.source!([System.get_env()])
     end
+
+    :ok
   end
 
   defp validate_config!(:echo) do

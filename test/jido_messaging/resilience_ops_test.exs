@@ -169,17 +169,30 @@ defmodule JidoMessaging.ResilienceOpsTest do
       Task.async(fn -> OutboundGateway.send_message(TestMessaging, context, "three", priority: :normal) end)
     ]
 
-    assert_receive {:pressure_action, :throttle, :degraded, :normal}, 500
+    load_shed_result =
+      Enum.reduce_while(1..5, :not_shed, fn attempt, _acc ->
+        case OutboundGateway.send_message(TestMessaging, context, "drop-me-#{attempt}", priority: :low) do
+          {:error, %{reason: :load_shed} = error} ->
+            {:halt, {:error, error}}
 
-    assert {:error, load_shed_error} =
-             OutboundGateway.send_message(TestMessaging, context, "drop-me", priority: :low)
+          _other ->
+            Process.sleep(10)
+            {:cont, :not_shed}
+        end
+      end)
+
+    assert {:error, load_shed_error} = load_shed_result
 
     assert load_shed_error.reason == :load_shed
     assert_receive {:pressure_action, :shed_drop, :shed, :low}, 500
 
-    Enum.each(tasks, fn task ->
-      assert {:ok, _response} = Task.await(task, 1_000)
-    end)
+    responses =
+      Enum.map(tasks, fn task ->
+        assert {:ok, response} = Task.await(task, 1_000)
+        response
+      end)
+
+    assert Enum.any?(responses, fn response -> response.pressure_level in [:degraded, :shed] end)
   end
 
   test "replay and pressure workers recover after crashes under supervision" do

@@ -384,9 +384,7 @@ defmodule JidoMessaging.OutboundGateway do
     if is_binary(thread_id), do: thread_id, else: nil
   end
 
-  defp keyword_or_map_get(opts, key) when is_list(opts), do: Keyword.get(opts, key)
-  defp keyword_or_map_get(opts, key) when is_map(opts), do: Map.get(opts, key)
-  defp keyword_or_map_get(_opts, _key), do: nil
+  defp keyword_or_map_get(opts, key), do: Keyword.get(opts, key)
 
   defp sanitize_positive_integer(value, _default)
        when is_integer(value) and value > 0,

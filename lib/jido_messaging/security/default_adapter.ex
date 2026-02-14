@@ -111,13 +111,8 @@ defmodule JidoMessaging.Security.DefaultAdapter do
   defp normalize_identity(value) when is_atom(value), do: Atom.to_string(value)
   defp normalize_identity(_value), do: nil
 
-  defp classify_verify_denial(reason) do
-    root =
-      case reason do
-        %{reason: inner} -> inner
-        {tag, _detail} when is_atom(tag) -> tag
-        value -> value
-      end
+  defp classify_verify_denial(%{} = reason) do
+    root = Map.get(reason, :reason) || Map.get(reason, "reason")
 
     case root do
       :unauthorized_sender ->

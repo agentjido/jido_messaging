@@ -328,7 +328,13 @@ defmodule JidoMessaging.PluginRegistry do
 
   defp ensure_table do
     if :ets.whereis(@table_name) == :undefined do
-      :ets.new(@table_name, [:set, :public, :named_table, read_concurrency: true])
+      heir = Process.whereis(:init)
+
+      try do
+        :ets.new(@table_name, [:set, :public, :named_table, {:read_concurrency, true}, {:heir, heir, nil}])
+      rescue
+        ArgumentError -> :ok
+      end
     end
 
     :ok
@@ -531,13 +537,6 @@ defmodule JidoMessaging.PluginRegistry do
          %{
            type: :unsupported_manifest_version,
            reason: {:expected_version, @supported_manifest_version}
-         }}
-
-      {:ok, manifest_version} ->
-        {:error,
-         %{
-           type: :unsupported_manifest_version,
-           reason: {:unsupported_manifest_version, manifest_version}
          }}
 
       {:error, _reason} = error ->

@@ -4,6 +4,10 @@ defmodule JidoMessaging.OutboundGateway.Partition do
 
   require Logger
 
+  @dialyzer {:nowarn_function, do_attempt: 3}
+  @dialyzer {:nowarn_function, media_preflight: 1}
+  @dialyzer {:nowarn_function, media_text_fallback: 3}
+
   alias JidoMessaging.Channel
   alias JidoMessaging.DeadLetter
   alias JidoMessaging.MediaPolicy
@@ -133,15 +137,15 @@ defmodule JidoMessaging.OutboundGateway.Partition do
 
       {{:value, job}, remaining_queue} ->
         new_size = max(state.queue_size - 1, 0)
-        state = %{state | queue: remaining_queue, queue_size: new_size} |> maybe_emit_pressure_transition(new_size)
+        state = %{state | queue: remaining_queue, queue_size: new_size} |> maybe_emit_pressure_transition(new_size + 1)
         {reply, post_state} = process_job(job.request, state)
         GenServer.reply(job.from, reply)
 
         if post_state.queue_size > 0 do
           send(self(), :process_next)
-          {:noreply, %{post_state | processing: true}}
+          {:noreply, %{post_state | processing: true} |> maybe_emit_pressure_transition(post_state.queue_size + 1)}
         else
-          {:noreply, %{post_state | processing: false}}
+          {:noreply, %{post_state | processing: false} |> maybe_emit_pressure_transition(0)}
         end
     end
   end
@@ -421,6 +425,10 @@ defmodule JidoMessaging.OutboundGateway.Partition do
      })}
   end
 
+  defp media_text_fallback(_request, _fallback_text, _metadata) do
+    {:error, :unsupported_media_fallback}
+  end
+
   defp media_policy_opts(opts) when is_list(opts) do
     case Keyword.get(opts, :media_policy, []) do
       value when is_list(value) -> value
@@ -491,26 +499,27 @@ defmodule JidoMessaging.OutboundGateway.Partition do
     min(exponential, max_backoff_ms)
   end
 
-  defp queue_full?(state), do: state.queue_size >= state.queue_capacity
+  defp queue_full?(state), do: current_load(state) >= state.queue_capacity
 
   defp maybe_apply_pressure_policy(state, request) do
-    projected_queue_size = state.queue_size + 1
-    ratio = projected_queue_size / max(state.queue_capacity, 1)
-    projected_level = pressure_level_for_ratio(ratio, state.pressure_policy)
+    projected_load = current_load(state) + min(mailbox_backlog(), 1) + 1
+    ratio = projected_load / max(state.queue_capacity, 1)
+    projected_state = maybe_emit_pressure_transition(state, projected_load)
+    projected_level = projected_state.pressure_level
     priority = request[:priority] || :normal
 
-    case pressure_action(projected_level, priority, state.pressure_policy) do
+    case pressure_action(projected_level, priority, projected_state.pressure_policy) do
       {:throttle, throttle_ms} ->
-        emit_pressure_action(state, request, projected_level, :throttle, throttle_ms, ratio)
+        emit_pressure_action(projected_state, request, projected_level, :throttle, throttle_ms, ratio)
         Process.sleep(throttle_ms)
-        {:ok, state}
+        {:ok, projected_state}
 
       :shed_drop ->
-        emit_pressure_action(state, request, projected_level, :shed_drop, 0, ratio)
-        {:error, load_shed_error(request, state), state}
+        emit_pressure_action(projected_state, request, projected_level, :shed_drop, 0, ratio)
+        {:error, load_shed_error(request, projected_state), projected_state}
 
       :allow ->
-        {:ok, state}
+        {:ok, projected_state}
     end
   end
 
@@ -754,13 +763,22 @@ defmodule JidoMessaging.OutboundGateway.Partition do
       Map.get(result, "id")
   end
 
-  defp extract_message_id(result), do: result
-
   defp maybe_put(map, _key, nil), do: map
   defp maybe_put(map, key, value), do: Map.put(map, key, value)
 
   defp sanitize_attempts(value, _default) when is_integer(value) and value > 0, do: value
   defp sanitize_attempts(_value, default), do: default
+
+  defp current_load(state) do
+    state.queue_size + if(state.processing, do: 1, else: 0)
+  end
+
+  defp mailbox_backlog do
+    case Process.info(self(), :message_queue_len) do
+      {:message_queue_len, value} when is_integer(value) and value > 0 -> value
+      _ -> 0
+    end
+  end
 
   defp via_tuple(instance_module, partition) do
     {:via, Registry, {registry_name(instance_module), {:outbound_gateway_partition, partition}}}

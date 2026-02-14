@@ -287,7 +287,6 @@ defmodule JidoMessaging.InstanceReconnectWorker do
     case result do
       :ok -> :ok
       {:error, reason} -> {:error, reason}
-      other -> {:error, {:invalid_health_result, other}}
     end
   end
 

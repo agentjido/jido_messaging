@@ -12,6 +12,9 @@ defmodule JidoMessaging.MediaPolicy do
   alias JidoMessaging.Capabilities
   alias JidoMessaging.Content.{Audio, File, Image, Video}
 
+  @dialyzer {:nowarn_function, prepare_outbound: 3}
+  @dialyzer {:nowarn_function, prepare_outbound: 4}
+
   @supported_kinds [:image, :audio, :video, :file]
 
   @default_max_items 4
@@ -121,15 +124,17 @@ defmodule JidoMessaging.MediaPolicy do
   - `{:fallback_text, text, metadata}` - deterministic text fallback path
   - `{:error, reason, metadata}` - deterministic reject path
   """
-  @spec prepare_outbound(map(), module(), :send_media | :edit_media, keyword() | map()) ::
+  @spec prepare_outbound(term(), module(), atom(), keyword() | map()) ::
           {:ok, map(), metadata()}
           | {:fallback_text, String.t(), metadata()}
           | {:error, term(), metadata()}
   def prepare_outbound(media_payload, channel_module, operation, opts \\ [])
+
+  def prepare_outbound(media_payload, channel_module, operation, opts)
       when is_map(media_payload) and is_atom(channel_module) and operation in [:send_media, :edit_media] do
     cfg = config(opts)
 
-    with {:ok, entry} <- normalize_media_entry(media_payload),
+    with {:ok, entry} <- normalize_outbound_media_entry(media_payload),
          {:ok, _entry, size_bytes} <- validate_entry(entry, 0, 0, cfg) do
       causes = unsupported_causes(channel_module, entry.kind, operation)
 
@@ -150,6 +155,13 @@ defmodule JidoMessaging.MediaPolicy do
           {:error, reason, metadata}
         end
     end
+  end
+
+  def prepare_outbound(media_payload, _channel_module, operation, opts) do
+    cfg = config(opts)
+    reason = if operation in [:send_media, :edit_media], do: :invalid_media_payload, else: :unsupported_operation
+    metadata = reject_metadata(media_kind_or_nil(media_payload), [reason], cfg)
+    {:error, reason, metadata}
   end
 
   defp evaluate_entry(entry, idx, running_total, cfg, accepted, accepted_info, rejected) do
@@ -283,6 +295,31 @@ defmodule JidoMessaging.MediaPolicy do
 
   defp normalize_media_entry(_), do: {:error, :invalid_media_payload}
 
+  defp normalize_outbound_media_entry(entry) when is_map(entry) do
+    kind = media_kind(entry)
+
+    normalized = %{
+      kind: kind,
+      url: fetch_string(entry, [:url, :uri, :file_url]),
+      data: fetch_string(entry, [:data, :base64]),
+      media_type: fetch_string(entry, [:media_type, :mime_type, :mimetype]),
+      filename: fetch_string(entry, [:filename, :name]),
+      size_bytes: fetch_integer(entry, [:size_bytes, :size, :file_size, :filesize]),
+      duration: fetch_integer(entry, [:duration, :duration_seconds]),
+      width: fetch_integer(entry, [:width]),
+      height: fetch_integer(entry, [:height]),
+      thumbnail_url: fetch_string(entry, [:thumbnail_url, :thumb_url]),
+      alt_text: fetch_string(entry, [:alt_text, :caption, :description]),
+      transcript: fetch_string(entry, [:transcript, :caption])
+    }
+
+    if kind in @supported_kinds do
+      {:ok, normalized}
+    else
+      {:error, :unsupported_kind}
+    end
+  end
+
   defp to_content_block(%{kind: :image} = media) do
     %Image{
       url: media.url,
@@ -372,7 +409,8 @@ defmodule JidoMessaging.MediaPolicy do
     |> normalize_kind()
   end
 
-  defp media_kind(_payload), do: nil
+  defp media_kind_or_nil(payload) when is_map(payload), do: media_kind(payload)
+  defp media_kind_or_nil(_payload), do: nil
 
   defp fetch_kind(map, keys) do
     Enum.find_value(keys, fn key ->
@@ -507,8 +545,7 @@ defmodule JidoMessaging.MediaPolicy do
       :invalid_media_type,
       :max_item_bytes_exceeded,
       :max_total_bytes_exceeded,
-      :max_items_exceeded,
-      :invalid_media_payload
+      :max_items_exceeded
     ]
   end
 end

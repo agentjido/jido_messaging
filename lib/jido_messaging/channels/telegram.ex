@@ -214,8 +214,6 @@ defmodule JidoMessaging.Channels.Telegram do
     |> maybe_append_media(:file, document)
   end
 
-  defp extract_media(_), do: []
-
   defp maybe_append_photo(media, photos) when is_list(photos) and photos != [] do
     photo = List.last(photos)
 

@@ -351,8 +351,6 @@ defmodule JidoMessaging.Deliver do
     })
   end
 
-  defp maybe_attach_outbound_error(metadata, _error), do: metadata
-
   defp gateway_metadata(send_result) do
     %{
       partition: send_result.partition,
@@ -387,7 +385,6 @@ defmodule JidoMessaging.Deliver do
   end
 
   defp unwrap_gateway_reason(%{type: :outbound_error, reason: reason}), do: reason
-  defp unwrap_gateway_reason(reason), do: reason
 
   defp maybe_put(map, _key, nil), do: map
   defp maybe_put(map, key, value), do: Map.put(map, key, value)

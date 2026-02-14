@@ -208,8 +208,6 @@ defmodule JidoMessaging.MsgContext.Normalizer do
     end)
   end
 
-  defp body_mentions_target?(_body, _mention_targets), do: false
-
   defp normalize_target(nil), do: nil
 
   defp normalize_target(value) when is_binary(value) do
@@ -248,8 +246,6 @@ defmodule JidoMessaging.MsgContext.Normalizer do
   defp valid_mentions_adapter?(module) when is_atom(module) do
     Mentions.implements?(module)
   end
-
-  defp valid_mentions_adapter?(_), do: false
 
   defp command_max_text_bytes(opts) do
     case Keyword.get(opts, :command_max_text_bytes, @default_mentions_max_text_bytes) do

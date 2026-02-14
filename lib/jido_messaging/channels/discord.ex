@@ -199,8 +199,6 @@ defmodule JidoMessaging.Channels.Discord do
     |> normalize_attachments()
   end
 
-  defp extract_media(_), do: []
-
   defp normalize_attachments(attachments) when is_list(attachments) do
     attachments
     |> Enum.map(&normalize_attachment/1)
