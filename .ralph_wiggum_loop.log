@@ -26,3 +26,32 @@
   - with socket workaround, the repo has no `precommit` task/alias defined.
 - Assumption: ST-OCM-000 is a documentation contract story; tests were added as documentation contract guards rather than runtime behavior tests.
 ** (Mix) The task "precommit" could not be found
+1) changed files
+- `specs/stories/00-runtime-topology-and-slos.md:94`  
+Added an explicit hot-path partitioning row for ingest policy workers (Story 04+) in the canonical partition/sharding guidance.
+- `test/specs/story_00_runtime_topology_and_slos_test.exs:6`  
+Strengthened Story 00 spec tests from string checks to structural validations of topology/crash/SLO/partition tables, architecture review gate requirements, traceability row, and downstream Story 00 dependency references.
+
+2) tests/commands executed
+- `mix format specs/stories/00-runtime-topology-and-slos.md test/specs/story_00_runtime_topology_and_slos_test.exs`
+- `mix format test/specs/story_00_runtime_topology_and_slos_test.exs`
+- `mix test test/specs/story_00_runtime_topology_and_slos_test.exs` (pass)
+- `mix precommit` (pass: 623 tests, 0 failures, 5 skipped)
+
+3) acceptance criteria coverage
+- AC1 (topology defines owner/supervisor/strategy/restart intensity): validated in `test/specs/story_00_runtime_topology_and_slos_test.exs:50`.
+- AC2 (crash matrix with fatal/recoverable/degraded + handling): validated in `test/specs/story_00_runtime_topology_and_slos_test.exs:89`.
+- AC3 (SLO baselines + pressure thresholds + telemetry dimensions): validated in `test/specs/story_00_runtime_topology_and_slos_test.exs:128`.
+- AC4 (partitioning/sharding guidance for hot-path workers): doc updated at `specs/stories/00-runtime-topology-and-slos.md:94`; validated in `test/specs/story_00_runtime_topology_and_slos_test.exs:178`.
+- Verification edge path (block missing crash/topology semantics): validated in `test/specs/story_00_runtime_topology_and_slos_test.exs:215`.
+- Evidence of done (traceability row + downstream references): validated in `test/specs/story_00_runtime_topology_and_slos_test.exs:233` and `test/specs/story_00_runtime_topology_and_slos_test.exs:240`.
+
+4) blockers/assumptions
+- Blockers: none.
+- Assumption: ingest policy execution is part of expected hot-path worker partitioning for `ST-OCM-000`, so it was added explicitly to Story 00 guidance.
+Running ExUnit with seed: 513503, max_cases: 20
+Excluding tags: [:flaky]
+
+...........................................................................................................................................................................................................................................................................*........................................................................................................................................................................................................................................................*......................................................***.................................................
+Finished in 2.2 seconds (0.5s async, 1.6s sync)
+623 tests, 0 failures, 5 skipped

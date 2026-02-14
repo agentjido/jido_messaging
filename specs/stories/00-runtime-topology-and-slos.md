@@ -91,6 +91,7 @@ Hot-path workers must be partitioned by stable keys and must not rely on singlet
 |---|---|---|---|---|
 | Room state (`RoomServer`) | one process per active room | `room_id` | Dynamic supervisor child per room. | Avoid cross-room mailbox contention. |
 | Instance runtime (`InstanceServer` + channel listeners) | one subtree per channel instance | `instance_id` | Dynamic supervisor child subtree per instance. | Listener faults stay inside one instance subtree. |
+| Ingest policy workers (Story 04+) | ingress policy worker partition | `hash(instance_id <> ":" <> room_id)` | `partition_count >= System.schedulers_online/0` with bounded per-partition queue length. | Preserve per-room ordering while scaling ingest across instances. |
 | Outbound gateway partitions (Story 03+) | worker partition | `hash(instance_id <> ":" <> external_room_id)` | `partition_count >= 2 * System.schedulers_online/0` | Stable hashing preserves ordering per route key. |
 | Session routing manager (Story 06+) | route-state shard | `hash(session_key)` | Same partition count family as outbound gateway. | Keep route updates and reads on same shard. |
 | Onboarding state machine (Story 09+) | onboarding flow worker | `onboarding_id` | Dynamic child per active flow; optional shard pool for high cardinality. | Prevent long-lived flows from blocking unrelated onboarding. |
