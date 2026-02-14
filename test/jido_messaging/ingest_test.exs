@@ -1,7 +1,7 @@
 defmodule JidoMessaging.IngestTest do
   use ExUnit.Case, async: true
 
-  alias JidoMessaging.Ingest
+  alias JidoMessaging.{Ingest, Message}
 
   defmodule TestMessaging do
     use JidoMessaging,
@@ -19,6 +19,98 @@ defmodule JidoMessaging.IngestTest do
 
     @impl true
     def send_message(_chat_id, _text, _opts), do: {:ok, %{message_id: 999}}
+  end
+
+  defmodule AllowGater do
+    @behaviour JidoMessaging.Gating
+
+    @impl true
+    def check(_ctx, _opts), do: :allow
+  end
+
+  defmodule DenyGater do
+    @behaviour JidoMessaging.Gating
+
+    @impl true
+    def check(_ctx, _opts), do: {:deny, :denied, "Denied by gater"}
+  end
+
+  defmodule TimeoutGater do
+    @behaviour JidoMessaging.Gating
+
+    @impl true
+    def check(_ctx, opts) do
+      sleep_ms = Keyword.get(opts, :sleep_ms, 200)
+      Process.sleep(sleep_ms)
+      :allow
+    end
+  end
+
+  defmodule TrackingGater do
+    @behaviour JidoMessaging.Gating
+
+    @impl true
+    def check(_ctx, opts) do
+      if tracker = Keyword.get(opts, :tracker) do
+        Agent.update(tracker, &[:gating | &1])
+      end
+
+      :allow
+    end
+  end
+
+  defmodule AllowModerator do
+    @behaviour JidoMessaging.Moderation
+
+    @impl true
+    def moderate(_message, _opts), do: :allow
+  end
+
+  defmodule FlagModerator do
+    @behaviour JidoMessaging.Moderation
+
+    @impl true
+    def moderate(_message, _opts), do: {:flag, :unsafe_hint, "Needs review"}
+  end
+
+  defmodule ModifyModerator do
+    @behaviour JidoMessaging.Moderation
+
+    @impl true
+    def moderate(%Message{} = message, _opts) do
+      modified =
+        %{
+          message
+          | content: [%JidoMessaging.Content.Text{text: "[redacted]"}],
+            metadata: Map.put(message.metadata, :moderation_note, "redacted")
+        }
+
+      {:modify, modified}
+    end
+  end
+
+  defmodule TimeoutModerator do
+    @behaviour JidoMessaging.Moderation
+
+    @impl true
+    def moderate(_message, opts) do
+      sleep_ms = Keyword.get(opts, :sleep_ms, 200)
+      Process.sleep(sleep_ms)
+      :allow
+    end
+  end
+
+  defmodule TrackingModerator do
+    @behaviour JidoMessaging.Moderation
+
+    @impl true
+    def moderate(message, opts) do
+      if tracker = Keyword.get(opts, :tracker) do
+        Agent.update(tracker, &[:moderation | &1])
+      end
+
+      {:modify, %{message | metadata: Map.put(message.metadata, :tracked, true)}}
+    end
   end
 
   setup do
@@ -176,6 +268,209 @@ defmodule JidoMessaging.IngestTest do
         assert context.room.type == expected_room_type,
                "Expected #{expected_room_type} for chat_type #{chat_type}"
       end
+    end
+  end
+
+  describe "ingest_incoming/5 policy pipeline" do
+    test "runs gating before moderation deterministically with configured modules" do
+      {:ok, tracker} = Agent.start_link(fn -> [] end)
+
+      incoming = %{
+        external_room_id: "chat_policy_order",
+        external_user_id: "user_policy_order",
+        text: "Policy order check",
+        external_message_id: 6001
+      }
+
+      assert {:ok, message, _context} =
+               Ingest.ingest_incoming(TestMessaging, MockChannel, "policy_inst", incoming,
+                 gaters: [TrackingGater],
+                 gating_opts: [tracker: tracker],
+                 moderators: [TrackingModerator],
+                 moderation_opts: [tracker: tracker]
+               )
+
+      assert message.metadata[:tracked] == true
+      assert Agent.get(tracker, &Enum.reverse(&1)) == [:gating, :moderation]
+    end
+
+    test "denied messages are not persisted and do not emit room/message signals" do
+      test_pid = self()
+      handler_id = "ingest-policy-deny-#{System.unique_integer([:positive])}"
+
+      :telemetry.attach_many(
+        handler_id,
+        [
+          [:jido_messaging, :room, :message_added],
+          [:jido_messaging, :message, :received]
+        ],
+        fn event, measurements, metadata, _config ->
+          send(test_pid, {:telemetry_event, event, measurements, metadata})
+        end,
+        nil
+      )
+
+      on_exit(fn -> :telemetry.detach(handler_id) end)
+
+      incoming = %{
+        external_room_id: "chat_policy_deny",
+        external_user_id: "user_policy_deny",
+        text: "Should be denied",
+        external_message_id: 6002
+      }
+
+      assert {:error, {:policy_denied, :gating, :denied, "Denied by gater"}} =
+               Ingest.ingest_incoming(TestMessaging, MockChannel, "policy_inst", incoming, gaters: [DenyGater])
+
+      assert {:ok, room} =
+               TestMessaging.get_room_by_external_binding(:mock, "policy_inst", "chat_policy_deny")
+
+      assert {:ok, []} = TestMessaging.list_messages(room.id)
+      assert {:error, :not_found} = TestMessaging.get_message_by_external_id(:mock, "policy_inst", 6002)
+
+      refute_receive {:telemetry_event, [:jido_messaging, :room, :message_added], _, %{instance_module: TestMessaging}},
+                     150
+
+      refute_receive {:telemetry_event, [:jido_messaging, :message, :received], _, %{instance_module: TestMessaging}},
+                     150
+    end
+
+    test "policy timeouts are bounded and can deny quickly" do
+      incoming = %{
+        external_room_id: "chat_policy_timeout_deny",
+        external_user_id: "user_policy_timeout_deny",
+        text: "Timeout gater",
+        external_message_id: 6003
+      }
+
+      started_at = System.monotonic_time(:millisecond)
+
+      assert {:error, {:policy_denied, :gating, :policy_timeout, "Policy module timed out"}} =
+               Ingest.ingest_incoming(TestMessaging, MockChannel, "policy_inst", incoming,
+                 gaters: [TimeoutGater],
+                 gating_opts: [sleep_ms: 200],
+                 gating_timeout_ms: 25,
+                 policy_timeout_fallback: :deny
+               )
+
+      elapsed_ms = System.monotonic_time(:millisecond) - started_at
+      assert elapsed_ms < 150
+    end
+
+    test "timeout fallback allow_with_flag keeps ingest hot path moving" do
+      incoming = %{
+        external_room_id: "chat_policy_timeout_allow",
+        external_user_id: "user_policy_timeout_allow",
+        text: "Timeout moderator",
+        external_message_id: 6004
+      }
+
+      assert {:ok, message, _context} =
+               Ingest.ingest_incoming(TestMessaging, MockChannel, "policy_inst", incoming,
+                 gaters: [AllowGater],
+                 moderators: [TimeoutModerator],
+                 moderation_opts: [sleep_ms: 200],
+                 moderation_timeout_ms: 25,
+                 policy_timeout_fallback: :allow_with_flag
+               )
+
+      assert is_map(message.metadata.policy)
+      assert message.metadata.policy.flagged == true
+
+      assert Enum.any?(message.metadata.policy.flags, fn flag ->
+               flag.stage == :moderation and flag.reason == :policy_timeout
+             end)
+    end
+
+    test "modified and flagged outcomes preserve metadata and emit policy telemetry" do
+      test_pid = self()
+      handler_id = "ingest-policy-telemetry-#{System.unique_integer([:positive])}"
+
+      :telemetry.attach(
+        handler_id,
+        [:jido_messaging, :ingest, :policy, :decision],
+        fn event, measurements, metadata, _config ->
+          send(test_pid, {:policy_event, event, measurements, metadata})
+        end,
+        nil
+      )
+
+      on_exit(fn -> :telemetry.detach(handler_id) end)
+
+      incoming = %{
+        external_room_id: "chat_policy_metadata",
+        external_user_id: "user_policy_metadata",
+        text: "Bad content",
+        external_message_id: 6005,
+        timestamp: 1_706_745_601
+      }
+
+      assert {:ok, message, _context} =
+               Ingest.ingest_incoming(TestMessaging, MockChannel, "policy_inst", incoming,
+                 gaters: [AllowGater],
+                 moderators: [ModifyModerator, FlagModerator]
+               )
+
+      assert [%JidoMessaging.Content.Text{text: "[redacted]"}] = message.content
+      assert message.metadata.external_message_id == 6005
+      assert message.metadata.timestamp == 1_706_745_601
+      assert message.metadata.moderation_note == "redacted"
+      assert message.metadata.policy.modified == true
+      assert message.metadata.policy.flagged == true
+
+      assert Enum.any?(message.metadata.policy.flags, fn flag ->
+               flag.reason == :unsafe_hint and flag.source == :moderation
+             end)
+
+      assert_receive {:policy_event, [:jido_messaging, :ingest, :policy, :decision], %{elapsed_ms: elapsed_ms},
+                      %{stage: :moderation, policy_module: ModifyModerator, outcome: :modify}},
+                     500
+
+      assert elapsed_ms >= 0
+
+      assert_receive {:policy_event, [:jido_messaging, :ingest, :policy, :decision], %{elapsed_ms: elapsed_ms},
+                      %{stage: :moderation, policy_module: FlagModerator, outcome: :flag, reason: :unsafe_hint}},
+                     500
+
+      assert elapsed_ms >= 0
+    end
+
+    test "allowed messages with policy modules still persist and emit downstream signals" do
+      test_pid = self()
+      handler_id = "ingest-policy-happy-#{System.unique_integer([:positive])}"
+
+      :telemetry.attach(
+        handler_id,
+        [:jido_messaging, :message, :received],
+        fn event, measurements, metadata, _config ->
+          send(test_pid, {:telemetry_event, event, measurements, metadata})
+        end,
+        nil
+      )
+
+      on_exit(fn -> :telemetry.detach(handler_id) end)
+
+      incoming = %{
+        external_room_id: "chat_policy_happy",
+        external_user_id: "user_policy_happy",
+        text: "Happy path",
+        external_message_id: 6006
+      }
+
+      assert {:ok, message, context} =
+               Ingest.ingest_incoming(TestMessaging, MockChannel, "policy_inst", incoming,
+                 gaters: [AllowGater],
+                 moderators: [AllowModerator]
+               )
+
+      assert {:ok, [persisted]} = TestMessaging.list_messages(context.room.id)
+      assert persisted.id == message.id
+
+      message_id = message.id
+
+      assert_receive {:telemetry_event, [:jido_messaging, :message, :received], _measurements,
+                      %{instance_module: TestMessaging, message: %{id: ^message_id}}},
+                     500
     end
   end
 end

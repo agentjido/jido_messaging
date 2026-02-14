@@ -170,3 +170,34 @@ Excluding tags: [:flaky]
 ...............................................................................................................................................................................................................................................................*......................................................................................................................................................................................................................................................................*.....................................................................***.................................................
 Finished in 3.2 seconds (0.8s async, 2.4s sync)
 640 tests, 0 failures, 5 skipped
+1) changed files
+- `lib/jido_messaging/ingest.ex:53`  
+  Added ingest policy pipeline support with `ingest_incoming/5` and `ingest_incoming!/5` options, deterministic `gating -> moderation` execution before persistence/signals, bounded per-module timeouts, timeout/error fallback policy (`:deny` or `:allow_with_flag`), policy telemetry (`[:jido_messaging, :ingest, :policy, :decision]`), and persisted policy metadata (`metadata.policy.decisions/flags/modified/flagged`).
+- `test/jido_messaging/ingest_test.exs:274`  
+  Added ST-OCM-004 coverage tests for deterministic order, deny short-circuit, timeout handling/fallback, modify+flag metadata preservation, policy telemetry emission, and configured-policy happy path.
+
+2) tests/commands executed
+- `mix format` (pass)
+- `mix test test/jido_messaging/ingest_test.exs` (pass, 13 tests)
+- `mix test test/jido_messaging/gating_test.exs test/jido_messaging/moderation_test.exs` (pass, 36 tests)
+- `mix precommit` (pass, 646 tests, 0 failures, 5 skipped)
+
+3) acceptance criteria coverage
+- AC1 (`gating then moderation order deterministic and configurable`):  
+  Covered by `test/jido_messaging/ingest_test.exs:275` (`runs gating before moderation deterministically with configured modules`), asserting configured modules run in `[:gating, :moderation]` order.
+- AC2 (`denied messages not persisted, no room/agent events`):  
+  Covered by `test/jido_messaging/ingest_test.exs:297`, asserting `{:policy_denied, ...}`, no persisted message, and no `:room/:message_added` or `:message/:received` telemetry for this instance.
+- AC3 (`policy hooks bounded by timeout budgets`):  
+  Covered by `test/jido_messaging/ingest_test.exs:338` (timeout denies quickly under configured timeout) and `test/jido_messaging/ingest_test.exs:360` (timeout fallback `:allow_with_flag` continues ingest without deadlock).
+- AC4 (`modified/flagged preserve metadata and emit policy telemetry`):  
+  Covered by `test/jido_messaging/ingest_test.exs:385`, asserting original metadata preservation, modification + flags persisted in `metadata.policy`, and policy telemetry events for `:modify` and `:flag` outcomes.
+
+4) blockers/assumptions
+- Blockers: none.
+- Assumption: “deterministic and configurable” is satisfied by deterministic stage order (`gating` then `moderation`) with configurable module lists/options and fallback policy.
+Running ExUnit with seed: 329550, max_cases: 20
+Excluding tags: [:flaky]
+
+.........................................................................................................................................................................................................................*..................................................................................................................................................................................................................................................................................................................*.....................................................................***.................................................
+Finished in 3.2 seconds (0.8s async, 2.3s sync)
+646 tests, 0 failures, 5 skipped
