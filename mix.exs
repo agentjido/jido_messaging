@@ -63,8 +63,8 @@ defmodule JidoMessaging.MixProject do
       # Runtime dependencies
       {:jason, "~> 1.4"},
       {:zoi, "~> 0.14"},
-      {:jido, "~> 2.0.0-rc"},
-      {:jido_signal, "~> 2.0.0-rc"},
+      {:jido, github: "agentjido/jido", override: true},
+      {:jido_signal, github: "agentjido/jido_signal", override: true},
       {:jido_ai, github: "agentjido/jido_ai"},
 
       # Telegram integration
