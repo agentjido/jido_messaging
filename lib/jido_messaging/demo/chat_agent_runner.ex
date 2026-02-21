@@ -2,7 +2,7 @@ defmodule JidoMessaging.Demo.ChatAgentRunner do
   @moduledoc """
   Wrapper that runs the ChatAgent within the JidoMessaging AgentRunner framework.
 
-  This module bridges the Jido.AI.ReActAgent with JidoMessaging's agent system by:
+  This module bridges the Jido.AI.Agent with JidoMessaging's agent system by:
   1. Starting the ChatAgent GenServer
   2. Providing a handler function for the AgentRunner
   3. Managing the agent lifecycle

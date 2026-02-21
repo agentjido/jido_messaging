@@ -30,7 +30,7 @@ defmodule JidoMessaging.Demo.ChatAgent do
 
   @dialyzer {:nowarn_function, plugin_specs: 0}
 
-  use Jido.AI.ReActAgent,
+  use Jido.AI.Agent,
     name: "chat_agent",
     description: "Helpful chat assistant for cross-platform messaging",
     model: "cerebras:gpt-oss-120b",
