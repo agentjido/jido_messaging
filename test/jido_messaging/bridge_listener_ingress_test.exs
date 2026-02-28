@@ -142,7 +142,7 @@ defmodule Jido.Messaging.BridgeListenerIngressTest do
   end
 
   defmodule ListenerMessaging do
-    use Jido.Messaging, adapter: Jido.Messaging.Adapters.ETS
+    use Jido.Messaging, persistence: Jido.Messaging.Persistence.ETS
   end
 
   setup do

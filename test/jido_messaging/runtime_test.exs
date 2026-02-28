@@ -2,7 +2,7 @@ defmodule Jido.Messaging.RuntimeTest do
   use ExUnit.Case, async: true
 
   alias Jido.Messaging.Runtime
-  alias Jido.Messaging.Adapters.ETS
+  alias Jido.Messaging.Persistence.ETS
 
   describe "Runtime" do
     test "get_state/1 returns full runtime state" do
@@ -10,31 +10,31 @@ defmodule Jido.Messaging.RuntimeTest do
         Runtime.start_link(
           name: :test_runtime_state,
           instance_module: TestModule,
-          adapter: ETS,
-          adapter_opts: []
+          persistence: ETS,
+          persistence_opts: []
         )
 
       state = Runtime.get_state(pid)
 
       assert %Runtime{} = state
       assert state.instance_module == TestModule
-      assert state.adapter == ETS
-      assert is_struct(state.adapter_state, ETS)
+      assert state.persistence == ETS
+      assert is_struct(state.persistence_state, ETS)
     end
 
-    test "get_adapter/1 returns adapter and state" do
+    test "get_persistence/1 returns persistence and state" do
       {:ok, pid} =
         Runtime.start_link(
           name: :test_runtime_adapter,
           instance_module: TestModule2,
-          adapter: ETS,
-          adapter_opts: []
+          persistence: ETS,
+          persistence_opts: []
         )
 
-      {adapter, adapter_state} = Runtime.get_adapter(pid)
+      {persistence, persistence_state} = Runtime.get_persistence(pid)
 
-      assert adapter == ETS
-      assert is_struct(adapter_state, ETS)
+      assert persistence == ETS
+      assert is_struct(persistence_state, ETS)
     end
   end
 end

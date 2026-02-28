@@ -29,7 +29,7 @@ defmodule Jido.Messaging.Directory do
   def lookup(instance_module, target, query, opts \\ [])
       when is_atom(instance_module) and is_atom(target) and is_map(query) and is_list(opts) do
     runtime = instance_module.__jido_messaging__(:runtime)
-    {adapter, adapter_state} = Runtime.get_adapter(runtime)
+    {adapter, adapter_state} = Runtime.get_persistence(runtime)
     adapter.directory_lookup(adapter_state, target, query, opts)
   end
 
@@ -38,7 +38,7 @@ defmodule Jido.Messaging.Directory do
   def search(instance_module, target, query, opts \\ [])
       when is_atom(instance_module) and is_atom(target) and is_map(query) and is_list(opts) do
     runtime = instance_module.__jido_messaging__(:runtime)
-    {adapter, adapter_state} = Runtime.get_adapter(runtime)
+    {adapter, adapter_state} = Runtime.get_persistence(runtime)
     adapter.directory_search(adapter_state, target, query, opts)
   end
 end

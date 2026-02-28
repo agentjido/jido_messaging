@@ -10,7 +10,7 @@ defmodule Jido.Messaging.InboundRouter do
 
   alias Jido.Chat
   alias Jido.Chat.{Adapter, EventEnvelope, Incoming, WebhookRequest, WebhookResponse}
-  alias Jido.Messaging.{BridgeConfig, ConfigStore, Ingest}
+  alias Jido.Messaging.{BridgeConfig, BridgeServer, ConfigStore, Ingest, IngressOutcome}
 
   @type ingest_result ::
           {:ok, {:message, Jido.Chat.LegacyMessage.t(), Ingest.context(), EventEnvelope.t()}}
@@ -21,6 +21,8 @@ defmodule Jido.Messaging.InboundRouter do
 
   @type webhook_result ::
           {:ok, WebhookResponse.t(), ingest_result()} | {:error, term()}
+
+  @type route_ingress_result :: {:ok, IngressOutcome.t()} | {:error, term()}
 
   @doc """
   Routes a webhook payload through bridge-config verification + event parsing.
@@ -43,9 +45,9 @@ defmodule Jido.Messaging.InboundRouter do
       raw_body: Keyword.get(opts, :raw_body)
     }
 
-    with {:ok, _response, outcome} <-
-           route_webhook_request(instance_module, bridge_id, request_meta, payload, opts) do
-      outcome
+    with {:ok, %IngressOutcome{} = routed} <-
+           route_ingress(instance_module, bridge_id, :webhook, request_meta, payload, opts) do
+      ingest_result_from_outcome(routed)
     end
   end
 
@@ -60,6 +62,23 @@ defmodule Jido.Messaging.InboundRouter do
   """
   @spec route_webhook_request(module(), String.t(), map(), map(), keyword()) :: webhook_result()
   def route_webhook_request(instance_module, bridge_id, request_meta, payload, opts \\ [])
+      when is_atom(instance_module) and is_binary(bridge_id) and is_map(request_meta) and is_map(payload) and
+             is_list(opts) do
+    with {:ok, %IngressOutcome{} = routed} <-
+           route_ingress(instance_module, bridge_id, :webhook, request_meta, payload, opts) do
+      {:ok, routed.response, ingest_result_from_outcome(routed)}
+    end
+  end
+
+  @doc """
+  Routes ingress through a canonical normalized outcome.
+
+  Supported modes:
+    * `:webhook` - verifies/parses request, dispatches event, formats webhook response
+    * `:payload` - normalizes payload events for listener-driven ingress
+  """
+  @spec route_ingress(module(), String.t(), :webhook | :payload, map(), map(), keyword()) :: route_ingress_result()
+  def route_ingress(instance_module, bridge_id, :webhook, request_meta, payload, opts)
       when is_atom(instance_module) and is_binary(bridge_id) and is_map(request_meta) and is_map(payload) and
              is_list(opts) do
     ingest_opts = Keyword.get(opts, :ingest_opts, [])
@@ -81,12 +100,57 @@ defmodule Jido.Messaging.InboundRouter do
         |> webhook_format_result()
         |> format_response(adapter_module, format_opts)
 
-      {:ok, response, outcome}
+      record_ingress(instance_module, bridge_id, outcome)
+      {:ok, normalize_outcome(:webhook, bridge_id, outcome, response)}
     else
       {:error, _reason} = error ->
-        {:ok, default_response(error), error}
+        response = default_response(error)
+        BridgeServer.mark_error(instance_module, bridge_id, error)
+        {:ok, normalize_outcome(:webhook, bridge_id, error, response)}
     end
   end
+
+  def route_ingress(instance_module, bridge_id, :payload, _request_meta, payload, opts)
+      when is_atom(instance_module) and is_binary(bridge_id) and is_map(payload) and is_list(opts) do
+    ingest_opts = Keyword.get(opts, :ingest_opts, [])
+    payload = normalize_payload_input(payload)
+
+    with {:ok, config} <- fetch_bridge(instance_module, bridge_id),
+         :ok <- ensure_enabled(config),
+         {:ok, adapter_module} <- ensure_adapter_module(config) do
+      outcome =
+        case normalize_payload_event(adapter_module, payload, opts) do
+          {:ok, :noop} ->
+            {:ok, :noop}
+
+          {:ok, %EventEnvelope{} = event} ->
+            dispatch_event(instance_module, adapter_module, bridge_id, event, ingest_opts, opts)
+
+          :fallback ->
+            with {:ok, incoming} <- Adapter.transform_incoming(adapter_module, payload) do
+              event =
+                EventEnvelope.new(%{
+                  adapter_name: adapter_type(adapter_module),
+                  event_type: :message,
+                  thread_id: Keyword.get(opts, :thread_id, "adapter:#{stringify(incoming.external_room_id)}"),
+                  channel_id: stringify(incoming.external_room_id),
+                  message_id: stringify(incoming.external_message_id),
+                  payload: incoming,
+                  raw: payload,
+                  metadata: %{source: :payload, bridge_id: bridge_id}
+                })
+
+              dispatch_event(instance_module, adapter_module, bridge_id, event, ingest_opts, opts)
+            end
+        end
+
+      record_ingress(instance_module, bridge_id, outcome)
+      {:ok, normalize_outcome(:payload, bridge_id, outcome, nil)}
+    end
+  end
+
+  def route_ingress(_instance_module, _bridge_id, _mode, _request_meta, _payload, _opts),
+    do: {:error, :invalid_ingress_request}
 
   @doc """
   Routes a non-webhook payload through canonical event normalization.
@@ -99,37 +163,103 @@ defmodule Jido.Messaging.InboundRouter do
   @spec route_payload(module(), String.t(), map(), keyword()) :: ingest_result()
   def route_payload(instance_module, bridge_id, payload, opts \\ [])
       when is_atom(instance_module) and is_binary(bridge_id) and is_map(payload) and is_list(opts) do
-    ingest_opts = Keyword.get(opts, :ingest_opts, [])
-    payload = normalize_payload_input(payload)
-
-    with {:ok, config} <- fetch_bridge(instance_module, bridge_id),
-         :ok <- ensure_enabled(config),
-         {:ok, adapter_module} <- ensure_adapter_module(config) do
-      case normalize_payload_event(adapter_module, payload, opts) do
-        {:ok, :noop} ->
-          {:ok, :noop}
-
-        {:ok, %EventEnvelope{} = event} ->
-          dispatch_event(instance_module, adapter_module, bridge_id, event, ingest_opts, opts)
-
-        :fallback ->
-          with {:ok, incoming} <- Adapter.transform_incoming(adapter_module, payload) do
-            event =
-              EventEnvelope.new(%{
-                adapter_name: adapter_type(adapter_module),
-                event_type: :message,
-                thread_id: Keyword.get(opts, :thread_id, "adapter:#{stringify(incoming.external_room_id)}"),
-                channel_id: stringify(incoming.external_room_id),
-                message_id: stringify(incoming.external_message_id),
-                payload: incoming,
-                raw: payload,
-                metadata: %{source: :payload, bridge_id: bridge_id}
-              })
-
-            dispatch_event(instance_module, adapter_module, bridge_id, event, ingest_opts, opts)
-          end
-      end
+    with {:ok, %IngressOutcome{} = routed} <-
+           route_ingress(instance_module, bridge_id, :payload, %{}, payload, opts) do
+      ingest_result_from_outcome(routed)
     end
+  end
+
+  defp normalize_outcome(mode, bridge_id, {:ok, :noop}, response) do
+    IngressOutcome.new(%{
+      mode: mode,
+      bridge_id: bridge_id,
+      status: :noop,
+      envelope: nil,
+      message: nil,
+      context: nil,
+      response: response,
+      error: nil
+    })
+  end
+
+  defp normalize_outcome(mode, bridge_id, {:ok, {:event, %EventEnvelope{} = event}}, response) do
+    IngressOutcome.new(%{
+      mode: mode,
+      bridge_id: bridge_id,
+      status: :event,
+      envelope: event,
+      message: nil,
+      context: nil,
+      response: response,
+      error: nil
+    })
+  end
+
+  defp normalize_outcome(mode, bridge_id, {:ok, {:duplicate, %EventEnvelope{} = event}}, response) do
+    IngressOutcome.new(%{
+      mode: mode,
+      bridge_id: bridge_id,
+      status: :duplicate,
+      envelope: event,
+      message: nil,
+      context: nil,
+      response: response,
+      error: nil
+    })
+  end
+
+  defp normalize_outcome(mode, bridge_id, {:ok, {:message, message, context, %EventEnvelope{} = event}}, response) do
+    IngressOutcome.new(%{
+      mode: mode,
+      bridge_id: bridge_id,
+      status: :message,
+      envelope: event,
+      message: message,
+      context: context,
+      response: response,
+      error: nil
+    })
+  end
+
+  defp normalize_outcome(mode, bridge_id, {:error, reason}, response) do
+    IngressOutcome.new(%{
+      mode: mode,
+      bridge_id: bridge_id,
+      status: :error,
+      envelope: nil,
+      message: nil,
+      context: nil,
+      response: response,
+      error: reason
+    })
+  end
+
+  defp ingest_result_from_outcome(%IngressOutcome{status: :noop}), do: {:ok, :noop}
+
+  defp ingest_result_from_outcome(%IngressOutcome{status: :event, envelope: %EventEnvelope{} = event}),
+    do: {:ok, {:event, event}}
+
+  defp ingest_result_from_outcome(%IngressOutcome{status: :duplicate, envelope: %EventEnvelope{} = event}),
+    do: {:ok, {:duplicate, event}}
+
+  defp ingest_result_from_outcome(%IngressOutcome{
+         status: :message,
+         message: message,
+         context: context,
+         envelope: %EventEnvelope{} = event
+       }),
+       do: {:ok, {:message, message, context, event}}
+
+  defp ingest_result_from_outcome(%IngressOutcome{status: :error, error: reason}), do: {:error, reason}
+
+  defp record_ingress(instance_module, bridge_id, {:ok, _}) do
+    BridgeServer.mark_ingress(instance_module, bridge_id)
+    :ok
+  end
+
+  defp record_ingress(instance_module, bridge_id, {:error, reason}) do
+    BridgeServer.mark_error(instance_module, bridge_id, reason)
+    :ok
   end
 
   defp dispatch_event(_instance_module, _adapter_module, _bridge_id, :noop, _ingest_opts, _opts),
@@ -139,32 +269,7 @@ defmodule Jido.Messaging.InboundRouter do
     adapter_name = adapter_type(adapter_module)
 
     with {:ok, _chat, routed_event} <- process_event(adapter_name, adapter_module, event, opts) do
-      case routed_event.event_type do
-        :message ->
-          with {:ok, incoming} <- to_incoming(routed_event.payload),
-               ingest_result <-
-                 Ingest.ingest_incoming(
-                   instance_module,
-                   adapter_module,
-                   bridge_id,
-                   normalize_incoming_for_ingest(incoming),
-                   ingest_opts
-                 ) do
-            case ingest_result do
-              {:ok, message, context} ->
-                {:ok, {:message, message, context, routed_event}}
-
-              {:ok, :duplicate} ->
-                {:ok, {:duplicate, routed_event}}
-
-              {:error, _reason} = error ->
-                error
-            end
-          end
-
-        _other ->
-          {:ok, {:event, routed_event}}
-      end
+      dispatch_routed_event(instance_module, adapter_module, bridge_id, routed_event, ingest_opts)
     end
   end
 
@@ -179,6 +284,35 @@ defmodule Jido.Messaging.InboundRouter do
       })
 
     Chat.process_event(chat, adapter_name, event, opts)
+  end
+
+  defp dispatch_routed_event(instance_module, adapter_module, bridge_id, %EventEnvelope{} = routed_event, ingest_opts) do
+    case routed_event.event_type do
+      :message ->
+        with {:ok, incoming} <- to_incoming(routed_event.payload),
+             ingest_result <-
+               Ingest.ingest_incoming(
+                 instance_module,
+                 adapter_module,
+                 bridge_id,
+                 normalize_incoming_for_ingest(incoming),
+                 ingest_opts
+               ) do
+          case ingest_result do
+            {:ok, message, context} ->
+              {:ok, {:message, message, context, routed_event}}
+
+            {:ok, :duplicate} ->
+              {:ok, {:duplicate, routed_event}}
+
+            {:error, _reason} = error ->
+              error
+          end
+        end
+
+      _other ->
+        {:ok, {:event, routed_event}}
+    end
   end
 
   defp to_incoming(%Incoming{} = incoming), do: {:ok, incoming}

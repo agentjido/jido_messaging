@@ -6,8 +6,7 @@ defmodule Jido.Messaging.SenderIdempotencyTest do
   alias Jido.Messaging.Sender
 
   defmodule TestMessaging do
-    use Jido.Messaging,
-      adapter: Jido.Messaging.Adapters.ETS
+    use Jido.Messaging, persistence: Jido.Messaging.Persistence.ETS
   end
 
   defmodule TrackingChannel do

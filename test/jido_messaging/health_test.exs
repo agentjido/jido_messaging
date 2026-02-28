@@ -6,8 +6,7 @@ defmodule Jido.Messaging.HealthTest do
   alias Jido.Messaging.{Instance, InstanceServer, InstanceSupervisor}
 
   defmodule TestMessaging do
-    use Jido.Messaging,
-      adapter: Jido.Messaging.Adapters.ETS
+    use Jido.Messaging, persistence: Jido.Messaging.Persistence.ETS
   end
 
   setup do

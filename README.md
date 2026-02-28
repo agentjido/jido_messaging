@@ -2,6 +2,12 @@
 
 Messaging and notification system for the Jido ecosystem. Provides a unified interface for building conversational AI agents across multiple channels (Telegram, Discord, Slack, etc.).
 
+## Experimental Status
+
+This package is experimental and pre-1.0. APIs and behavior will change.
+`jido_messaging` is built around `Jido.Chat` and the Elixir implementation
+aligned to the Vercel Chat SDK ([chat-sdk.dev/docs](https://www.chat-sdk.dev/docs)).
+
 ## Features
 
 - **Channel-agnostic**: Write once, deploy to any messaging platform
@@ -16,7 +22,7 @@ Add `jido_messaging` to your list of dependencies in `mix.exs`:
 ```elixir
 def deps do
   [
-    {:jido_messaging, "~> 0.1.0"}
+    {:jido_messaging, github: "agentjido/jido_messaging", branch: "main"}
   ]
 end
 ```
@@ -76,9 +82,10 @@ Use adapter packages directly:
 ```elixir
 def deps do
   [
-    {:jido_messaging, "~> 0.1.0"},
-    {:jido_chat_telegram, "~> 0.1.0"},
-    {:jido_chat_discord, "~> 0.1.0"}
+    {:jido_chat, github: "agentjido/jido_chat", branch: "main"},
+    {:jido_chat_telegram, github: "agentjido/jido_chat_telegram", branch: "main"},
+    {:jido_chat_discord, github: "agentjido/jido_chat_discord", branch: "main"},
+    {:jido_messaging, github: "agentjido/jido_messaging", branch: "main"}
   ]
 end
 ```

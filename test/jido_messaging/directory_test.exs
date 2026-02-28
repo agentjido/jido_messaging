@@ -2,8 +2,7 @@ defmodule Jido.Messaging.DirectoryTest do
   use ExUnit.Case, async: true
 
   defmodule TestMessaging do
-    use Jido.Messaging,
-      adapter: Jido.Messaging.Adapters.ETS
+    use Jido.Messaging, persistence: Jido.Messaging.Persistence.ETS
   end
 
   setup do

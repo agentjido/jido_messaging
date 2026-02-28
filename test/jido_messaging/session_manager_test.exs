@@ -6,8 +6,7 @@ defmodule Jido.Messaging.SessionManagerTest do
   alias Jido.Messaging.{Ingest, OutboundGateway, SessionManager}
 
   defmodule TestMessaging do
-    use Jido.Messaging,
-      adapter: Jido.Messaging.Adapters.ETS
+    use Jido.Messaging, persistence: Jido.Messaging.Persistence.ETS
   end
 
   defmodule RoutingChannel do

@@ -4,8 +4,7 @@ defmodule Jido.Messaging.DeduperTest do
   alias Jido.Messaging.Deduper
 
   defmodule TestMessaging do
-    use Jido.Messaging,
-      adapter: Jido.Messaging.Adapters.ETS
+    use Jido.Messaging, persistence: Jido.Messaging.Persistence.ETS
   end
 
   setup do

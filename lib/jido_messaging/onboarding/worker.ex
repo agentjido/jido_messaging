@@ -126,7 +126,7 @@ defmodule Jido.Messaging.Onboarding.Worker do
 
   defp runtime_adapter(instance_module) do
     runtime = instance_module.__jido_messaging__(:runtime)
-    Runtime.get_adapter(runtime)
+    Runtime.get_persistence(runtime)
   end
 
   defp normalize_flow(%Flow{} = flow), do: flow

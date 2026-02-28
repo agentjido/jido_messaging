@@ -1,4 +1,4 @@
-defmodule Jido.Messaging.Adapters.ETS do
+defmodule Jido.Messaging.Persistence.ETS do
   @moduledoc """
   In-memory ETS adapter for Jido.Messaging.
 
@@ -8,8 +8,7 @@ defmodule Jido.Messaging.Adapters.ETS do
   ## Usage
 
       defmodule MyApp.Messaging do
-        use Jido.Messaging,
-          adapter: Jido.Messaging.Adapters.ETS
+        use Jido.Messaging, persistence: Jido.Messaging.Persistence.ETS
       end
 
   ## State Structure
@@ -24,7 +23,7 @@ defmodule Jido.Messaging.Adapters.ETS do
   - `:onboarding_flows` - Onboarding flow records keyed by onboarding_id
   """
 
-  @behaviour Jido.Messaging.Adapter
+  @behaviour Jido.Messaging.Persistence
   @behaviour Jido.Messaging.Directory
 
   @schema Zoi.struct(
@@ -39,7 +38,9 @@ defmodule Jido.Messaging.Adapters.ETS do
               room_bindings_by_id: Zoi.any(),
               participant_bindings: Zoi.any(),
               message_external_ids: Zoi.any(),
-              onboarding_flows: Zoi.any()
+              onboarding_flows: Zoi.any(),
+              bridge_configs: Zoi.any(),
+              routing_policies: Zoi.any()
             },
             coerce: false
           )
@@ -68,7 +69,9 @@ defmodule Jido.Messaging.Adapters.ETS do
         room_bindings_by_id: :ets.new(:room_bindings_by_id, [:set, :public]),
         participant_bindings: :ets.new(:participant_bindings, [:set, :public]),
         message_external_ids: :ets.new(:message_external_ids, [:set, :public]),
-        onboarding_flows: :ets.new(:onboarding_flows, [:set, :public])
+        onboarding_flows: :ets.new(:onboarding_flows, [:set, :public]),
+        bridge_configs: :ets.new(:bridge_configs, [:set, :public]),
+        routing_policies: :ets.new(:routing_policies, [:set, :public])
       })
 
     {:ok, state}
@@ -439,11 +442,73 @@ defmodule Jido.Messaging.Adapters.ETS do
     end
   end
 
+  # Bridge/routing control plane persistence
+
+  @impl true
+  def save_bridge_config(state, bridge_config) do
+    true = :ets.insert(state.bridge_configs, {bridge_config.id, bridge_config})
+    {:ok, bridge_config}
+  end
+
+  @impl true
+  def get_bridge_config(state, bridge_id) when is_binary(bridge_id) do
+    case :ets.lookup(state.bridge_configs, bridge_id) do
+      [{^bridge_id, bridge_config}] -> {:ok, bridge_config}
+      [] -> {:error, :not_found}
+    end
+  end
+
+  @impl true
+  def list_bridge_configs(state, opts \\ []) do
+    enabled_filter = Keyword.get(opts, :enabled)
+
+    configs =
+      :ets.tab2list(state.bridge_configs)
+      |> Enum.map(&elem(&1, 1))
+      |> maybe_filter_enabled(enabled_filter)
+      |> Enum.sort_by(& &1.id)
+
+    {:ok, configs}
+  end
+
+  @impl true
+  def delete_bridge_config(state, bridge_id) when is_binary(bridge_id) do
+    case :ets.take(state.bridge_configs, bridge_id) do
+      [] -> {:error, :not_found}
+      _ -> :ok
+    end
+  end
+
+  @impl true
+  def save_routing_policy(state, routing_policy) do
+    true = :ets.insert(state.routing_policies, {routing_policy.room_id, routing_policy})
+    {:ok, routing_policy}
+  end
+
+  @impl true
+  def get_routing_policy(state, room_id) when is_binary(room_id) do
+    case :ets.lookup(state.routing_policies, room_id) do
+      [{^room_id, routing_policy}] -> {:ok, routing_policy}
+      [] -> {:error, :not_found}
+    end
+  end
+
+  @impl true
+  def delete_routing_policy(state, room_id) when is_binary(room_id) do
+    case :ets.take(state.routing_policies, room_id) do
+      [] -> {:error, :not_found}
+      _ -> :ok
+    end
+  end
+
   defp participant_matches?(participant, query) do
     id_matches?(participant.id, query) and
       name_matches?(participant_name(participant), query) and
       participant_external_id_matches?(participant, query)
   end
+
+  defp maybe_filter_enabled(configs, nil), do: configs
+  defp maybe_filter_enabled(configs, value), do: Enum.filter(configs, &(&1.enabled == value))
 
   defp room_matches?(room, state, query) do
     id_matches?(room.id, query) and

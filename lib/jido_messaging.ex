@@ -8,7 +8,7 @@ defmodule Jido.Messaging do
 
       defmodule MyApp.Messaging do
         use Jido.Messaging,
-          adapter: Jido.Messaging.Adapters.ETS
+          persistence: Jido.Messaging.Persistence.ETS
       end
 
   Add it to your supervision tree:
@@ -31,12 +31,15 @@ defmodule Jido.Messaging do
 
   alias Jido.Chat.{LegacyMessage, Participant, Room}
   alias Jido.Messaging.BridgeRoomSpec
+  alias Jido.Messaging.TopologyValidator
   alias Jido.Messaging.{ConfigStore, Onboarding, Runtime}
 
   defmacro __using__(opts) do
     quote bind_quoted: [opts: opts] do
-      @adapter Keyword.get(opts, :adapter, Jido.Messaging.Adapters.ETS)
-      @adapter_opts Keyword.get(opts, :adapter_opts, [])
+      @persistence Keyword.get(opts, :persistence, Jido.Messaging.Persistence.ETS)
+      @persistence_opts Keyword.get(opts, :persistence_opts, [])
+      @runtime_profile Keyword.get(opts, :runtime_profile, :full)
+      @runtime_features Keyword.get(opts, :runtime_features, [])
       @bridge_manifest_paths Keyword.get(opts, :bridge_manifest_paths, [])
       @required_bridges Keyword.get(opts, :required_bridges, [])
       @bridge_collision_policy Keyword.get(opts, :bridge_collision_policy, :prefer_last)
@@ -51,8 +54,10 @@ defmodule Jido.Messaging do
       end
 
       def start_link(opts \\ []) do
-        adapter = Keyword.get(opts, :adapter, @adapter)
-        adapter_opts = Keyword.get(opts, :adapter_opts, @adapter_opts)
+        persistence = Keyword.get(opts, :persistence, @persistence)
+        persistence_opts = Keyword.get(opts, :persistence_opts, @persistence_opts)
+        runtime_profile = Keyword.get(opts, :runtime_profile, @runtime_profile)
+        runtime_features = Keyword.get(opts, :runtime_features, @runtime_features)
         bridge_manifest_paths = Keyword.get(opts, :bridge_manifest_paths, @bridge_manifest_paths)
         required_bridges = Keyword.get(opts, :required_bridges, @required_bridges)
         bridge_collision_policy = Keyword.get(opts, :bridge_collision_policy, @bridge_collision_policy)
@@ -60,8 +65,10 @@ defmodule Jido.Messaging do
         Jido.Messaging.Supervisor.start_link(
           name: __jido_messaging__(:supervisor),
           instance_module: __MODULE__,
-          adapter: adapter,
-          adapter_opts: adapter_opts,
+          persistence: persistence,
+          persistence_opts: persistence_opts,
+          runtime_profile: runtime_profile,
+          runtime_features: runtime_features,
           bridge_manifest_paths: bridge_manifest_paths,
           required_bridges: required_bridges,
           bridge_collision_policy: bridge_collision_policy
@@ -88,8 +95,10 @@ defmodule Jido.Messaging do
           :dead_letter_replay_supervisor -> Module.concat(__MODULE__, DeadLetterReplaySupervisor)
           :config_store -> Module.concat(__MODULE__, ConfigStore)
           :deduper -> Module.concat(__MODULE__, Deduper)
-          :adapter -> @adapter
-          :adapter_opts -> @adapter_opts
+          :persistence -> @persistence
+          :persistence_opts -> @persistence_opts
+          :runtime_profile -> @runtime_profile
+          :runtime_features -> @runtime_features
           :bridge_manifest_paths -> @bridge_manifest_paths
           :required_bridges -> @required_bridges
           :bridge_collision_policy -> @bridge_collision_policy
@@ -371,6 +380,16 @@ defmodule Jido.Messaging do
         Jido.Messaging.BridgeSupervisor.list_bridges(__MODULE__)
       end
 
+      @doc "Get runtime status for a bridge worker."
+      def bridge_status(bridge_id) do
+        Jido.Messaging.bridge_status(__MODULE__, bridge_id)
+      end
+
+      @doc "List runtime status for all bridge workers."
+      def list_bridge_status do
+        Jido.Messaging.list_bridge_status(__MODULE__)
+      end
+
       # Bridge control-plane functions
 
       @doc "Create or update bridge config."
@@ -517,79 +536,79 @@ defmodule Jido.Messaging do
 
   @doc "Create a new room"
   def create_room(runtime, attrs) when is_map(attrs) do
-    {adapter, adapter_state} = Runtime.get_adapter(runtime)
+    {persistence, persistence_state} = Runtime.get_persistence(runtime)
     room = Room.new(attrs)
-    adapter.save_room(adapter_state, room)
+    persistence.save_room(persistence_state, room)
   end
 
   @doc "Get a room by ID"
   def get_room(runtime, room_id) do
-    {adapter, adapter_state} = Runtime.get_adapter(runtime)
-    adapter.get_room(adapter_state, room_id)
+    {persistence, persistence_state} = Runtime.get_persistence(runtime)
+    persistence.get_room(persistence_state, room_id)
   end
 
   @doc "Save a room struct directly (for custom IDs)"
   def save_room(runtime, %Room{} = room) do
-    {adapter, adapter_state} = Runtime.get_adapter(runtime)
-    adapter.save_room(adapter_state, room)
+    {persistence, persistence_state} = Runtime.get_persistence(runtime)
+    persistence.save_room(persistence_state, room)
   end
 
   @doc "List rooms"
   def list_rooms(runtime, opts \\ []) do
-    {adapter, adapter_state} = Runtime.get_adapter(runtime)
-    adapter.list_rooms(adapter_state, opts)
+    {persistence, persistence_state} = Runtime.get_persistence(runtime)
+    persistence.list_rooms(persistence_state, opts)
   end
 
   @doc "Delete a room"
   def delete_room(runtime, room_id) do
-    {adapter, adapter_state} = Runtime.get_adapter(runtime)
-    adapter.delete_room(adapter_state, room_id)
+    {persistence, persistence_state} = Runtime.get_persistence(runtime)
+    persistence.delete_room(persistence_state, room_id)
   end
 
   @doc "Create a new participant"
   def create_participant(runtime, attrs) when is_map(attrs) do
-    {adapter, adapter_state} = Runtime.get_adapter(runtime)
+    {persistence, persistence_state} = Runtime.get_persistence(runtime)
     participant = Participant.new(attrs)
-    adapter.save_participant(adapter_state, participant)
+    persistence.save_participant(persistence_state, participant)
   end
 
   @doc "Get a participant by ID"
   def get_participant(runtime, participant_id) do
-    {adapter, adapter_state} = Runtime.get_adapter(runtime)
-    adapter.get_participant(adapter_state, participant_id)
+    {persistence, persistence_state} = Runtime.get_persistence(runtime)
+    persistence.get_participant(persistence_state, participant_id)
   end
 
   @doc "Save a message"
   def save_message(runtime, attrs) when is_map(attrs) do
-    {adapter, adapter_state} = Runtime.get_adapter(runtime)
+    {persistence, persistence_state} = Runtime.get_persistence(runtime)
     message = LegacyMessage.new(attrs)
-    adapter.save_message(adapter_state, message)
+    persistence.save_message(persistence_state, message)
   end
 
   @doc "Get a message by ID"
   def get_message(runtime, message_id) do
-    {adapter, adapter_state} = Runtime.get_adapter(runtime)
-    adapter.get_message(adapter_state, message_id)
+    {persistence, persistence_state} = Runtime.get_persistence(runtime)
+    persistence.get_message(persistence_state, message_id)
   end
 
   @doc "List messages for a room"
   def list_messages(runtime, room_id, opts \\ []) do
-    {adapter, adapter_state} = Runtime.get_adapter(runtime)
-    adapter.get_messages(adapter_state, room_id, opts)
+    {persistence, persistence_state} = Runtime.get_persistence(runtime)
+    persistence.get_messages(persistence_state, room_id, opts)
   end
 
   @doc "Delete a message"
   def delete_message(runtime, message_id) do
-    {adapter, adapter_state} = Runtime.get_adapter(runtime)
-    adapter.delete_message(adapter_state, message_id)
+    {persistence, persistence_state} = Runtime.get_persistence(runtime)
+    persistence.delete_message(persistence_state, message_id)
   end
 
   @doc "Get or create room by external binding"
   def get_or_create_room_by_external_binding(runtime, channel, bridge_id, external_id, attrs) do
-    {adapter, adapter_state} = Runtime.get_adapter(runtime)
+    {persistence, persistence_state} = Runtime.get_persistence(runtime)
 
-    adapter.get_or_create_room_by_external_binding(
-      adapter_state,
+    persistence.get_or_create_room_by_external_binding(
+      persistence_state,
       channel,
       bridge_id,
       external_id,
@@ -599,64 +618,64 @@ defmodule Jido.Messaging do
 
   @doc "Get or create participant by external ID"
   def get_or_create_participant_by_external_id(runtime, channel, external_id, attrs) do
-    {adapter, adapter_state} = Runtime.get_adapter(runtime)
-    adapter.get_or_create_participant_by_external_id(adapter_state, channel, external_id, attrs)
+    {persistence, persistence_state} = Runtime.get_persistence(runtime)
+    persistence.get_or_create_participant_by_external_id(persistence_state, channel, external_id, attrs)
   end
 
   @doc "Get a message by its external ID within a channel/instance context"
   def get_message_by_external_id(runtime, channel, bridge_id, external_id) do
-    {adapter, adapter_state} = Runtime.get_adapter(runtime)
-    adapter.get_message_by_external_id(adapter_state, channel, bridge_id, external_id)
+    {persistence, persistence_state} = Runtime.get_persistence(runtime)
+    persistence.get_message_by_external_id(persistence_state, channel, bridge_id, external_id)
   end
 
   @doc "Update a message's external_id"
   def update_message_external_id(runtime, message_id, external_id) do
-    {adapter, adapter_state} = Runtime.get_adapter(runtime)
-    adapter.update_message_external_id(adapter_state, message_id, external_id)
+    {persistence, persistence_state} = Runtime.get_persistence(runtime)
+    persistence.update_message_external_id(persistence_state, message_id, external_id)
   end
 
   @doc "Save an already-constructed message struct (for updates)"
   def save_message_struct(runtime, %LegacyMessage{} = message) do
-    {adapter, adapter_state} = Runtime.get_adapter(runtime)
-    adapter.save_message(adapter_state, message)
+    {persistence, persistence_state} = Runtime.get_persistence(runtime)
+    persistence.save_message(persistence_state, message)
   end
 
   @doc "Get room by external binding (without creating)"
   def get_room_by_external_binding(runtime, channel, bridge_id, external_id) do
-    {adapter, adapter_state} = Runtime.get_adapter(runtime)
-    adapter.get_room_by_external_binding(adapter_state, channel, bridge_id, external_id)
+    {persistence, persistence_state} = Runtime.get_persistence(runtime)
+    persistence.get_room_by_external_binding(persistence_state, channel, bridge_id, external_id)
   end
 
   @doc "Create a binding between an internal room and an external platform"
   def create_room_binding(runtime, room_id, channel, bridge_id, external_id, attrs) do
-    {adapter, adapter_state} = Runtime.get_adapter(runtime)
-    adapter.create_room_binding(adapter_state, room_id, channel, bridge_id, external_id, attrs)
+    {persistence, persistence_state} = Runtime.get_persistence(runtime)
+    persistence.create_room_binding(persistence_state, room_id, channel, bridge_id, external_id, attrs)
   end
 
   @doc "List all bindings for a room"
   def list_room_bindings(runtime, room_id) do
-    {adapter, adapter_state} = Runtime.get_adapter(runtime)
-    adapter.list_room_bindings(adapter_state, room_id)
+    {persistence, persistence_state} = Runtime.get_persistence(runtime)
+    persistence.list_room_bindings(persistence_state, room_id)
   end
 
   @doc "Delete a room binding"
   def delete_room_binding(runtime, binding_id) do
-    {adapter, adapter_state} = Runtime.get_adapter(runtime)
-    adapter.delete_room_binding(adapter_state, binding_id)
+    {persistence, persistence_state} = Runtime.get_persistence(runtime)
+    persistence.delete_room_binding(persistence_state, binding_id)
   end
 
   @doc "Lookup a single directory entry."
   def directory_lookup(runtime, target, query, opts \\ [])
       when is_atom(target) and is_map(query) and is_list(opts) do
-    {adapter, adapter_state} = Runtime.get_adapter(runtime)
-    adapter.directory_lookup(adapter_state, target, query, opts)
+    {persistence, persistence_state} = Runtime.get_persistence(runtime)
+    persistence.directory_lookup(persistence_state, target, query, opts)
   end
 
   @doc "Search directory entries."
   def directory_search(runtime, target, query, opts \\ [])
       when is_atom(target) and is_map(query) and is_list(opts) do
-    {adapter, adapter_state} = Runtime.get_adapter(runtime)
-    adapter.directory_search(adapter_state, target, query, opts)
+    {persistence, persistence_state} = Runtime.get_persistence(runtime)
+    persistence.directory_search(persistence_state, target, query, opts)
   end
 
   @doc "Start (or resume) an onboarding flow."
@@ -706,6 +725,20 @@ defmodule Jido.Messaging do
   def put_bridge_config(instance_module, attrs)
       when is_atom(instance_module) and is_map(attrs) do
     ConfigStore.put_bridge_config(instance_module, attrs)
+  end
+
+  @doc "Fetch runtime status for one bridge worker."
+  def bridge_status(instance_module, bridge_id)
+      when is_atom(instance_module) and is_binary(bridge_id) do
+    case Jido.Messaging.BridgeServer.whereis(instance_module, bridge_id) do
+      nil -> {:error, :not_found}
+      pid -> Jido.Messaging.BridgeServer.status(pid)
+    end
+  end
+
+  @doc "List runtime status for all bridge workers."
+  def list_bridge_status(instance_module) when is_atom(instance_module) do
+    Jido.Messaging.BridgeSupervisor.list_bridges(instance_module)
   end
 
   @doc "Fetch bridge config by id."
@@ -778,7 +811,8 @@ defmodule Jido.Messaging do
     room_id = spec.room_id || "bridge:" <> Jido.Chat.ID.generate!()
     runtime = runtime_name(instance_module)
 
-    with :ok <- ensure_bridge_configs(instance_module, spec.bridge_configs),
+    with :ok <- TopologyValidator.validate_bridge_room_spec(instance_module, spec),
+         :ok <- ensure_bridge_configs(instance_module, spec.bridge_configs),
          {:ok, room} <- ensure_room(runtime, room_id, spec),
          {:ok, _bindings} <- ensure_bindings(runtime, instance_module, room_id, spec.bindings),
          {:ok, _policy} <- ensure_routing_policy(instance_module, room_id, spec.routing_policy) do
@@ -921,6 +955,7 @@ defmodule Jido.Messaging do
   defp bridge_config_key_to_atom("opts"), do: :opts
   defp bridge_config_key_to_atom("enabled"), do: :enabled
   defp bridge_config_key_to_atom("capabilities"), do: :capabilities
+  defp bridge_config_key_to_atom("delivery_policy"), do: :delivery_policy
   defp bridge_config_key_to_atom("revision"), do: :revision
   defp bridge_config_key_to_atom("inserted_at"), do: :inserted_at
   defp bridge_config_key_to_atom("updated_at"), do: :updated_at

@@ -9,8 +9,7 @@ defmodule Jido.Messaging.PubSub do
   ## Usage
 
       defmodule MyApp.Messaging do
-        use Jido.Messaging,
-          adapter: Jido.Messaging.Adapters.ETS,
+        use Jido.Messaging, persistence: Jido.Messaging.Persistence.ETS,
           pubsub: MyApp.PubSub
       end
 

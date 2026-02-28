@@ -4,8 +4,7 @@ defmodule Jido.Messaging.ReplyMappingTest do
   alias Jido.Messaging.{Ingest, Deliver}
 
   defmodule TestMessaging do
-    use Jido.Messaging,
-      adapter: Jido.Messaging.Adapters.ETS
+    use Jido.Messaging, persistence: Jido.Messaging.Persistence.ETS
   end
 
   defmodule MockChannel do

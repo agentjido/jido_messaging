@@ -15,7 +15,7 @@ defmodule Jido.Messaging.Demo.BridgeTest do
   alias Jido.Messaging.Demo.Bridge
 
   defmodule TestMessaging do
-    use Jido.Messaging, adapter: Jido.Messaging.Adapters.ETS
+    use Jido.Messaging, persistence: Jido.Messaging.Persistence.ETS
   end
 
   defmodule TelegramAdapterStub do

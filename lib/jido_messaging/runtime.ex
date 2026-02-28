@@ -12,8 +12,8 @@ defmodule Jido.Messaging.Runtime do
             __MODULE__,
             %{
               instance_module: Zoi.any(),
-              adapter: Zoi.any(),
-              adapter_state: Zoi.any() |> Zoi.nullish()
+              persistence: Zoi.any(),
+              persistence_state: Zoi.any() |> Zoi.nullish()
             },
             coerce: false
           )
@@ -36,30 +36,30 @@ defmodule Jido.Messaging.Runtime do
     GenServer.call(runtime, :get_state)
   end
 
-  @doc "Get the adapter and its state"
-  def get_adapter(runtime) do
-    GenServer.call(runtime, :get_adapter)
+  @doc "Get the persistence adapter and its state."
+  def get_persistence(runtime) do
+    GenServer.call(runtime, :get_persistence)
   end
 
   @impl true
   def init(opts) do
     instance_module = Keyword.fetch!(opts, :instance_module)
-    adapter = Keyword.fetch!(opts, :adapter)
-    adapter_opts = Keyword.get(opts, :adapter_opts, [])
+    persistence = Keyword.fetch!(opts, :persistence)
+    persistence_opts = Keyword.get(opts, :persistence_opts, [])
 
-    case adapter.init(adapter_opts) do
-      {:ok, adapter_state} ->
+    case persistence.init(persistence_opts) do
+      {:ok, persistence_state} ->
         state =
           struct!(__MODULE__, %{
             instance_module: instance_module,
-            adapter: adapter,
-            adapter_state: adapter_state
+            persistence: persistence,
+            persistence_state: persistence_state
           })
 
         {:ok, state}
 
       {:error, reason} ->
-        {:stop, {:adapter_init_failed, reason}}
+        {:stop, {:persistence_init_failed, reason}}
     end
   end
 
@@ -69,7 +69,7 @@ defmodule Jido.Messaging.Runtime do
   end
 
   @impl true
-  def handle_call(:get_adapter, _from, state) do
-    {:reply, {state.adapter, state.adapter_state}, state}
+  def handle_call(:get_persistence, _from, state) do
+    {:reply, {state.persistence, state.persistence_state}, state}
   end
 end

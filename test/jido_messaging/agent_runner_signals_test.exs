@@ -11,7 +11,7 @@ defmodule Jido.Messaging.AgentRunnerSignalsTest do
   alias Jido.Messaging.{RoomServer, RoomSupervisor, AgentSupervisor}
 
   defmodule TestMessaging do
-    use Jido.Messaging, adapter: Jido.Messaging.Adapters.ETS
+    use Jido.Messaging, persistence: Jido.Messaging.Persistence.ETS
   end
 
   setup do

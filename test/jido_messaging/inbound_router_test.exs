@@ -2,7 +2,7 @@ defmodule Jido.Messaging.InboundRouterTest do
   use ExUnit.Case, async: false
 
   alias Jido.Chat.{EventEnvelope, Incoming, WebhookRequest, WebhookResponse}
-  alias Jido.Messaging.InboundRouter
+  alias Jido.Messaging.{InboundRouter, IngressOutcome}
 
   defmodule RouterAdapter do
     @behaviour Jido.Chat.Adapter
@@ -87,8 +87,7 @@ defmodule Jido.Messaging.InboundRouterTest do
   end
 
   defmodule TestMessaging do
-    use Jido.Messaging,
-      adapter: Jido.Messaging.Adapters.ETS
+    use Jido.Messaging, persistence: Jido.Messaging.Persistence.ETS
   end
 
   setup do
@@ -261,6 +260,25 @@ defmodule Jido.Messaging.InboundRouterTest do
 
       assert response.status == 400
       assert (response.body[:error] || response.body["error"]) =~ "{:invalid_event, %{reason: \"payload_malformed\"}}"
+    end
+  end
+
+  describe "route_ingress/6" do
+    test "returns canonical IngressOutcome for webhook mode" do
+      assert {:ok, %IngressOutcome{} = outcome} =
+               InboundRouter.route_ingress(
+                 TestMessaging,
+                 "bridge_tg",
+                 :webhook,
+                 %{headers: %{}, path: "/telegram/webhook", method: "POST"},
+                 %{"kind" => "noop"},
+                 []
+               )
+
+      assert outcome.mode == :webhook
+      assert outcome.status == :noop
+      assert outcome.response.status == 200
+      assert outcome.bridge_id == "bridge_tg"
     end
   end
 end

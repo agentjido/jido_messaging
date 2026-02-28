@@ -69,7 +69,7 @@ defmodule Jido.Messaging.Onboarding do
   def get(instance_module, onboarding_id)
       when is_atom(instance_module) and is_binary(onboarding_id) do
     runtime = instance_module.__jido_messaging__(:runtime)
-    {adapter, adapter_state} = Runtime.get_adapter(runtime)
+    {adapter, adapter_state} = Runtime.get_persistence(runtime)
     adapter.get_onboarding(adapter_state, onboarding_id)
   end
 

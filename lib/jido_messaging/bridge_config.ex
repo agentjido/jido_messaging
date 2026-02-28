@@ -6,6 +6,7 @@ defmodule Jido.Messaging.BridgeConfig do
   """
 
   alias Jido.Chat.Adapter
+  alias Jido.Messaging.DeliveryPolicy
 
   @schema Zoi.struct(
             __MODULE__,
@@ -16,6 +17,7 @@ defmodule Jido.Messaging.BridgeConfig do
               opts: Zoi.map() |> Zoi.default(%{}),
               enabled: Zoi.boolean() |> Zoi.default(true),
               capabilities: Zoi.map() |> Zoi.default(%{}),
+              delivery_policy: Zoi.struct(DeliveryPolicy) |> Zoi.default(DeliveryPolicy.new(%{})),
               revision: Zoi.integer() |> Zoi.default(0),
               inserted_at: Zoi.struct(DateTime) |> Zoi.nullish(),
               updated_at: Zoi.struct(DateTime) |> Zoi.nullish()
@@ -47,6 +49,7 @@ defmodule Jido.Messaging.BridgeConfig do
       opts: Map.get(attrs, :opts, %{}),
       enabled: Map.get(attrs, :enabled, true),
       capabilities: Map.get(attrs, :capabilities, Adapter.capabilities(adapter_module)),
+      delivery_policy: normalize_delivery_policy(Map.get(attrs, :delivery_policy, %{})),
       revision: Map.get(attrs, :revision, 0),
       inserted_at: Map.get(attrs, :inserted_at, now),
       updated_at: Map.get(attrs, :updated_at, now)
@@ -82,6 +85,7 @@ defmodule Jido.Messaging.BridgeConfig do
   defp key_to_atom("opts"), do: :opts
   defp key_to_atom("enabled"), do: :enabled
   defp key_to_atom("capabilities"), do: :capabilities
+  defp key_to_atom("delivery_policy"), do: :delivery_policy
   defp key_to_atom("revision"), do: :revision
   defp key_to_atom("inserted_at"), do: :inserted_at
   defp key_to_atom("updated_at"), do: :updated_at
@@ -90,4 +94,8 @@ defmodule Jido.Messaging.BridgeConfig do
   defp generate_id do
     "bridge_" <> Base.encode16(:crypto.strong_rand_bytes(8), case: :lower)
   end
+
+  defp normalize_delivery_policy(%DeliveryPolicy{} = policy), do: policy
+  defp normalize_delivery_policy(attrs) when is_map(attrs), do: DeliveryPolicy.new(attrs)
+  defp normalize_delivery_policy(_other), do: DeliveryPolicy.new(%{})
 end

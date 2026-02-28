@@ -4,8 +4,7 @@ defmodule Jido.Messaging.OutboundGatewayTest do
   alias Jido.Messaging.OutboundGateway
 
   defmodule TestMessaging do
-    use Jido.Messaging,
-      adapter: Jido.Messaging.Adapters.ETS
+    use Jido.Messaging, persistence: Jido.Messaging.Persistence.ETS
   end
 
   defmodule PartitionChannel do
@@ -446,6 +445,28 @@ defmodule Jido.Messaging.OutboundGatewayTest do
     assert result.security.sanitize.decision.action == :allow_original
     assert result.security.sanitize.decision.outcome == :allow_original_fallback
     assert result.security.sanitize.metadata.fallback == true
+  end
+
+  test "applies per-bridge delivery policy defaults when request retry opts are omitted" do
+    start_supervised!(RetryChannel)
+    start_messaging(partition_count: 1, queue_capacity: 8, max_attempts: 5, base_backoff_ms: 1, max_backoff_ms: 1)
+
+    {:ok, _bridge} =
+      TestMessaging.put_bridge_config(%{
+        id: "delivery_policy_bridge",
+        adapter_module: RetryChannel,
+        delivery_policy: %{max_attempts: 1, base_backoff_ms: 1, max_backoff_ms: 1}
+      })
+
+    context = %{
+      channel: RetryChannel,
+      bridge_id: "delivery_policy_bridge",
+      external_room_id: "delivery_policy_room"
+    }
+
+    assert {:error, outbound_error} = OutboundGateway.send_message(TestMessaging, context, "always_fail")
+    assert outbound_error.max_attempts == 1
+    assert outbound_error.attempt == 1
   end
 
   defp start_messaging(opts) do

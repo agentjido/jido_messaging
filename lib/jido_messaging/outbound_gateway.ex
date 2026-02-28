@@ -10,6 +10,9 @@ defmodule Jido.Messaging.OutboundGateway do
   """
 
   alias Jido.Messaging.AdapterBridge
+  alias Jido.Messaging.BridgeServer
+  alias Jido.Messaging.ConfigStore
+  alias Jido.Messaging.DeliveryPolicy
   alias Jido.Messaging.OutboundGateway.Partition
   alias Jido.Messaging.SessionManager
 
@@ -218,27 +221,35 @@ defmodule Jido.Messaging.OutboundGateway do
 
     case Partition.dispatch(instance_module, partition, request) do
       {:error, :partition_unavailable} ->
-        {:error,
-         %{
-           type: :outbound_error,
-           category: :fatal,
-           disposition: :terminal,
-           operation: request.operation,
-           reason: :partition_unavailable,
-           attempt: 1,
-           max_attempts: request.max_attempts || config(instance_module)[:max_attempts],
-           partition: partition,
-           routing_key: request.routing_key,
-           retryable: false
-         }}
+        error = %{
+          type: :outbound_error,
+          category: :fatal,
+          disposition: :terminal,
+          operation: request.operation,
+          reason: :partition_unavailable,
+          attempt: 1,
+          max_attempts: request.max_attempts || config(instance_module)[:max_attempts],
+          partition: partition,
+          routing_key: request.routing_key,
+          retryable: false
+        }
 
-      result ->
-        result
+        BridgeServer.mark_error(instance_module, request.bridge_id, error.reason)
+        {:error, error}
+
+      {:ok, _success} = ok ->
+        BridgeServer.mark_outbound(instance_module, request.bridge_id)
+        ok
+
+      {:error, error} = failure ->
+        BridgeServer.mark_error(instance_module, request.bridge_id, error[:reason] || error)
+        failure
     end
   end
 
   defp build_request(instance_module, operation, context, payload, external_message_id, opts) do
     bridge_id = context_bridge_id(context)
+    delivery_policy = delivery_policy(instance_module, bridge_id)
     context_external_room_id = Map.get(context, :external_room_id)
     session_key = context_session_key(context, bridge_id, context_external_room_id)
 
@@ -263,9 +274,9 @@ defmodule Jido.Messaging.OutboundGateway do
       session_key: session_key,
       route_resolution: route_resolution,
       idempotency_key: keyword_or_map_get(opts, :idempotency_key),
-      max_attempts: keyword_or_map_get(opts, :max_attempts),
-      base_backoff_ms: keyword_or_map_get(opts, :base_backoff_ms),
-      max_backoff_ms: keyword_or_map_get(opts, :max_backoff_ms),
+      max_attempts: keyword_or_map_get(opts, :max_attempts) || delivery_policy.max_attempts,
+      base_backoff_ms: keyword_or_map_get(opts, :base_backoff_ms) || delivery_policy.base_backoff_ms,
+      max_backoff_ms: keyword_or_map_get(opts, :max_backoff_ms) || delivery_policy.max_backoff_ms,
       priority: normalize_priority(keyword_or_map_get(opts, :priority))
     }
   end
@@ -385,6 +396,46 @@ defmodule Jido.Messaging.OutboundGateway do
   end
 
   defp keyword_or_map_get(opts, key), do: Keyword.get(opts, key)
+
+  defp delivery_policy(instance_module, bridge_id) do
+    gateway_cfg = config(instance_module)
+
+    default_policy =
+      DeliveryPolicy.new(%{
+        max_attempts: gateway_cfg[:max_attempts],
+        base_backoff_ms: gateway_cfg[:base_backoff_ms],
+        max_backoff_ms: gateway_cfg[:max_backoff_ms],
+        dead_letter: true
+      })
+
+    with {:ok, bridge_config} <- ConfigStore.get_bridge_config(instance_module, bridge_id) do
+      merge_delivery_policy(default_policy, Map.get(bridge_config, :delivery_policy))
+    else
+      _ -> default_policy
+    end
+  end
+
+  defp merge_delivery_policy(%DeliveryPolicy{} = defaults, nil), do: defaults
+
+  defp merge_delivery_policy(%DeliveryPolicy{} = defaults, %DeliveryPolicy{} = override) do
+    merged =
+      defaults
+      |> Map.from_struct()
+      |> Map.merge(Map.from_struct(override))
+
+    DeliveryPolicy.new(merged)
+  end
+
+  defp merge_delivery_policy(%DeliveryPolicy{} = defaults, override) when is_map(override) do
+    merged =
+      defaults
+      |> Map.from_struct()
+      |> Map.merge(override)
+
+    DeliveryPolicy.new(merged)
+  end
+
+  defp merge_delivery_policy(%DeliveryPolicy{} = defaults, _other), do: defaults
 
   defp sanitize_positive_integer(value, _default)
        when is_integer(value) and value > 0,

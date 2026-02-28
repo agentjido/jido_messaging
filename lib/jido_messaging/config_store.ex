@@ -2,32 +2,24 @@ defmodule Jido.Messaging.ConfigStore do
   @moduledoc """
   Runtime-editable bridge and routing control plane.
 
-  This is a single-writer GenServer backed by ETS snapshots for deterministic
-  reads and optimistic revision checks.
+  This is a single-writer GenServer that persists control-plane state through
+  the configured `Jido.Messaging.Persistence` backend.
   """
 
   use GenServer
 
-  alias Jido.Messaging.{BridgeConfig, RoutingPolicy}
-
-  @bridge_prefix :bridge_config
-  @routing_prefix :routing_policy
+  alias Jido.Messaging.{BridgeConfig, RoutingPolicy, Runtime}
 
   @type revision_conflict ::
           {:revision_conflict, expected_revision :: non_neg_integer(), actual_revision :: non_neg_integer() | nil}
 
   @type state :: %{
-          instance_module: module(),
-          table: atom()
+          instance_module: module()
         }
 
   @doc "Returns the process name for an instance module."
   @spec name(module()) :: atom()
   def name(instance_module), do: Module.concat(instance_module, ConfigStore)
-
-  @doc "Returns the ETS table name for an instance module."
-  @spec table_name(module()) :: atom()
-  def table_name(instance_module), do: Module.concat(instance_module, ConfigStoreTable)
 
   @doc false
   def start_link(opts) do
@@ -113,70 +105,57 @@ defmodule Jido.Messaging.ConfigStore do
   @impl true
   def init(opts) do
     instance_module = Keyword.fetch!(opts, :instance_module)
-    table_name = Keyword.get(opts, :table_name, table_name(instance_module))
-
-    table =
-      case :ets.whereis(table_name) do
-        :undefined ->
-          :ets.new(table_name, [:set, :named_table, :protected, {:read_concurrency, true}])
-
-        _tid ->
-          :ets.delete_all_objects(table_name)
-          table_name
-      end
-
-    {:ok, %{instance_module: instance_module, table: table}}
+    {:ok, %{instance_module: instance_module}}
   end
 
   @impl true
   def handle_call({:put_bridge_config, attrs}, _from, state) do
     attrs = normalize_map(attrs)
     id = map_get(attrs, :id)
-    existing = lookup_bridge(state.table, id)
+
+    {persistence, persistence_state} = runtime_persistence(state.instance_module)
+    existing = get_existing_bridge(persistence, persistence_state, id)
     expected_revision = map_get(attrs, :revision)
 
-    with :ok <- validate_revision(expected_revision, existing),
-         {:ok, config} <- normalize_bridge_config(attrs, existing) do
-      :ets.insert(state.table, {bridge_key(config.id), config})
-      :ok = reconcile_bridges(state.instance_module)
-      {:reply, {:ok, config}, state}
-    else
-      {:error, _reason} = error ->
-        {:reply, error, state}
-    end
-  end
-
-  def handle_call({:get_bridge_config, bridge_id}, _from, state) do
     reply =
-      case lookup_bridge(state.table, bridge_id) do
-        nil -> {:error, :not_found}
-        config -> {:ok, config}
+      with :ok <- validate_revision(expected_revision, existing),
+           {:ok, config} <- normalize_bridge_config(attrs, existing),
+           {:ok, _saved} <- persistence.save_bridge_config(persistence_state, config) do
+        trigger_reconcile(state.instance_module)
+        {:ok, config}
       end
 
     {:reply, reply, state}
   end
 
+  def handle_call({:get_bridge_config, bridge_id}, _from, state) do
+    {persistence, persistence_state} = runtime_persistence(state.instance_module)
+    {:reply, persistence.get_bridge_config(persistence_state, bridge_id), state}
+  end
+
   def handle_call({:list_bridge_configs, opts}, _from, state) do
-    enabled_filter = Keyword.get(opts, :enabled)
+    {persistence, persistence_state} = runtime_persistence(state.instance_module)
 
-    configs =
-      state.table
-      |> list_entries(@bridge_prefix)
-      |> maybe_filter_enabled(enabled_filter)
-      |> Enum.sort_by(& &1.id)
+    reply =
+      case persistence.list_bridge_configs(persistence_state, opts) do
+        {:ok, configs} -> configs
+        {:error, _reason} -> []
+      end
 
-    {:reply, configs, state}
+    {:reply, reply, state}
   end
 
   def handle_call({:delete_bridge_config, bridge_id}, _from, state) do
-    reply =
-      case :ets.take(state.table, bridge_key(bridge_id)) do
-        [] ->
-          {:error, :not_found}
+    {persistence, persistence_state} = runtime_persistence(state.instance_module)
 
-        _ ->
-          :ok = reconcile_bridges(state.instance_module)
+    reply =
+      case persistence.delete_bridge_config(persistence_state, bridge_id) do
+        :ok ->
+          trigger_reconcile(state.instance_module)
           :ok
+
+        {:error, _reason} = error ->
+          error
       end
 
     {:reply, reply, state}
@@ -184,47 +163,29 @@ defmodule Jido.Messaging.ConfigStore do
 
   def handle_call({:put_routing_policy, room_id, attrs}, _from, state) do
     attrs = attrs |> normalize_map() |> Map.put(:room_id, room_id)
-    existing = lookup_routing_policy(state.table, room_id)
+    {persistence, persistence_state} = runtime_persistence(state.instance_module)
+    existing = get_existing_routing_policy(persistence, persistence_state, room_id)
     expected_revision = map_get(attrs, :revision)
 
-    with :ok <- validate_revision(expected_revision, existing),
-         {:ok, policy} <- normalize_routing_policy(attrs, existing) do
-      :ets.insert(state.table, {routing_key(room_id), policy})
-      {:reply, {:ok, policy}, state}
-    else
-      {:error, _reason} = error ->
-        {:reply, error, state}
-    end
+    reply =
+      with :ok <- validate_revision(expected_revision, existing),
+           {:ok, policy} <- normalize_routing_policy(attrs, existing),
+           {:ok, _saved} <- persistence.save_routing_policy(persistence_state, policy) do
+        {:ok, policy}
+      end
+
+    {:reply, reply, state}
   end
 
   def handle_call({:get_routing_policy, room_id}, _from, state) do
-    reply =
-      case lookup_routing_policy(state.table, room_id) do
-        nil -> {:error, :not_found}
-        policy -> {:ok, policy}
-      end
-
-    {:reply, reply, state}
+    {persistence, persistence_state} = runtime_persistence(state.instance_module)
+    {:reply, persistence.get_routing_policy(persistence_state, room_id), state}
   end
 
   def handle_call({:delete_routing_policy, room_id}, _from, state) do
-    reply =
-      case :ets.take(state.table, routing_key(room_id)) do
-        [] -> {:error, :not_found}
-        _ -> :ok
-      end
-
-    {:reply, reply, state}
+    {persistence, persistence_state} = runtime_persistence(state.instance_module)
+    {:reply, persistence.delete_routing_policy(persistence_state, room_id), state}
   end
-
-  defp list_entries(table, prefix) do
-    table
-    |> :ets.match_object({{prefix, :_}, :_})
-    |> Enum.map(fn {_key, value} -> value end)
-  end
-
-  defp maybe_filter_enabled(configs, nil), do: configs
-  defp maybe_filter_enabled(configs, value), do: Enum.filter(configs, &(&1.enabled == value))
 
   defp normalize_bridge_config(attrs, existing) do
     merged =
@@ -309,24 +270,26 @@ defmodule Jido.Messaging.ConfigStore do
   defp next_revision(%{revision: revision}) when is_integer(revision), do: revision + 1
   defp next_revision(_), do: 1
 
-  defp lookup_bridge(_table, nil), do: nil
+  defp runtime_persistence(instance_module) do
+    runtime = Module.concat(instance_module, :Runtime)
+    Runtime.get_persistence(runtime)
+  end
 
-  defp lookup_bridge(table, bridge_id) do
-    case :ets.lookup(table, bridge_key(bridge_id)) do
-      [{_, config}] -> config
-      [] -> nil
+  defp get_existing_bridge(_persistence, _state, nil), do: nil
+
+  defp get_existing_bridge(persistence, persistence_state, bridge_id) do
+    case persistence.get_bridge_config(persistence_state, bridge_id) do
+      {:ok, config} -> config
+      {:error, :not_found} -> nil
     end
   end
 
-  defp lookup_routing_policy(table, room_id) do
-    case :ets.lookup(table, routing_key(room_id)) do
-      [{_, policy}] -> policy
-      [] -> nil
+  defp get_existing_routing_policy(persistence, persistence_state, room_id) do
+    case persistence.get_routing_policy(persistence_state, room_id) do
+      {:ok, policy} -> policy
+      {:error, :not_found} -> nil
     end
   end
-
-  defp bridge_key(bridge_id), do: {@bridge_prefix, bridge_id}
-  defp routing_key(room_id), do: {@routing_prefix, room_id}
 
   defp normalize_map(%_{} = struct), do: struct |> Map.from_struct() |> normalize_map()
 
@@ -363,23 +326,29 @@ defmodule Jido.Messaging.ConfigStore do
   defp key_to_atom("enabled"), do: :enabled
   defp key_to_atom("capabilities"), do: :capabilities
   defp key_to_atom("revision"), do: :revision
-  defp key_to_atom("delivery_mode"), do: :delivery_mode
-  defp key_to_atom("failover_policy"), do: :failover_policy
-  defp key_to_atom("dedupe_scope"), do: :dedupe_scope
-  defp key_to_atom("fallback_order"), do: :fallback_order
-  defp key_to_atom("metadata"), do: :metadata
   defp key_to_atom("inserted_at"), do: :inserted_at
   defp key_to_atom("updated_at"), do: :updated_at
+  defp key_to_atom("delivery_policy"), do: :delivery_policy
+  defp key_to_atom("adapter_key"), do: :adapter_key
+  defp key_to_atom("mode"), do: :mode
+  defp key_to_atom("outbound"), do: :outbound
+  defp key_to_atom("default"), do: :default
   defp key_to_atom(_), do: nil
 
   defp reconcile_bridges(instance_module) do
-    if Code.ensure_loaded?(Jido.Messaging.BridgeSupervisor) do
-      _ =
-        spawn(fn ->
-          _ = Jido.Messaging.BridgeSupervisor.reconcile(instance_module)
-          :ok
-        end)
+    bridge_supervisor = Module.concat(instance_module, :BridgeSupervisor)
+
+    case Process.whereis(bridge_supervisor) do
+      nil -> :ok
+      _pid -> Jido.Messaging.BridgeSupervisor.reconcile(instance_module)
     end
+  end
+
+  defp trigger_reconcile(instance_module) do
+    _ =
+      Task.start(fn ->
+        reconcile_bridges(instance_module)
+      end)
 
     :ok
   end

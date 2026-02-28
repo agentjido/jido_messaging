@@ -39,16 +39,11 @@ defmodule Jido.Messaging.BridgeSupervisor do
           _ = start_bridge(instance_module, config)
 
         pid ->
-          case BridgeServer.status(pid) do
-            {:ok, %{revision: revision, adapter_module: adapter_module}} ->
-              if revision != config.revision or adapter_module != config.adapter_module do
-                _ = stop_bridge(instance_module, bridge_id)
-                _ = start_bridge(instance_module, config)
-              end
+          {:ok, %{revision: revision, adapter_module: adapter_module}} = BridgeServer.status(pid)
 
-            _ ->
-              _ = stop_bridge(instance_module, bridge_id)
-              _ = start_bridge(instance_module, config)
+          if revision != config.revision or adapter_module != config.adapter_module do
+            _ = stop_bridge(instance_module, bridge_id)
+            _ = start_bridge(instance_module, config)
           end
       end
     end)
@@ -79,7 +74,7 @@ defmodule Jido.Messaging.BridgeSupervisor do
     end
   end
 
-  @spec list_bridges(module()) :: [map()]
+  @spec list_bridges(module()) :: [Jido.Messaging.BridgeStatus.t()]
   def list_bridges(instance_module) when is_atom(instance_module) do
     list_running(instance_module)
     |> Enum.map(fn {_bridge_id, pid} ->

@@ -18,7 +18,14 @@ defmodule Jido.MessagingTest do
     test "__jido_messaging__/1 returns correct names" do
       assert TestMessaging.__jido_messaging__(:supervisor) == Jido.Messaging.TestMessaging.Supervisor
       assert TestMessaging.__jido_messaging__(:runtime) == Jido.Messaging.TestMessaging.Runtime
-      assert TestMessaging.__jido_messaging__(:adapter) == Jido.Messaging.Adapters.ETS
+      assert TestMessaging.__jido_messaging__(:persistence) == Jido.Messaging.Persistence.ETS
+    end
+
+    test "supports core runtime profile without onboarding supervisors" do
+      start_supervised!(Jido.Messaging.CoreProfileMessaging)
+
+      assert Process.whereis(Jido.Messaging.CoreProfileMessaging.__jido_messaging__(:onboarding_supervisor)) == nil
+      assert Process.whereis(Jido.Messaging.CoreProfileMessaging.__jido_messaging__(:onboarding_registry)) == nil
     end
   end
 

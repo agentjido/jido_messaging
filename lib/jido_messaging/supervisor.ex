@@ -20,8 +20,10 @@ defmodule Jido.Messaging.Supervisor do
     Jido.Messaging.Signal.Ext.CorrelationId.ensure_registered()
 
     instance_module = Keyword.fetch!(opts, :instance_module)
-    adapter = Keyword.fetch!(opts, :adapter)
-    adapter_opts = Keyword.get(opts, :adapter_opts, [])
+    persistence = Keyword.fetch!(opts, :persistence)
+    persistence_opts = Keyword.get(opts, :persistence_opts, [])
+    runtime_profile = Keyword.get(opts, :runtime_profile, :full)
+    runtime_features = resolve_runtime_features(runtime_profile, Keyword.get(opts, :runtime_features, []))
     bridge_manifest_paths = Keyword.get(opts, :bridge_manifest_paths, [])
     required_bridges = Keyword.get(opts, :required_bridges, [])
     bridge_collision_policy = Keyword.get(opts, :bridge_collision_policy, :prefer_last)
@@ -51,16 +53,14 @@ defmodule Jido.Messaging.Supervisor do
         deduper_name = Module.concat(instance_module, Deduper)
         signal_bus_name = Module.concat(instance_module, SignalBus)
 
-        children = [
+        base_children = [
           {Registry, keys: :unique, name: room_registry_name},
           {Registry, keys: :unique, name: agent_registry_name},
           {Registry, keys: :unique, name: instance_registry_name},
           {Registry, keys: :unique, name: bridge_registry_name},
-          {Registry, keys: :unique, name: onboarding_registry_name},
           {Jido.Signal.Bus, name: signal_bus_name},
           {Jido.Messaging.RoomSupervisor, name: room_supervisor_name, instance_module: instance_module},
           {Jido.Messaging.AgentSupervisor, name: agent_supervisor_name, instance_module: instance_module},
-          {Jido.Messaging.Onboarding.Supervisor, name: onboarding_supervisor_name, instance_module: instance_module},
           {Jido.Messaging.SessionManager.Supervisor,
            name: session_manager_supervisor_name, instance_module: instance_module},
           {Jido.Messaging.DeadLetter, name: dead_letter_name, instance_module: instance_module},
@@ -73,14 +73,43 @@ defmodule Jido.Messaging.Supervisor do
           {Jido.Messaging.BridgeSupervisor, name: bridge_supervisor_name, instance_module: instance_module},
           {Jido.Messaging.Deduper, name: deduper_name, instance_module: instance_module},
           {Jido.Messaging.Runtime,
-           name: runtime_name, instance_module: instance_module, adapter: adapter, adapter_opts: adapter_opts}
+           name: runtime_name,
+           instance_module: instance_module,
+           persistence: persistence,
+           persistence_opts: persistence_opts}
         ]
+
+        onboarding_children =
+          if :onboarding in runtime_features do
+            [
+              {Registry, keys: :unique, name: onboarding_registry_name},
+              {Jido.Messaging.Onboarding.Supervisor, name: onboarding_supervisor_name, instance_module: instance_module}
+            ]
+          else
+            []
+          end
+
+        children = base_children ++ onboarding_children
 
         Supervisor.init(children, strategy: :one_for_one)
 
       {:error, {:fatal_required_bridge_error, diagnostic}} ->
         {:stop, {:fatal_required_bridge_error, diagnostic}}
     end
+  end
+
+  defp resolve_runtime_features(profile, explicit_features) do
+    core = [:core_runtime]
+
+    profile_features =
+      case profile do
+        :core -> core
+        :full -> core ++ [:onboarding]
+        _ -> core ++ [:onboarding]
+      end
+
+    (profile_features ++ explicit_features)
+    |> Enum.uniq()
   end
 
   @doc """

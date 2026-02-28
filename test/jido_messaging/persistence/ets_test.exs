@@ -1,7 +1,7 @@
-defmodule Jido.Messaging.Adapters.ETSTest do
+defmodule Jido.Messaging.Persistence.ETSTest do
   use ExUnit.Case, async: true
 
-  alias Jido.Messaging.Adapters.ETS
+  alias Jido.Messaging.Persistence.ETS
   alias Jido.Chat.{LegacyMessage, Participant, Room}
 
   setup do
@@ -23,6 +23,8 @@ defmodule Jido.Messaging.Adapters.ETSTest do
       assert is_reference(state.participant_bindings)
       assert is_reference(state.message_external_ids)
       assert is_reference(state.onboarding_flows)
+      assert is_reference(state.bridge_configs)
+      assert is_reference(state.routing_policies)
     end
   end
 

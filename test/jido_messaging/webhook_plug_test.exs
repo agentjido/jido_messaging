@@ -73,7 +73,7 @@ defmodule Jido.Messaging.WebhookPlugTest do
   end
 
   defmodule PlugMessaging do
-    use Jido.Messaging, adapter: Jido.Messaging.Adapters.ETS
+    use Jido.Messaging, persistence: Jido.Messaging.Persistence.ETS
   end
 
   setup do

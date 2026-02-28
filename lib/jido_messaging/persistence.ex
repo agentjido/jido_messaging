@@ -1,4 +1,4 @@
-defmodule Jido.Messaging.Adapter do
+defmodule Jido.Messaging.Persistence do
   @moduledoc """
   Behaviour for Jido.Messaging storage adapters.
 
@@ -9,7 +9,7 @@ defmodule Jido.Messaging.Adapter do
   ## Implementing an Adapter
 
       defmodule MyApp.CustomAdapter do
-        @behaviour Jido.Messaging.Adapter
+        @behaviour Jido.Messaging.Persistence
 
         @impl true
         def init(opts) do
@@ -22,6 +22,7 @@ defmodule Jido.Messaging.Adapter do
   """
 
   alias Jido.Chat.{LegacyMessage, Participant, Room}
+  alias Jido.Messaging.{BridgeConfig, RoutingPolicy}
 
   @type state :: term()
   @type room_id :: String.t()
@@ -173,4 +174,27 @@ defmodule Jido.Messaging.Adapter do
 
   @doc "Fetch onboarding flow state by onboarding ID."
   @callback get_onboarding(state, onboarding_id()) :: {:ok, onboarding_flow()} | {:error, :not_found}
+
+  # Bridge/routing control-plane persistence
+
+  @doc "Persist bridge config."
+  @callback save_bridge_config(state, BridgeConfig.t()) :: {:ok, BridgeConfig.t()} | {:error, term()}
+
+  @doc "Fetch bridge config by id."
+  @callback get_bridge_config(state, String.t()) :: {:ok, BridgeConfig.t()} | {:error, :not_found}
+
+  @doc "List bridge configs with optional filters."
+  @callback list_bridge_configs(state, keyword()) :: {:ok, [BridgeConfig.t()]}
+
+  @doc "Delete bridge config."
+  @callback delete_bridge_config(state, String.t()) :: :ok | {:error, :not_found}
+
+  @doc "Persist routing policy."
+  @callback save_routing_policy(state, RoutingPolicy.t()) :: {:ok, RoutingPolicy.t()} | {:error, term()}
+
+  @doc "Fetch routing policy by room id."
+  @callback get_routing_policy(state, String.t()) :: {:ok, RoutingPolicy.t()} | {:error, :not_found}
+
+  @doc "Delete routing policy by room id."
+  @callback delete_routing_policy(state, String.t()) :: :ok | {:error, :not_found}
 end

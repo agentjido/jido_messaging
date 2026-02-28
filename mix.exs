@@ -2,7 +2,7 @@ defmodule Jido.Messaging.MixProject do
   use Mix.Project
 
   @version "0.1.0"
-  @source_url "https://github.com/epic-creative/jido_messaging"
+  @source_url "https://github.com/agentjido/jido_messaging"
   @description "Messaging and notification system for the Jido ecosystem"
 
   def project do
@@ -67,7 +67,7 @@ defmodule Jido.Messaging.MixProject do
   defp deps do
     [
       # Runtime dependencies
-      {:jido_chat, path: "../jido_chat"},
+      {:jido_chat, github: "agentjido/jido_chat", branch: "main"},
       {:jason, "~> 1.4"},
       {:zoi, "~> 0.14"},
       {:jido, github: "agentjido/jido", override: true},

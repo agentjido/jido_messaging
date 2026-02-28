@@ -4,8 +4,7 @@ defmodule Jido.Messaging.SecurityTest do
   alias Jido.Messaging.Security
 
   defmodule TestMessaging do
-    use Jido.Messaging,
-      adapter: Jido.Messaging.Adapters.ETS
+    use Jido.Messaging, persistence: Jido.Messaging.Persistence.ETS
   end
 
   defmodule SlackChannel do

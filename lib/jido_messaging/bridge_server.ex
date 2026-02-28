@@ -7,13 +7,16 @@ defmodule Jido.Messaging.BridgeServer do
 
   use GenServer
 
-  alias Jido.Messaging.{AdapterBridge, BridgeConfig}
+  alias Jido.Messaging.{AdapterBridge, BridgeConfig, BridgeStatus}
 
   @type state :: %{
           instance_module: module(),
           bridge_id: String.t(),
           config: BridgeConfig.t(),
-          listener_supervisor: pid() | nil
+          listener_supervisor: pid() | nil,
+          last_ingress_at: DateTime.t() | nil,
+          last_outbound_at: DateTime.t() | nil,
+          last_error: term() | nil
         }
 
   @spec start_link(keyword()) :: GenServer.on_start()
@@ -35,8 +38,32 @@ defmodule Jido.Messaging.BridgeServer do
     end
   end
 
-  @spec status(pid()) :: {:ok, map()}
+  @spec status(pid()) :: {:ok, BridgeStatus.t()}
   def status(pid) when is_pid(pid), do: GenServer.call(pid, :status)
+
+  @spec mark_ingress(module(), String.t()) :: :ok
+  def mark_ingress(instance_module, bridge_id) when is_atom(instance_module) and is_binary(bridge_id) do
+    case whereis(instance_module, bridge_id) do
+      nil -> :ok
+      pid -> GenServer.cast(pid, :mark_ingress)
+    end
+  end
+
+  @spec mark_outbound(module(), String.t()) :: :ok
+  def mark_outbound(instance_module, bridge_id) when is_atom(instance_module) and is_binary(bridge_id) do
+    case whereis(instance_module, bridge_id) do
+      nil -> :ok
+      pid -> GenServer.cast(pid, :mark_outbound)
+    end
+  end
+
+  @spec mark_error(module(), String.t(), term()) :: :ok
+  def mark_error(instance_module, bridge_id, reason) when is_atom(instance_module) and is_binary(bridge_id) do
+    case whereis(instance_module, bridge_id) do
+      nil -> :ok
+      pid -> GenServer.cast(pid, {:mark_error, reason})
+    end
+  end
 
   @impl true
   def init(opts) do
@@ -51,7 +78,10 @@ defmodule Jido.Messaging.BridgeServer do
          instance_module: instance_module,
          bridge_id: bridge_id,
          config: config,
-         listener_supervisor: listener_supervisor
+         listener_supervisor: listener_supervisor,
+         last_ingress_at: nil,
+         last_outbound_at: nil,
+         last_error: nil
        }}
     else
       {:error, reason} -> {:stop, reason}
@@ -66,15 +96,32 @@ defmodule Jido.Messaging.BridgeServer do
         pid -> Supervisor.count_children(pid).active
       end
 
-    {:reply,
-     {:ok,
-      %{
+    status =
+      BridgeStatus.new(%{
         bridge_id: state.bridge_id,
         adapter_module: state.config.adapter_module,
         enabled: state.config.enabled,
         revision: state.config.revision,
-        listener_count: listener_count
-      }}, state}
+        listener_count: listener_count,
+        last_ingress_at: state.last_ingress_at,
+        last_outbound_at: state.last_outbound_at,
+        last_error: state.last_error
+      })
+
+    {:reply, {:ok, status}, state}
+  end
+
+  @impl true
+  def handle_cast(:mark_ingress, state) do
+    {:noreply, %{state | last_ingress_at: DateTime.utc_now()}}
+  end
+
+  def handle_cast(:mark_outbound, state) do
+    {:noreply, %{state | last_outbound_at: DateTime.utc_now()}}
+  end
+
+  def handle_cast({:mark_error, reason}, state) do
+    {:noreply, %{state | last_error: reason}}
   end
 
   defp resolve_listener_specs(instance_module, bridge_id, %BridgeConfig{} = config) do

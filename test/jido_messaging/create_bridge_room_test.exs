@@ -15,7 +15,7 @@ defmodule Jido.Messaging.CreateBridgeRoomTest do
   end
 
   defmodule BridgeRoomMessaging do
-    use Jido.Messaging, adapter: Jido.Messaging.Adapters.ETS
+    use Jido.Messaging, persistence: Jido.Messaging.Persistence.ETS
   end
 
   setup do

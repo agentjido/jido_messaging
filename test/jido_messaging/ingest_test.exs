@@ -5,8 +5,7 @@ defmodule Jido.Messaging.IngestTest do
   alias Jido.Messaging.Ingest
 
   defmodule TestMessaging do
-    use Jido.Messaging,
-      adapter: Jido.Messaging.Adapters.ETS
+    use Jido.Messaging, persistence: Jido.Messaging.Persistence.ETS
   end
 
   defmodule MockChannel do
