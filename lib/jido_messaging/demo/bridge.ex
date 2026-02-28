@@ -20,7 +20,21 @@ defmodule Jido.Messaging.Demo.Bridge do
   alias Jido.Messaging.AdapterBridge
   alias Jido.Messaging.Supervisor, as: MessagingSupervisor
 
-  defstruct [:instance_module, :bindings, :room_id, :subscribed]
+  @schema Zoi.struct(
+            __MODULE__,
+            %{
+              instance_module: Zoi.module(),
+              bindings: Zoi.array(Zoi.any()) |> Zoi.default([]),
+              room_id: Zoi.string() |> Zoi.nullish(),
+              subscribed: Zoi.boolean() |> Zoi.default(false)
+            },
+            coerce: false
+          )
+
+  @type t :: unquote(Zoi.type_spec(@schema))
+
+  @enforce_keys Zoi.Struct.enforce_keys(@schema)
+  defstruct Zoi.Struct.struct_fields(@schema)
 
   @type binding :: {:telegram | :discord, module(), String.t(), String.t()}
 

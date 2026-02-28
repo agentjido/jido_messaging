@@ -42,6 +42,10 @@ defmodule Jido.Messaging.MixProject do
   def cli do
     [
       preferred_envs: [
+        "test.core": :test,
+        "test.integration": :test,
+        "test.story": :test,
+        "test.all": :test,
         coveralls: :test,
         "coveralls.github": :test,
         "coveralls.html": :test
@@ -67,6 +71,7 @@ defmodule Jido.Messaging.MixProject do
       {:jido, github: "agentjido/jido", override: true},
       {:jido_signal, github: "agentjido/jido_signal", override: true},
       {:jido_ai, github: "agentjido/jido_ai"},
+      {:yaml_elixir, "~> 2.12"},
 
       # PubSub support (required by jido_signal, also used for integration tests)
       {:phoenix_pubsub, "~> 2.1"},
@@ -87,7 +92,11 @@ defmodule Jido.Messaging.MixProject do
   defp aliases do
     [
       setup: ["deps.get", "git_hooks.install"],
-      test: "test --exclude flaky",
+      test: "test --exclude flaky --exclude integration --exclude story",
+      "test.core": "test --exclude flaky --exclude integration --exclude story",
+      "test.integration": "test --only integration --exclude flaky",
+      "test.story": "test --only story --exclude flaky",
+      "test.all": "test --exclude flaky --include integration --include story",
       q: ["quality"],
       precommit: [
         "format --check-formatted",

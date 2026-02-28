@@ -106,6 +106,25 @@ config :jido_chat_discord,
 3. Pass normalized incoming data into `Jido.Messaging.Ingest.ingest_incoming/4`.
 4. Use `Jido.Messaging.AdapterBridge.send_message/4` for outbound delivery.
 
+## Demo Topology Bootstrap (YAML)
+
+The demo task supports declarative topology bootstrap from YAML:
+
+```bash
+mix jido_messaging.demo --topology config/demo.topology.example.yaml
+```
+
+Supported top-level keys:
+
+- `mode`: `echo | bridge | agent`
+- `bridge`: demo runtime bridge opts (`telegram_chat_id`, `discord_channel_id`, adapter modules)
+- `bridge_configs`: control-plane `BridgeConfig` entries
+- `rooms`: room bootstrap entries
+- `room_bindings`: bridge-scoped room bindings
+- `routing_policies`: outbound routing policy bootstrap
+
+Use `config/demo.topology.example.yaml` as the starter template.
+
 ## Architecture
 
 ```
@@ -121,12 +140,21 @@ Message Flow:
 5. Deliver: send reply via adapter bridge
 ```
 
+## Test Lanes
+
+`jido_messaging` uses lane-based test execution:
+
+- `mix test` or `mix test.core`: core/unit/component tests (default)
+- `mix test.integration`: integration-only tests (`@moduletag :integration`)
+- `mix test.story`: story/spec contract tests (`@moduletag :story`)
+- `mix test.all`: full suite except `:flaky`
+
 ## Domain Model
 
-### Message
+### Message (Canonical)
 
 ```elixir
-%Jido.Messaging.Message{
+%Jido.Chat.LegacyMessage{
   id: "msg_abc123",
   room_id: "room_xyz",
   sender_id: "user_123",
@@ -140,7 +168,7 @@ Message Flow:
 ### Room
 
 ```elixir
-%Jido.Messaging.Room{
+%Jido.Chat.Room{
   id: "room_xyz",
   type: :direct | :group | :channel | :thread,
   name: "Support Chat",
@@ -151,7 +179,7 @@ Message Flow:
 ### Participant
 
 ```elixir
-%Jido.Messaging.Participant{
+%Jido.Chat.Participant{
   id: "part_abc",
   type: :human | :agent | :system,
   identity: %{username: "john", display_name: "John"},

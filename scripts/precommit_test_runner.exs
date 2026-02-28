@@ -7,7 +7,12 @@ Application.put_env(:nostrum, :token, "dummy-discord-token")
 
 {:ok, _} = Application.ensure_all_started(:jido_messaging)
 
+# Default precommit lane: core tests only.
+# Set FULL_TEST_SUITE=1 to include integration/story lanes.
 ExUnit.configure(exclude: [:flaky])
+if System.get_env("FULL_TEST_SUITE") not in ["1", "true", "TRUE", "yes", "on"] do
+  ExUnit.configure(exclude: [:flaky, :integration, :story])
+end
 
 Path.wildcard("test/**/*_test.exs")
 |> Enum.each(&Code.require_file/1)

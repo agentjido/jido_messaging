@@ -39,7 +39,20 @@ defmodule Jido.Messaging.Demo.ChatAgentRunner do
 
   alias Jido.Messaging.Demo.ChatAgent
 
-  defstruct [:agent_pid, :room_id, :instance_module]
+  @schema Zoi.struct(
+            __MODULE__,
+            %{
+              agent_pid: Zoi.pid(),
+              room_id: Zoi.string(),
+              instance_module: Zoi.module()
+            },
+            coerce: false
+          )
+
+  @type t :: unquote(Zoi.type_spec(@schema))
+
+  @enforce_keys Zoi.Struct.enforce_keys(@schema)
+  defstruct Zoi.Struct.struct_fields(@schema)
 
   @agent_name "ChatAgent"
   # Use :all for demo - responds to every message

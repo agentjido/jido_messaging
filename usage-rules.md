@@ -91,9 +91,10 @@ end
 
 1. Run `mix format` to format code
 2. Run `mix quality` to check all standards
-3. Run `mix test` to ensure tests pass
-4. Run `mix coveralls.html` and verify coverage >= 90%
-5. Review git diff for quality
+3. Run `mix test` (core lane) to ensure fast feedback
+4. Run `mix test.all` before merging broad runtime changes
+5. Run `mix coveralls.html` and verify coverage >= 90%
+6. Review git diff for quality
 
 ## Documentation
 
@@ -130,5 +131,6 @@ Do not add dependencies without discussion. Current dependencies:
 - [ ] Test both success and error cases
 - [ ] Test edge cases (empty input, nil, etc.)
 - [ ] Use descriptive test names
+- [ ] Use the right lane/tag (`:integration`, `:story`, `:flaky`) for non-core tests
 - [ ] Coverage report shows >= 90%
 - [ ] No flaky tests (mark with `@tag :flaky` if unavoidable)

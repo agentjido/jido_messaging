@@ -15,8 +15,20 @@ mix setup
 ## Running Tests
 
 ```bash
-# Run tests
+# Run core tests (default lane)
 mix test
+
+# Explicit core lane
+mix test.core
+
+# Run integration lane
+mix test.integration
+
+# Run story/spec lane
+mix test.story
+
+# Run full suite (except :flaky)
+mix test.all
 
 # Run tests with coverage
 mix coveralls
@@ -71,9 +83,10 @@ Closes #42
 2. Create a feature branch: `git checkout -b feat/your-feature`
 3. Make your changes
 4. Run `mix quality` and ensure all checks pass
-5. Run `mix test` and ensure coverage stays above 90%
-6. Commit with conventional format
-7. Push to your fork and create a Pull Request
+5. Run `mix test` (or `mix test.core`) and ensure it passes
+6. Run `mix test.all` before merging cross-cutting/runtime changes
+7. Commit with conventional format
+8. Push to your fork and create a Pull Request
 
 ## Code Style
 

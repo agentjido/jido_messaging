@@ -1,0 +1,45 @@
+mode: bridge
+
+bridge:
+  telegram_chat_id: 123456789
+  discord_channel_id: 123456789012345678
+  telegram_adapter: Elixir.Jido.Chat.Telegram.Adapter
+  discord_adapter: Elixir.Jido.Chat.Discord.Adapter
+
+bridge_configs:
+  - id: telegram-main
+    adapter_module: Elixir.Jido.Chat.Telegram.Adapter
+    enabled: true
+
+  - id: discord-main
+    adapter_module: Elixir.Jido.Chat.Discord.Adapter
+    enabled: true
+
+rooms:
+  - id: demo:lobby
+    type: group
+    name: Demo Bridge Lobby
+
+room_bindings:
+  - room_id: demo:lobby
+    channel: telegram
+    bridge_id: telegram-main
+    external_room_id: "123456789"
+    direction: both
+    enabled: true
+
+  - room_id: demo:lobby
+    channel: discord
+    bridge_id: discord-main
+    external_room_id: "123456789012345678"
+    direction: both
+    enabled: true
+
+routing_policies:
+  - room_id: demo:lobby
+    delivery_mode: best_effort
+    failover_policy: next_available
+    dedupe_scope: message_id
+    fallback_order:
+      - telegram-main
+      - discord-main

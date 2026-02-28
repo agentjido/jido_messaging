@@ -17,6 +17,10 @@ defmodule Mix.Tasks.Jido.Messaging.Demo do
 
       mix jido_messaging.demo --agent --telegram-chat 123456 --discord-channel 789012
 
+  YAML topology mode:
+
+      mix jido_messaging.demo --topology config/demo.topology.yaml
+
   ## Configuration
 
   Create a `.env` file in the project root:
@@ -31,6 +35,7 @@ defmodule Mix.Tasks.Jido.Messaging.Demo do
   - `--agent` - Enable agent mode (bridge + ChatAgent, requires Cerebras API key)
   - `--telegram-chat ID` - Telegram chat ID to bridge
   - `--discord-channel ID` - Discord channel ID to bridge
+  - `--topology PATH` - YAML topology bootstrap file
 
   ## What it does
 
@@ -50,6 +55,8 @@ defmodule Mix.Tasks.Jido.Messaging.Demo do
 
   require Logger
 
+  alias Jido.Messaging.Demo.Topology
+
   @impl Mix.Task
   def run(args) do
     {opts, _, _} =
@@ -57,6 +64,7 @@ defmodule Mix.Tasks.Jido.Messaging.Demo do
         switches: [
           bridge: :boolean,
           agent: :boolean,
+          topology: :string,
           telegram_chat: :integer,
           discord_channel: :integer
         ],
@@ -64,16 +72,12 @@ defmodule Mix.Tasks.Jido.Messaging.Demo do
       )
 
     load_dotenv()
+    topology = maybe_load_topology!(opts[:topology])
 
-    mode =
-      cond do
-        opts[:agent] -> :agent
-        opts[:bridge] -> :bridge
-        true -> :echo
-      end
+    mode = resolve_mode(opts, topology)
 
     validate_config!(mode)
-    adapter_modules = resolve_adapter_modules(mode)
+    adapter_modules = resolve_adapter_modules(mode, topology)
     configure_adapters!(adapter_modules)
 
     Logger.info("[Demo] Starting Jido.Messaging Demo (#{mode} mode)")
@@ -87,8 +91,8 @@ defmodule Mix.Tasks.Jido.Messaging.Demo do
           [mode: :echo]
 
         :bridge ->
-          telegram_chat_id = opts[:telegram_chat] || get_telegram_chat_id()
-          discord_channel_id = opts[:discord_channel] || get_discord_channel_id()
+          telegram_chat_id = resolve_telegram_chat_id(opts, topology)
+          discord_channel_id = resolve_discord_channel_id(opts, topology)
           [telegram_adapter, discord_adapter] = adapter_modules
 
           [
@@ -100,8 +104,8 @@ defmodule Mix.Tasks.Jido.Messaging.Demo do
           ]
 
         :agent ->
-          telegram_chat_id = opts[:telegram_chat] || get_telegram_chat_id()
-          discord_channel_id = opts[:discord_channel] || get_discord_channel_id()
+          telegram_chat_id = resolve_telegram_chat_id(opts, topology)
+          discord_channel_id = resolve_discord_channel_id(opts, topology)
           [telegram_adapter, discord_adapter] = adapter_modules
 
           [
@@ -120,8 +124,39 @@ defmodule Mix.Tasks.Jido.Messaging.Demo do
     end
 
     {:ok, _pid} = Jido.Messaging.Demo.Supervisor.start_link(supervisor_opts)
+    apply_topology!(topology)
 
     Process.sleep(:infinity)
+  end
+
+  defp maybe_load_topology!(nil), do: nil
+  defp maybe_load_topology!(""), do: nil
+
+  defp maybe_load_topology!(path) when is_binary(path) do
+    case Topology.load(path) do
+      {:ok, topology} ->
+        Logger.info("[Demo] Loaded topology: #{path}")
+        topology
+
+      {:error, reason} ->
+        Mix.raise("Failed to load topology #{path}: #{inspect(reason)}")
+    end
+  end
+
+  defp resolve_mode(opts, nil) do
+    cond do
+      opts[:agent] -> :agent
+      opts[:bridge] -> :bridge
+      true -> :echo
+    end
+  end
+
+  defp resolve_mode(opts, topology) do
+    cond do
+      opts[:agent] -> :agent
+      opts[:bridge] -> :bridge
+      true -> Topology.mode(topology) || :echo
+    end
   end
 
   defp load_dotenv do
@@ -207,24 +242,38 @@ defmodule Mix.Tasks.Jido.Messaging.Demo do
     end
   end
 
-  defp resolve_adapter_modules(:echo), do: []
+  defp resolve_adapter_modules(:echo, _topology), do: []
 
-  defp resolve_adapter_modules(mode) when mode in [:bridge, :agent] do
+  defp resolve_adapter_modules(mode, topology) when mode in [:bridge, :agent] do
     telegram_adapter =
-      resolve_adapter_module(
-        :demo_telegram_adapter,
-        "JIDO_MESSAGING_DEMO_TELEGRAM_ADAPTER",
-        "Elixir.Jido.Chat.Telegram.Adapter"
-      )
+      Topology.adapter_module(topology || %{}, "telegram_adapter") ||
+        resolve_adapter_module(
+          :demo_telegram_adapter,
+          "JIDO_MESSAGING_DEMO_TELEGRAM_ADAPTER",
+          "Elixir.Jido.Chat.Telegram.Adapter"
+        )
 
     discord_adapter =
-      resolve_adapter_module(
-        :demo_discord_adapter,
-        "JIDO_MESSAGING_DEMO_DISCORD_ADAPTER",
-        "Elixir.Jido.Chat.Discord.Adapter"
-      )
+      Topology.adapter_module(topology || %{}, "discord_adapter") ||
+        resolve_adapter_module(
+          :demo_discord_adapter,
+          "JIDO_MESSAGING_DEMO_DISCORD_ADAPTER",
+          "Elixir.Jido.Chat.Discord.Adapter"
+        )
 
     [telegram_adapter, discord_adapter]
+  end
+
+  defp resolve_telegram_chat_id(opts, topology) do
+    opts[:telegram_chat] ||
+      Topology.bridge_value(topology || %{}, "telegram_chat_id") ||
+      get_telegram_chat_id()
+  end
+
+  defp resolve_discord_channel_id(opts, topology) do
+    opts[:discord_channel] ||
+      Topology.bridge_value(topology || %{}, "discord_channel_id") ||
+      get_discord_channel_id()
   end
 
   defp resolve_adapter_module(config_key, env_key, default_module_name) do
@@ -334,6 +383,19 @@ defmodule Mix.Tasks.Jido.Messaging.Demo do
 
       id ->
         id
+    end
+  end
+
+  defp apply_topology!(nil), do: :ok
+
+  defp apply_topology!(topology) when is_map(topology) do
+    case Topology.apply(Jido.Messaging.Demo.Messaging, topology) do
+      {:ok, summary} ->
+        Logger.info("[Demo] Applied topology: #{inspect(summary)}")
+        :ok
+
+      {:error, reason} ->
+        Mix.raise("Failed to apply topology: #{inspect(reason)}")
     end
   end
 end
