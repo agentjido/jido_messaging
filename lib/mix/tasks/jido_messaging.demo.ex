@@ -5,21 +5,21 @@ defmodule Mix.Tasks.Jido.Messaging.Demo do
 
   ## Usage
 
-  Echo mode (Telegram only):
+  Echo mode (runtime only):
 
-      mix jido_messaging.demo
+      mix jido.messaging.demo
 
   Bridge mode (Telegram <-> Discord):
 
-      mix jido_messaging.demo --bridge --telegram-chat 123456 --discord-channel 789012
+      mix jido.messaging.demo --bridge --telegram-chat 123456 --discord-channel 789012
 
   Agent mode (Bridge + ChatAgent):
 
-      mix jido_messaging.demo --agent --telegram-chat 123456 --discord-channel 789012
+      mix jido.messaging.demo --agent --telegram-chat 123456 --discord-channel 789012
 
   YAML topology mode:
 
-      mix jido_messaging.demo --topology config/demo.topology.yaml
+      mix jido.messaging.demo --topology config/demo.topology.yaml
 
   ## Configuration
 
@@ -39,7 +39,7 @@ defmodule Mix.Tasks.Jido.Messaging.Demo do
 
   ## What it does
 
-  **Echo mode**: Telegram bot echoes back messages (default)
+  **Echo mode**: Starts only the messaging runtime (no platform ingress)
 
   **Bridge mode**: Messages sent in Telegram appear in Discord and vice versa:
   - Telegram message "hello" -> Discord shows "[TG @user] hello"
@@ -94,26 +94,34 @@ defmodule Mix.Tasks.Jido.Messaging.Demo do
           telegram_chat_id = resolve_telegram_chat_id(opts, topology)
           discord_channel_id = resolve_discord_channel_id(opts, topology)
           [telegram_adapter, discord_adapter] = adapter_modules
+          telegram_bridge_id = resolve_bridge_id(topology, "telegram_bridge_id", to_string(telegram_adapter))
+          discord_bridge_id = resolve_bridge_id(topology, "discord_bridge_id", to_string(discord_adapter))
 
           [
             mode: :bridge,
             telegram_chat_id: telegram_chat_id,
             discord_channel_id: discord_channel_id,
             telegram_adapter: telegram_adapter,
-            discord_adapter: discord_adapter
+            discord_adapter: discord_adapter,
+            telegram_bridge_id: telegram_bridge_id,
+            discord_bridge_id: discord_bridge_id
           ]
 
         :agent ->
           telegram_chat_id = resolve_telegram_chat_id(opts, topology)
           discord_channel_id = resolve_discord_channel_id(opts, topology)
           [telegram_adapter, discord_adapter] = adapter_modules
+          telegram_bridge_id = resolve_bridge_id(topology, "telegram_bridge_id", to_string(telegram_adapter))
+          discord_bridge_id = resolve_bridge_id(topology, "discord_bridge_id", to_string(discord_adapter))
 
           [
             mode: :agent,
             telegram_chat_id: telegram_chat_id,
             discord_channel_id: discord_channel_id,
             telegram_adapter: telegram_adapter,
-            discord_adapter: discord_adapter
+            discord_adapter: discord_adapter,
+            telegram_bridge_id: telegram_bridge_id,
+            discord_bridge_id: discord_bridge_id
           ]
       end
 
@@ -276,6 +284,10 @@ defmodule Mix.Tasks.Jido.Messaging.Demo do
       get_discord_channel_id()
   end
 
+  defp resolve_bridge_id(topology, key, default) do
+    Topology.bridge_value(topology || %{}, key) || default
+  end
+
   defp resolve_adapter_module(config_key, env_key, default_module_name) do
     configured =
       Application.get_env(:jido_messaging, config_key) ||
@@ -319,12 +331,24 @@ defmodule Mix.Tasks.Jido.Messaging.Demo do
     Application.ensure_all_started(:logger)
     Application.ensure_all_started(:jido_signal)
     Enum.each(adapter_modules, &ensure_adapter_application_started!/1)
+    maybe_start_nostrum(adapter_modules)
   end
 
   defp start_applications!(:agent, adapter_modules) do
     start_applications!(:bridge, adapter_modules)
     Application.ensure_all_started(:jido)
     Application.ensure_all_started(:jido_ai)
+  end
+
+  defp maybe_start_nostrum(adapter_modules) when is_list(adapter_modules) do
+    if Enum.any?(adapter_modules, &(to_string(&1) =~ "Discord")) do
+      case Application.ensure_all_started(:nostrum) do
+        {:ok, _apps} -> :ok
+        {:error, reason} -> Mix.raise("Failed to start Nostrum for Discord gateway: #{inspect(reason)}")
+      end
+    else
+      :ok
+    end
   end
 
   defp ensure_adapter_application_started!(adapter_module) do
@@ -358,7 +382,7 @@ defmodule Mix.Tasks.Jido.Messaging.Demo do
 
         Or pass via command line:
 
-            mix jido_messaging.demo --bridge --telegram-chat 123456789
+            mix jido.messaging.demo --bridge --telegram-chat 123456789
         """)
 
       id ->
@@ -378,7 +402,7 @@ defmodule Mix.Tasks.Jido.Messaging.Demo do
 
         Or pass via command line:
 
-            mix jido_messaging.demo --bridge --discord-channel 123456789012345678
+            mix jido.messaging.demo --bridge --discord-channel 123456789012345678
         """)
 
       id ->

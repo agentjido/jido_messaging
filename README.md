@@ -99,31 +99,107 @@ config :jido_chat_discord,
   discord_public_key: System.get_env("DISCORD_PUBLIC_KEY")
 ```
 
-### Ingest Wiring Pattern
+### Ingress Wiring Pattern
 
-1. Receive platform payload in your webhook/gateway boundary.
-2. Normalize through the adapter package (`Jido.Chat.Telegram.Adapter` or `Jido.Chat.Discord.Adapter`).
-3. Pass normalized incoming data into `Jido.Messaging.Ingest.ingest_incoming/4`.
-4. Use `Jido.Messaging.AdapterBridge.send_message/4` for outbound delivery.
+`jido_messaging` is now the shared ingress runtime:
+
+1. Host app receives webhook/gateway payload.
+2. Call `MyApp.Messaging.route_webhook_request/4` or `route_payload/3`.
+3. Runtime resolves bridge config, verifies/parses via adapter callbacks, and routes through `Jido.Chat.process_event/4`.
+4. Message events are ingested; non-message events return typed envelopes.
+
+Canonical APIs:
+
+- `MyApp.Messaging.route_webhook_request(bridge_id, request_meta, payload, opts \\ [])`
+- `MyApp.Messaging.route_payload(bridge_id, payload, opts \\ [])`
+- `Jido.Messaging.WebhookPlug` (generic host-mounted Plug endpoint)
+- `MyApp.Messaging.create_bridge_room(spec)` (room + bindings + policy bootstrap)
+
+For adapter-owned listeners (Telegram polling / Discord gateway), pass a sink MFA that targets:
+
+- `Jido.Messaging.IngressSink.emit(instance_module, bridge_id, payload, opts)`
+
+### Host Webhook Endpoint (Generic Plug)
+
+```elixir
+defmodule MyApp.Webhooks.Router do
+  use Plug.Router
+
+  plug :match
+  plug :dispatch
+
+  post "/webhooks/:bridge_id" do
+    conn =
+      Jido.Messaging.WebhookPlug.call(
+        conn,
+        Jido.Messaging.WebhookPlug.init(
+          instance_module: MyApp.Messaging,
+          bridge_id_resolver: fn conn -> conn.params["bridge_id"] end
+        )
+      )
+
+    conn
+  end
+end
+```
+
+### Bridge Config Ingress Modes
+
+```elixir
+# Telegram polling ingress (listener worker owned by bridge runtime)
+MyApp.Messaging.put_bridge_config(%{
+  id: "tg_primary",
+  adapter_module: Jido.Chat.Telegram.Adapter,
+  opts: %{
+    ingress: %{
+      mode: "polling",
+      token: System.fetch_env!("TELEGRAM_BOT_TOKEN"),
+      timeout_s: 30,
+      poll_interval_ms: 500
+    }
+  }
+})
+
+# Discord gateway ingress (Nostrum ConsumerGroup source by default)
+MyApp.Messaging.put_bridge_config(%{
+  id: "dc_primary",
+  adapter_module: Jido.Chat.Discord.Adapter,
+  opts: %{
+    ingress: %{
+      mode: "gateway",
+      poll_interval_ms: 250
+    }
+  }
+})
+```
 
 ## Demo Topology Bootstrap (YAML)
 
 The demo task supports declarative topology bootstrap from YAML:
 
 ```bash
-mix jido_messaging.demo --topology config/demo.topology.example.yaml
+mix jido.messaging.demo --topology config/demo.topology.example.yaml
+```
+
+Live Telegram + Discord bridge demo (env-driven topology):
+
+```bash
+scripts/demo_bridge_live.sh
 ```
 
 Supported top-level keys:
 
 - `mode`: `echo | bridge | agent`
 - `bridge`: demo runtime bridge opts (`telegram_chat_id`, `discord_channel_id`, adapter modules)
+- `bridge_rooms`: one-shot room bootstrap specs (`create_bridge_room/2`)
 - `bridge_configs`: control-plane `BridgeConfig` entries
 - `rooms`: room bootstrap entries
 - `room_bindings`: bridge-scoped room bindings
 - `routing_policies`: outbound routing policy bootstrap
 
 Use `config/demo.topology.example.yaml` as the starter template.
+For live bridge ingress with Telegram polling + Discord gateway, use
+`config/demo.topology.live.yaml` with `.env` values.
 
 ## Architecture
 
@@ -133,11 +209,11 @@ MyApp.Messaging (Supervisor)
 └── (Future) RoomSupervisor, InstanceSupervisor
 
 Message Flow:
-1. Adapter package receives platform update/webhook/gateway event
-2. Transform to normalized incoming struct
-3. Ingest: resolve room/participant, persist message
-4. Runtime/agent logic processes message
-5. Deliver: send reply via adapter bridge
+1. Host webhook endpoint or adapter listener emits into runtime ingress.
+2. `InboundRouter` resolves `BridgeConfig` and adapter module by `bridge_id`.
+3. Adapter verifies/parses event; runtime routes through `Jido.Chat.process_event/4`.
+4. Message events are ingested (room/participant/message + dedupe/session).
+5. Outbound delivery runs through `OutboundRouter`/`OutboundGateway`.
 ```
 
 ## Test Lanes

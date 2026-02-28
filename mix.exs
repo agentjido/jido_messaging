@@ -46,6 +46,8 @@ defmodule Jido.Messaging.MixProject do
         "test.integration": :test,
         "test.story": :test,
         "test.all": :test,
+        quality: :test,
+        q: :test,
         coveralls: :test,
         "coveralls.github": :test,
         "coveralls.html": :test
@@ -72,6 +74,7 @@ defmodule Jido.Messaging.MixProject do
       {:jido_signal, github: "agentjido/jido_signal", override: true},
       {:jido_ai, github: "agentjido/jido_ai"},
       {:yaml_elixir, "~> 2.12"},
+      {:plug, "~> 1.16"},
 
       # PubSub support (required by jido_signal, also used for integration tests)
       {:phoenix_pubsub, "~> 2.1"},

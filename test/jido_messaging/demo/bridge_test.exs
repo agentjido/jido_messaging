@@ -86,6 +86,24 @@ defmodule Jido.Messaging.Demo.BridgeTest do
       assert {:discord, DiscordAdapterStub, to_string(DiscordAdapterStub), "dc_chan_012"} in state.bindings
     end
 
+    test "uses explicit bridge ids when provided" do
+      {:ok, pid} =
+        start_supervised(
+          {Bridge,
+           bridge_opts(
+             telegram_chat_id: "tg_chat_custom",
+             discord_channel_id: "dc_chan_custom",
+             telegram_bridge_id: "telegram-main",
+             discord_bridge_id: "discord-main"
+           )}
+        )
+
+      state = :sys.get_state(pid)
+
+      assert {:telegram, TelegramAdapterStub, "telegram-main", "tg_chat_custom"} in state.bindings
+      assert {:discord, DiscordAdapterStub, "discord-main", "dc_chan_custom"} in state.bindings
+    end
+
     test "creates shared room with fixed ID on startup" do
       {:ok, _pid} =
         start_supervised({Bridge, bridge_opts(telegram_chat_id: "shared_tg", discord_channel_id: "shared_dc")})

@@ -78,11 +78,16 @@ defmodule Jido.Messaging.BridgeServer do
   end
 
   defp resolve_listener_specs(instance_module, bridge_id, %BridgeConfig{} = config) do
+    settings = config.opts || %{}
+    ingress = ingress_settings(settings)
+
     opts = [
       instance_module: instance_module,
       bridge_id: bridge_id,
       bridge_config: config,
-      settings: config.opts || %{}
+      settings: settings,
+      ingress: ingress,
+      sink_mfa: {Jido.Messaging.IngressSink, :emit, [instance_module, bridge_id]}
     ]
 
     AdapterBridge.listener_child_specs(config.adapter_module, bridge_id, opts)
@@ -92,5 +97,9 @@ defmodule Jido.Messaging.BridgeServer do
 
   defp start_listener_supervisor(listener_specs) when is_list(listener_specs) do
     Supervisor.start_link(listener_specs, strategy: :one_for_one)
+  end
+
+  defp ingress_settings(settings) when is_map(settings) do
+    Map.get(settings, :ingress) || Map.get(settings, "ingress") || %{}
   end
 end

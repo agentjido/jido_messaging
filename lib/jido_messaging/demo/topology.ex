@@ -10,6 +10,7 @@ defmodule Jido.Messaging.Demo.Topology do
 
   @type t :: map()
   @type summary :: %{
+          bridge_rooms: non_neg_integer(),
           bridge_configs: non_neg_integer(),
           rooms: non_neg_integer(),
           room_bindings: non_neg_integer(),
@@ -20,7 +21,7 @@ defmodule Jido.Messaging.Demo.Topology do
   def load(path) when is_binary(path) do
     if File.exists?(path) do
       case YamlElixir.read_from_file(path) do
-        {:ok, %{} = topology} -> {:ok, topology}
+        {:ok, %{} = topology} -> {:ok, resolve_env_placeholders(topology)}
         {:ok, other} -> {:error, {:invalid_topology, other}}
         {:error, reason} -> {:error, reason}
       end
@@ -28,6 +29,8 @@ defmodule Jido.Messaging.Demo.Topology do
       {:error, {:not_found, path}}
     end
   end
+
+  @env_placeholder ~r/^\$\{(?<name>[A-Z0-9_]+)(?::-(?<default>.*))?\}$/
 
   @spec mode(t()) :: :echo | :bridge | :agent | nil
   def mode(topology) when is_map(topology) do
@@ -52,23 +55,45 @@ defmodule Jido.Messaging.Demo.Topology do
   @spec apply(module(), t()) :: {:ok, summary()} | {:error, term()}
   def apply(instance_module, topology)
       when is_atom(instance_module) and is_map(topology) do
+    bridge_rooms = list_value(topology, "bridge_rooms")
     bridge_configs = list_value(topology, "bridge_configs")
     rooms = list_value(topology, "rooms")
     room_bindings = list_value(topology, "room_bindings")
     routing_policies = list_value(topology, "routing_policies")
 
-    with :ok <- apply_bridge_configs(instance_module, bridge_configs),
+    with :ok <- apply_bridge_rooms(instance_module, bridge_rooms),
+         :ok <- apply_bridge_configs(instance_module, bridge_configs),
          :ok <- apply_rooms(instance_module, rooms),
          :ok <- apply_room_bindings(instance_module, room_bindings),
          :ok <- apply_routing_policies(instance_module, routing_policies) do
       {:ok,
        %{
+         bridge_rooms: length(bridge_rooms),
          bridge_configs: length(bridge_configs),
          rooms: length(rooms),
          room_bindings: length(room_bindings),
          routing_policies: length(routing_policies)
        }}
     end
+  end
+
+  defp apply_bridge_rooms(_instance_module, []), do: :ok
+
+  defp apply_bridge_rooms(instance_module, bridge_rooms) do
+    Enum.reduce_while(bridge_rooms, :ok, fn room_entry, :ok ->
+      attrs = normalize_bridge_room_spec(room_entry)
+
+      case attrs do
+        {:error, reason} ->
+          {:halt, {:error, {:invalid_bridge_room, reason, room_entry}}}
+
+        normalized ->
+          case Jido.Messaging.create_bridge_room(instance_module, normalized) do
+            {:ok, _room} -> {:cont, :ok}
+            {:error, reason} -> {:halt, {:error, {:bridge_room_create_failed, reason, room_entry}}}
+          end
+      end
+    end)
   end
 
   defp apply_bridge_configs(_instance_module, []), do: :ok
@@ -245,6 +270,46 @@ defmodule Jido.Messaging.Demo.Topology do
 
   defp normalize_module(_), do: nil
 
+  defp normalize_bridge_room_spec(spec) when is_map(spec) do
+    normalized =
+      spec
+      |> normalize_map()
+      |> Map.update(:room_type, :group, &normalize_room_type/1)
+
+    bridge_configs =
+      normalized
+      |> get_value(:bridge_configs, [])
+      |> normalize_bridge_configs_for_room()
+
+    case bridge_configs do
+      {:error, reason} ->
+        {:error, reason}
+
+      configs ->
+        Map.put(normalized, :bridge_configs, configs)
+    end
+  end
+
+  defp normalize_bridge_configs_for_room(configs) when is_list(configs) do
+    Enum.reduce_while(configs, {:ok, []}, fn config, {:ok, acc} ->
+      attrs =
+        config
+        |> normalize_map()
+        |> normalize_bridge_adapter()
+
+      case attrs do
+        {:error, reason} -> {:halt, {:error, reason}}
+        normalized -> {:cont, {:ok, [normalized | acc]}}
+      end
+    end)
+    |> case do
+      {:ok, normalized} -> Enum.reverse(normalized)
+      {:error, _reason} = error -> error
+    end
+  end
+
+  defp normalize_bridge_configs_for_room(_), do: []
+
   defp normalize_id(value) when is_binary(value) and value != "", do: value
   defp normalize_id(value) when is_integer(value), do: Integer.to_string(value)
   defp normalize_id(value) when is_atom(value), do: Atom.to_string(value)
@@ -305,12 +370,43 @@ defmodule Jido.Messaging.Demo.Topology do
     end)
   end
 
+  defp resolve_env_placeholders(value) when is_map(value) do
+    Map.new(value, fn {key, nested} ->
+      {key, resolve_env_placeholders(nested)}
+    end)
+  end
+
+  defp resolve_env_placeholders(value) when is_list(value),
+    do: Enum.map(value, &resolve_env_placeholders/1)
+
+  defp resolve_env_placeholders(value) when is_binary(value) do
+    case Regex.named_captures(@env_placeholder, value) do
+      %{"name" => env_name, "default" => default} ->
+        System.get_env(env_name) || default || value
+
+      %{"name" => env_name} ->
+        System.get_env(env_name) || value
+
+      _ ->
+        value
+    end
+  end
+
+  defp resolve_env_placeholders(value), do: value
+
   defp safe_key_to_atom("id"), do: :id
   defp safe_key_to_atom("room_id"), do: :room_id
   defp safe_key_to_atom("type"), do: :type
   defp safe_key_to_atom("name"), do: :name
   defp safe_key_to_atom("metadata"), do: :metadata
+  defp safe_key_to_atom("room_type"), do: :room_type
+  defp safe_key_to_atom("room_name"), do: :room_name
+  defp safe_key_to_atom("room_metadata"), do: :room_metadata
   defp safe_key_to_atom("external_bindings"), do: :external_bindings
+  defp safe_key_to_atom("bridge_rooms"), do: :bridge_rooms
+  defp safe_key_to_atom("bridge_configs"), do: :bridge_configs
+  defp safe_key_to_atom("bindings"), do: :bindings
+  defp safe_key_to_atom("routing_policy"), do: :routing_policy
   defp safe_key_to_atom("bridge_id"), do: :bridge_id
   defp safe_key_to_atom("channel"), do: :channel
   defp safe_key_to_atom("external_room_id"), do: :external_room_id

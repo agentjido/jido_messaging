@@ -1,7 +1,7 @@
 defmodule Jido.Messaging.InboundRouterTest do
   use ExUnit.Case, async: false
 
-  alias Jido.Chat.{EventEnvelope, Incoming, WebhookRequest}
+  alias Jido.Chat.{EventEnvelope, Incoming, WebhookRequest, WebhookResponse}
   alias Jido.Messaging.InboundRouter
 
   defmodule RouterAdapter do
@@ -42,6 +42,10 @@ defmodule Jido.Messaging.InboundRouterTest do
     @impl true
     def parse_event(%WebhookRequest{payload: %{"kind" => "noop"}}, _opts), do: {:ok, :noop}
 
+    def parse_event(%WebhookRequest{payload: %{"kind" => "structured_error"}}, _opts) do
+      {:error, {:invalid_event, %{reason: "payload_malformed"}}}
+    end
+
     def parse_event(%WebhookRequest{payload: %{"kind" => "reaction"} = payload}, _opts) do
       {:ok,
        EventEnvelope.new(%{
@@ -69,6 +73,15 @@ defmodule Jido.Messaging.InboundRouterTest do
            raw: payload,
            metadata: %{source: :webhook}
          })}
+      end
+    end
+
+    @impl true
+    def format_webhook_response(_result, opts) do
+      if Keyword.get(opts, :force_format_error, false) do
+        {:error, :format_failed}
+      else
+        {:ok, WebhookResponse.accepted(%{ok: true})}
       end
     end
   end
@@ -119,6 +132,25 @@ defmodule Jido.Messaging.InboundRouterTest do
 
       assert {:ok, {:duplicate, _event}} =
                InboundRouter.route_payload(TestMessaging, "bridge_tg", payload)
+    end
+
+    test "routes direct EventEnvelope payloads as non-message events" do
+      event = %{
+        adapter_name: :telegram,
+        event_type: :reaction,
+        thread_id: "telegram:chat_9",
+        channel_id: "chat_9",
+        message_id: "msg_9",
+        payload: %{emoji: "🔥", added: true},
+        raw: %{raw: true},
+        metadata: %{source: :gateway}
+      }
+
+      assert {:ok, {:event, routed_event}} =
+               InboundRouter.route_payload(TestMessaging, "bridge_tg", event)
+
+      assert routed_event.event_type == :reaction
+      assert routed_event.payload.emoji == "🔥"
     end
   end
 
@@ -178,6 +210,57 @@ defmodule Jido.Messaging.InboundRouterTest do
                  "bridge_disabled",
                  %{"kind" => "message", "room" => "chat_1", "user" => "u1", "id" => "m1", "text" => "x"}
                )
+    end
+  end
+
+  describe "route_webhook_request/5" do
+    test "returns typed webhook response and ingest outcome for noop events" do
+      request_meta = %{
+        headers: %{"x-test" => "1"},
+        path: "/telegram/webhook",
+        method: "POST",
+        raw_body: ~s({"kind":"noop"})
+      }
+
+      assert {:ok, %WebhookResponse{} = response, {:ok, :noop}} =
+               InboundRouter.route_webhook_request(
+                 TestMessaging,
+                 "bridge_tg",
+                 request_meta,
+                 %{"kind" => "noop"}
+               )
+
+      assert response.status == 200
+      assert response.body == %{ok: true}
+    end
+
+    test "maps bridge-not-found to typed 404 response" do
+      assert {:ok, %WebhookResponse{} = response, {:error, :bridge_not_found}} =
+               InboundRouter.route_webhook_request(
+                 TestMessaging,
+                 "missing_bridge",
+                 %{headers: %{}, path: "/missing", method: "POST"},
+                 %{"kind" => "noop"}
+               )
+
+      assert response.status == 404
+      assert (response.body[:error] || response.body["error"]) == "bridge_not_found"
+    end
+
+    test "falls back to safe error serialization when adapter formatter fails" do
+      request_meta = %{headers: %{}, path: "/telegram/webhook", method: "POST"}
+
+      assert {:ok, %WebhookResponse{} = response, {:error, {:invalid_event, _details}}} =
+               InboundRouter.route_webhook_request(
+                 TestMessaging,
+                 "bridge_tg",
+                 request_meta,
+                 %{"kind" => "structured_error"},
+                 force_format_error: true
+               )
+
+      assert response.status == 400
+      assert (response.body[:error] || response.body["error"]) =~ "{:invalid_event, %{reason: \"payload_malformed\"}}"
     end
   end
 end

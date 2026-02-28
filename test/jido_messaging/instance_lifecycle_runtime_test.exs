@@ -45,21 +45,25 @@ defmodule Jido.Messaging.InstanceLifecycleRuntimeTest do
     @impl true
     def send_message(_chat_id, _text, _opts), do: {:ok, %{message_id: "deterministic"}}
 
-    @impl false
-    def listener_child_specs(instance_id, opts) do
+    @impl true
+    def listener_child_specs(bridge_id, opts) do
       settings = Keyword.fetch!(opts, :settings)
       order_agent = setting(settings, :order_agent)
       test_pid = setting(settings, :test_pid)
+
+      if is_pid(test_pid) do
+        send(test_pid, {:listener_opts, opts})
+      end
 
       {:ok,
        [
          Supervisor.child_spec(
            {DeterministicListenerWorker, [label: :listener_a, order_agent: order_agent, test_pid: test_pid]},
-           id: {:listener, instance_id, :a}
+           id: {:listener, bridge_id, :a}
          ),
          Supervisor.child_spec(
            {DeterministicListenerWorker, [label: :listener_b, order_agent: order_agent, test_pid: test_pid]},
-           id: {:listener, instance_id, :b}
+           id: {:listener, bridge_id, :b}
          )
        ]}
     end
@@ -82,8 +86,8 @@ defmodule Jido.Messaging.InstanceLifecycleRuntimeTest do
     @impl true
     def send_message(_chat_id, _text, _opts), do: {:ok, %{message_id: "recoverable"}}
 
-    @impl false
-    def listener_child_specs(_instance_id, _opts), do: {:ok, []}
+    @impl true
+    def listener_child_specs(_bridge_id, _opts), do: {:ok, []}
 
     @impl true
     def probe_interval_ms, do: 10
@@ -136,8 +140,8 @@ defmodule Jido.Messaging.InstanceLifecycleRuntimeTest do
     @impl true
     def send_message(_chat_id, _text, _opts), do: {:ok, %{message_id: "crash_loop"}}
 
-    @impl false
-    def listener_child_specs(instance_id, opts) do
+    @impl true
+    def listener_child_specs(bridge_id, opts) do
       settings = Keyword.fetch!(opts, :settings)
       crash_after_ms = Map.get(settings, :crash_after_ms) || Map.get(settings, "crash_after_ms") || 0
 
@@ -145,7 +149,7 @@ defmodule Jido.Messaging.InstanceLifecycleRuntimeTest do
        [
          Supervisor.child_spec(
            {CrashLoopWorker, [crash_after_ms: crash_after_ms]},
-           id: {:crash_loop_worker, instance_id}
+           id: {:crash_loop_worker, bridge_id}
          )
        ]}
     end
@@ -212,15 +216,15 @@ defmodule Jido.Messaging.InstanceLifecycleRuntimeTest do
     @impl true
     def send_message(_chat_id, _text, _opts), do: {:ok, %{message_id: "isolated"}}
 
-    @impl false
-    def listener_child_specs(instance_id, opts) do
+    @impl true
+    def listener_child_specs(bridge_id, opts) do
       instance_module = Keyword.fetch!(opts, :instance_module)
 
       {:ok,
        [
          Supervisor.child_spec(
-           {IsolatedCrashWorker, [instance_module: instance_module, instance_id: instance_id]},
-           id: {:isolated_worker, instance_id}
+           {IsolatedCrashWorker, [instance_module: instance_module, instance_id: bridge_id]},
+           id: {:isolated_worker, bridge_id}
          )
        ]}
     end
@@ -253,6 +257,11 @@ defmodule Jido.Messaging.InstanceLifecycleRuntimeTest do
             test_pid: self()
           }
         })
+
+      assert_receive {:listener_opts, listener_opts}, 1_000
+      assert listener_opts[:bridge_id] == "deterministic_bridge"
+      assert listener_opts[:instance_module] == TestMessaging
+      assert is_tuple(listener_opts[:sink_mfa])
 
       assert_eventually(
         fn ->

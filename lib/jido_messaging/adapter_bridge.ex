@@ -118,7 +118,17 @@ defmodule Jido.Messaging.AdapterBridge do
     end
   end
 
-  @doc "Returns listener child specs for an adapter, defaulting to no listeners."
+  @doc """
+  Returns listener child specs for an adapter, defaulting to no listeners.
+
+  Runtime passes a standard listener context in `opts`:
+    * `:instance_module` - messaging runtime instance module
+    * `:bridge_id` - bridge identifier
+    * `:bridge_config` - resolved bridge config
+    * `:settings` - bridge config opts map
+    * `:ingress` - normalized ingress settings map
+    * `:sink_mfa` - sink callback MFA `{module, function, base_args}`
+  """
   @spec listener_child_specs(module(), String.t(), keyword()) ::
           {:ok, [Supervisor.child_spec()]} | {:error, map()}
   def listener_child_specs(adapter_module, bridge_id, opts \\ [])

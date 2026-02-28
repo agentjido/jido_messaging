@@ -3,8 +3,6 @@ defmodule Jido.Messaging.TestHelpers do
   Shared test helpers for Jido.Messaging tests.
   """
 
-  import ExUnit.Assertions
-
   @doc """
   Asserts that a condition becomes true within a timeout.
 
@@ -40,7 +38,7 @@ defmodule Jido.Messaging.TestHelpers do
       now = System.monotonic_time(:millisecond)
 
       if now >= deadline do
-        flunk("Condition was not met within timeout")
+        raise "Condition was not met within timeout"
       else
         Process.sleep(interval)
         do_assert_eventually(func, deadline, interval)
@@ -61,7 +59,7 @@ defmodule Jido.Messaging.TestHelpers do
     after
       timeout ->
         Process.demonitor(ref, [:flush])
-        flunk("Process did not terminate within #{timeout}ms")
+        raise "Process did not terminate within #{timeout}ms"
     end
   end
 end

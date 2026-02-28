@@ -65,10 +65,13 @@ defmodule Jido.Messaging.Demo.Bridge do
         "JIDO_MESSAGING_DEMO_DISCORD_ADAPTER"
       )
 
+    telegram_bridge_id = Keyword.get(opts, :telegram_bridge_id, to_string(telegram_adapter))
+    discord_bridge_id = Keyword.get(opts, :discord_bridge_id, to_string(discord_adapter))
+
     # Bindings: {channel, adapter_module, bridge_id, external_id}
     bindings = [
-      {:telegram, telegram_adapter, to_string(telegram_adapter), to_string(telegram_chat_id)},
-      {:discord, discord_adapter, to_string(discord_adapter), to_string(discord_channel_id)}
+      {:telegram, telegram_adapter, to_string(telegram_bridge_id), to_string(telegram_chat_id)},
+      {:discord, discord_adapter, to_string(discord_bridge_id), to_string(discord_channel_id)}
     ]
 
     state = %__MODULE__{
@@ -193,7 +196,10 @@ defmodule Jido.Messaging.Demo.Bridge do
         :ok
 
       {:error, :not_found} ->
-        case messaging.create_room_binding(room_id, channel, bridge_id, external_id, %{}) do
+        case messaging.create_room_binding(room_id, channel, bridge_id, external_id, %{
+               direction: :both,
+               enabled: true
+             }) do
           {:ok, binding} ->
             Logger.info("[Bridge] Created binding #{binding.id}: #{channel}/#{bridge_id}/#{external_id} -> #{room_id}")
 

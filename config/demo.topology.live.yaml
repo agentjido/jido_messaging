@@ -1,0 +1,51 @@
+mode: bridge
+
+bridge:
+  telegram_chat_id: "${TELEGRAM_CHAT_ID}"
+  discord_channel_id: "${DISCORD_CHANNEL_ID}"
+  telegram_adapter: Elixir.Jido.Chat.Telegram.Adapter
+  discord_adapter: Elixir.Jido.Chat.Discord.Adapter
+  telegram_bridge_id: "${TELEGRAM_BRIDGE_ID:-telegram-main}"
+  discord_bridge_id: "${DISCORD_BRIDGE_ID:-discord-main}"
+
+bridge_rooms:
+  - room_id: demo:lobby
+    room_type: group
+    room_name: Demo Bridge Lobby
+    bridge_configs:
+      - id: "${TELEGRAM_BRIDGE_ID:-telegram-main}"
+        adapter_module: Elixir.Jido.Chat.Telegram.Adapter
+        credentials:
+          token: "${TELEGRAM_BOT_TOKEN}"
+        opts:
+          ingress:
+            mode: polling
+            timeout_s: 20
+            poll_interval_ms: 500
+            max_backoff_ms: 5000
+      - id: "${DISCORD_BRIDGE_ID:-discord-main}"
+        adapter_module: Elixir.Jido.Chat.Discord.Adapter
+        opts:
+          ingress:
+            mode: gateway
+            source: nostrum
+            poll_interval_ms: 250
+            max_backoff_ms: 5000
+    bindings:
+      - channel: telegram
+        bridge_id: "${TELEGRAM_BRIDGE_ID:-telegram-main}"
+        external_room_id: "${TELEGRAM_CHAT_ID}"
+        direction: both
+        enabled: true
+      - channel: discord
+        bridge_id: "${DISCORD_BRIDGE_ID:-discord-main}"
+        external_room_id: "${DISCORD_CHANNEL_ID}"
+        direction: both
+        enabled: true
+    routing_policy:
+      delivery_mode: best_effort
+      failover_policy: next_available
+      dedupe_scope: message_id
+      fallback_order:
+        - "${TELEGRAM_BRIDGE_ID:-telegram-main}"
+        - "${DISCORD_BRIDGE_ID:-discord-main}"
