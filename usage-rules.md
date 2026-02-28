@@ -27,7 +27,7 @@ Jido Messaging is part of the Jido ecosystem - a framework for building intellig
 ### Module Documentation Template
 
 ```elixir
-defmodule JidoMessaging.MyModule do
+defmodule Jido.Messaging.MyModule do
   @moduledoc """
   Brief description of this module.
 
@@ -37,7 +37,7 @@ defmodule JidoMessaging.MyModule do
   
   ## Examples
   
-      iex> JidoMessaging.MyModule.some_function(:input)
+      iex> Jido.Messaging.MyModule.some_function(:input)
       {:ok, :result}
   """
   
@@ -68,7 +68,7 @@ end
 Use result tuples and pattern matching:
 
 ```elixir
-defmodule JidoMessaging.Handler do
+defmodule Jido.Messaging.Handler do
   def process(message) do
     with {:ok, validated} <- validate(message),
          {:ok, result} <- execute(validated) do
@@ -101,7 +101,7 @@ end
 - Include `## Examples` sections with actual iex code
 - Use `## Parameters` for function arguments
 - Use `## Returns` for return value descriptions
-- Link to related modules with backticks: \`JidoMessaging.Other\`
+- Link to related modules with backticks: \`Jido.Messaging.Other\`
 
 ## Dialyzer Tips
 

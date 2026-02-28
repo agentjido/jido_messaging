@@ -1,12 +1,13 @@
-defmodule JidoMessaging.RoomServerTest do
+defmodule Jido.Chat.RoomServerTest do
   use ExUnit.Case, async: true
 
-  import JidoMessaging.TestHelpers
+  import Jido.Messaging.TestHelpers
 
-  alias JidoMessaging.{Room, Message, Participant, RoomServer, RoomSupervisor}
+  alias Jido.Chat.{LegacyMessage, Participant, Room}
+  alias Jido.Messaging.{RoomServer, RoomSupervisor}
 
   defmodule TestMessaging do
-    use JidoMessaging, adapter: JidoMessaging.Adapters.ETS
+    use Jido.Messaging, adapter: Jido.Messaging.Adapters.ETS
   end
 
   setup do
@@ -119,7 +120,7 @@ defmodule JidoMessaging.RoomServerTest do
       {:ok, pid} = RoomSupervisor.start_room(TestMessaging, room)
 
       message =
-        Message.new(%{
+        LegacyMessage.new(%{
           room_id: room.id,
           sender_id: "user_1",
           role: :user,
@@ -137,9 +138,9 @@ defmodule JidoMessaging.RoomServerTest do
       room = Room.new(%{type: :group, name: "Chat"})
       {:ok, pid} = RoomSupervisor.start_room(TestMessaging, room)
 
-      msg1 = Message.new(%{room_id: room.id, sender_id: "u1", role: :user, content: []})
-      msg2 = Message.new(%{room_id: room.id, sender_id: "u1", role: :user, content: []})
-      msg3 = Message.new(%{room_id: room.id, sender_id: "u1", role: :user, content: []})
+      msg1 = LegacyMessage.new(%{room_id: room.id, sender_id: "u1", role: :user, content: []})
+      msg2 = LegacyMessage.new(%{room_id: room.id, sender_id: "u1", role: :user, content: []})
+      msg3 = LegacyMessage.new(%{room_id: room.id, sender_id: "u1", role: :user, content: []})
 
       RoomServer.add_message(pid, msg1)
       RoomServer.add_message(pid, msg2)
@@ -158,11 +159,11 @@ defmodule JidoMessaging.RoomServerTest do
 
       for i <- 1..10 do
         msg =
-          Message.new(%{
+          LegacyMessage.new(%{
             room_id: room.id,
             sender_id: "user_1",
             role: :user,
-            content: [%{type: :text, text: "Message #{i}"}]
+            content: [%{type: :text, text: "LegacyMessage #{i}"}]
           })
 
         RoomServer.add_message(pid, msg)
@@ -178,11 +179,11 @@ defmodule JidoMessaging.RoomServerTest do
 
       for i <- 1..10 do
         msg =
-          Message.new(%{
+          LegacyMessage.new(%{
             room_id: room.id,
             sender_id: "user_1",
             role: :user,
-            content: [%{type: :text, text: "Message #{i}"}]
+            content: [%{type: :text, text: "LegacyMessage #{i}"}]
           })
 
         RoomServer.add_message(pid, msg)

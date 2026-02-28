@@ -1,4 +1,4 @@
-defmodule JidoMessaging.InstanceServer do
+defmodule Jido.Messaging.InstanceServer do
   @moduledoc """
   Per-instance GenServer that tracks lifecycle state and emits signals.
 
@@ -24,7 +24,7 @@ defmodule JidoMessaging.InstanceServer do
   use GenServer
   require Logger
 
-  alias JidoMessaging.Instance
+  alias Jido.Messaging.Instance
 
   @idle_timeout_ms :timer.minutes(30)
 
@@ -359,9 +359,9 @@ defmodule JidoMessaging.InstanceServer do
   end
 
   defp get_sender_queue_depth(state) do
-    case JidoMessaging.Sender.whereis(state.instance_module, state.instance.id) do
+    case Jido.Messaging.Sender.whereis(state.instance_module, state.instance.id) do
       nil -> 0
-      pid -> JidoMessaging.Sender.queue_size(pid)
+      pid -> Jido.Messaging.Sender.queue_size(pid)
     end
   end
 

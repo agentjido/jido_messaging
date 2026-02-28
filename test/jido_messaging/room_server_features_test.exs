@@ -1,16 +1,17 @@
-defmodule JidoMessaging.RoomServerFeaturesTest do
+defmodule Jido.Chat.RoomServerFeaturesTest do
   @moduledoc """
   Tests for RoomServer features: threads, reactions, receipts, typing, presence.
   """
   use ExUnit.Case, async: false
 
-  alias JidoMessaging.{Room, Message, Participant, RoomServer}
+  alias Jido.Chat.{LegacyMessage, Participant, Room}
+  alias Jido.Messaging.RoomServer
 
   setup do
-    start_supervised!(JidoMessaging.TestMessaging)
+    start_supervised!(Jido.Messaging.TestMessaging)
     room = Room.new(%{type: :group, name: "Test Room"})
-    {:ok, _pid} = RoomServer.start_link(room: room, instance_module: JidoMessaging.TestMessaging)
-    server = RoomServer.via_tuple(JidoMessaging.TestMessaging, room.id)
+    {:ok, _pid} = RoomServer.start_link(room: room, instance_module: Jido.Messaging.TestMessaging)
+    server = RoomServer.via_tuple(Jido.Messaging.TestMessaging, room.id)
 
     participant1 = Participant.new(%{type: :human, identity: %{name: "Alice"}})
     participant2 = Participant.new(%{type: :human, identity: %{name: "Bob"}})
@@ -18,7 +19,7 @@ defmodule JidoMessaging.RoomServerFeaturesTest do
     :ok = RoomServer.add_participant(server, participant2)
 
     message =
-      Message.new(%{
+      LegacyMessage.new(%{
         room_id: room.id,
         sender_id: participant1.id,
         role: :user,
@@ -46,7 +47,7 @@ defmodule JidoMessaging.RoomServerFeaturesTest do
       {:ok, _} = RoomServer.create_thread(server, message.id)
 
       reply =
-        Message.new(%{
+        LegacyMessage.new(%{
           room_id: room.id,
           sender_id: p2.id,
           role: :user,
@@ -59,7 +60,7 @@ defmodule JidoMessaging.RoomServerFeaturesTest do
 
     test "add_thread_reply fails if thread doesn't exist", %{server: server, room: room, p2: p2} do
       reply =
-        Message.new(%{
+        LegacyMessage.new(%{
           room_id: room.id,
           sender_id: p2.id,
           role: :user,
@@ -72,8 +73,11 @@ defmodule JidoMessaging.RoomServerFeaturesTest do
     test "get_thread_messages returns only thread messages", %{server: server, room: room, message: message, p2: p2} do
       {:ok, _} = RoomServer.create_thread(server, message.id)
 
-      reply1 = Message.new(%{room_id: room.id, sender_id: p2.id, role: :user, content: [%{type: :text, text: "R1"}]})
-      reply2 = Message.new(%{room_id: room.id, sender_id: p2.id, role: :user, content: [%{type: :text, text: "R2"}]})
+      reply1 =
+        LegacyMessage.new(%{room_id: room.id, sender_id: p2.id, role: :user, content: [%{type: :text, text: "R1"}]})
+
+      reply2 =
+        LegacyMessage.new(%{room_id: room.id, sender_id: p2.id, role: :user, content: [%{type: :text, text: "R2"}]})
 
       {:ok, _} = RoomServer.add_thread_reply(server, message.id, reply1)
       {:ok, _} = RoomServer.add_thread_reply(server, message.id, reply2)

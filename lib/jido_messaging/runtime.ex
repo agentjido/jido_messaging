@@ -1,6 +1,6 @@
-defmodule JidoMessaging.Runtime do
+defmodule Jido.Messaging.Runtime do
   @moduledoc """
-  Runtime state holder for a JidoMessaging instance.
+  Runtime state holder for a Jido.Messaging instance.
 
   Manages adapter initialization and holds per-instance state including
   adapter module and adapter state (e.g., ETS table references).

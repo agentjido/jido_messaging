@@ -1,7 +1,7 @@
-defmodule JidoMessaging.Signal.Ext.CorrelationIdTest do
+defmodule Jido.Messaging.Signal.Ext.CorrelationIdTest do
   use ExUnit.Case, async: true
 
-  alias JidoMessaging.Signal.Ext.CorrelationId
+  alias Jido.Messaging.Signal.Ext.CorrelationId
 
   setup_all do
     # Ensure the extension is registered before tests run

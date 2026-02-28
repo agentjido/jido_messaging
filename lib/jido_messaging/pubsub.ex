@@ -1,4 +1,4 @@
-defmodule JidoMessaging.PubSub do
+defmodule Jido.Messaging.PubSub do
   @moduledoc """
   Optional Phoenix.PubSub integration for cross-node events and LiveView support.
 
@@ -9,8 +9,8 @@ defmodule JidoMessaging.PubSub do
   ## Usage
 
       defmodule MyApp.Messaging do
-        use JidoMessaging,
-          adapter: JidoMessaging.Adapters.ETS,
+        use Jido.Messaging,
+          adapter: Jido.Messaging.Adapters.ETS,
           pubsub: MyApp.PubSub
       end
 

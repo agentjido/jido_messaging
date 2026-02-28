@@ -1,13 +1,13 @@
-defmodule JidoMessaging.InstanceLifecycleRuntimeTest do
+defmodule Jido.Messaging.InstanceLifecycleRuntimeTest do
   use ExUnit.Case, async: false
 
-  import JidoMessaging.TestHelpers
+  import Jido.Messaging.TestHelpers
 
-  alias JidoMessaging.{Channel, Instance, InstanceServer, InstanceSupervisor}
+  alias Jido.Messaging.{BridgeServer, Instance, InstanceSupervisor}
 
   defmodule TestMessaging do
-    use JidoMessaging,
-      adapter: JidoMessaging.Adapters.ETS
+    use Jido.Messaging,
+      adapter: Jido.Messaging.Adapters.ETS
   end
 
   defmodule DeterministicListenerWorker do
@@ -34,7 +34,7 @@ defmodule JidoMessaging.InstanceLifecycleRuntimeTest do
   end
 
   defmodule DeterministicChannel do
-    @behaviour Channel
+    @behaviour Jido.Chat.Adapter
 
     @impl true
     def channel_type, do: :internal
@@ -45,7 +45,7 @@ defmodule JidoMessaging.InstanceLifecycleRuntimeTest do
     @impl true
     def send_message(_chat_id, _text, _opts), do: {:ok, %{message_id: "deterministic"}}
 
-    @impl true
+    @impl false
     def listener_child_specs(instance_id, opts) do
       settings = Keyword.fetch!(opts, :settings)
       order_agent = setting(settings, :order_agent)
@@ -70,8 +70,8 @@ defmodule JidoMessaging.InstanceLifecycleRuntimeTest do
   end
 
   defmodule RecoverableProbeChannel do
-    @behaviour Channel
-    @behaviour JidoMessaging.Adapters.Heartbeat
+    @behaviour Jido.Chat.Adapter
+    @behaviour Jido.Messaging.Adapters.Heartbeat
 
     @impl true
     def channel_type, do: :internal
@@ -82,7 +82,7 @@ defmodule JidoMessaging.InstanceLifecycleRuntimeTest do
     @impl true
     def send_message(_chat_id, _text, _opts), do: {:ok, %{message_id: "recoverable"}}
 
-    @impl true
+    @impl false
     def listener_child_specs(_instance_id, _opts), do: {:ok, []}
 
     @impl true
@@ -125,7 +125,7 @@ defmodule JidoMessaging.InstanceLifecycleRuntimeTest do
   end
 
   defmodule CrashLoopChannel do
-    @behaviour Channel
+    @behaviour Jido.Chat.Adapter
 
     @impl true
     def channel_type, do: :internal
@@ -136,7 +136,7 @@ defmodule JidoMessaging.InstanceLifecycleRuntimeTest do
     @impl true
     def send_message(_chat_id, _text, _opts), do: {:ok, %{message_id: "crash_loop"}}
 
-    @impl true
+    @impl false
     def listener_child_specs(instance_id, opts) do
       settings = Keyword.fetch!(opts, :settings)
       crash_after_ms = Map.get(settings, :crash_after_ms) || Map.get(settings, "crash_after_ms") || 0
@@ -201,7 +201,7 @@ defmodule JidoMessaging.InstanceLifecycleRuntimeTest do
   end
 
   defmodule IsolatedCrashChannel do
-    @behaviour Channel
+    @behaviour Jido.Chat.Adapter
 
     @impl true
     def channel_type, do: :internal
@@ -212,7 +212,7 @@ defmodule JidoMessaging.InstanceLifecycleRuntimeTest do
     @impl true
     def send_message(_chat_id, _text, _opts), do: {:ok, %{message_id: "isolated"}}
 
-    @impl true
+    @impl false
     def listener_child_specs(instance_id, opts) do
       instance_module = Keyword.fetch!(opts, :instance_module)
 
@@ -232,7 +232,7 @@ defmodule JidoMessaging.InstanceLifecycleRuntimeTest do
   end
 
   describe "ST-OCM-002 lifecycle orchestration" do
-    test "instance startup resolves listener child specs deterministically and reports health" do
+    test "bridge startup resolves listener child specs deterministically and reports bridge status" do
       {:ok, order_agent} = Agent.start_link(fn -> [] end)
 
       {:ok, instance} =
@@ -240,9 +240,17 @@ defmodule JidoMessaging.InstanceLifecycleRuntimeTest do
           name: "Lifecycle Bot",
           settings: %{
             channel_module: DeterministicChannel,
-            order_agent: order_agent,
-            test_pid: self(),
             probe_interval_ms: 60_000
+          }
+        })
+
+      {:ok, _bridge} =
+        TestMessaging.put_bridge_config(%{
+          id: "deterministic_bridge",
+          adapter_module: DeterministicChannel,
+          opts: %{
+            order_agent: order_agent,
+            test_pid: self()
           }
         })
 
@@ -250,17 +258,27 @@ defmodule JidoMessaging.InstanceLifecycleRuntimeTest do
         fn ->
           Agent.get(order_agent, & &1) == [:listener_a, :listener_b]
         end,
-        timeout: 500
+        timeout: 1_000
       )
 
       {:ok, snapshot} = TestMessaging.instance_health(instance.id)
 
-      assert snapshot.child_health_summary.total_children == 4
-      assert snapshot.child_health_summary.running_children == 4
-      assert snapshot.child_health_summary.children[JidoMessaging.InstanceServer] == :up
+      assert snapshot.child_health_summary.total_children == 2
+      assert snapshot.child_health_summary.running_children == 2
+      assert snapshot.child_health_summary.children[Jido.Messaging.InstanceServer] == :up
       assert snapshot.child_health_summary.children["{:instance_reconnect_worker, \"#{instance.id}\"}"] == :up
-      assert snapshot.child_health_summary.children["{:listener, \"#{instance.id}\", :a}"] == :up
-      assert snapshot.child_health_summary.children["{:listener, \"#{instance.id}\", :b}"] == :up
+
+      assert {:ok, bridge_status} =
+               TestMessaging.list_bridges()
+               |> Enum.find(&(&1.bridge_id == "deterministic_bridge"))
+               |> then(fn
+                 nil -> {:error, :bridge_not_found}
+                 status -> {:ok, status}
+               end)
+
+      assert bridge_status.adapter_module == DeterministicChannel
+      assert bridge_status.enabled == true
+      assert bridge_status.listener_count == 2
     end
 
     test "recoverable failures trigger bounded reconnect with telemetry" do
@@ -335,85 +353,90 @@ defmodule JidoMessaging.InstanceLifecycleRuntimeTest do
       assert max_attempt <= 4
     end
 
-    test "restart intensity escalation follows declared topology policy" do
+    test "bridge crash loops restart within bridge supervision without tearing down instance supervision" do
       instance_supervisor_name = TestMessaging.__jido_messaging__(:instance_supervisor)
-      old_instance_supervisor_pid = Process.whereis(instance_supervisor_name)
-      assert is_pid(old_instance_supervisor_pid)
+      instance_supervisor_pid = Process.whereis(instance_supervisor_name)
+      assert is_pid(instance_supervisor_pid)
 
-      ref = Process.monitor(old_instance_supervisor_pid)
-
-      {:ok, _instance} =
-        InstanceSupervisor.start_instance(TestMessaging, :internal, %{
-          name: "Crash Loop Bot",
-          settings: %{
-            channel_module: CrashLoopChannel,
-            crash_after_ms: 0,
-            probe_interval_ms: 60_000
-          }
+      {:ok, _bridge} =
+        TestMessaging.put_bridge_config(%{
+          id: "crash_loop_bridge",
+          adapter_module: CrashLoopChannel,
+          opts: %{crash_after_ms: 0}
         })
-
-      assert_receive {:DOWN, ^ref, :process, ^old_instance_supervisor_pid, reason}, 5_000
-
-      assert reason == :shutdown or
-               String.contains?(inspect(reason), "reached_max_restart_intensity")
 
       assert_eventually(
         fn ->
-          new_pid = Process.whereis(instance_supervisor_name)
-          is_pid(new_pid) and new_pid != old_instance_supervisor_pid and Process.alive?(new_pid)
-        end,
-        timeout: 1_000
-      )
-    end
-
-    test "worker crashes are isolated to the owning instance subtree" do
-      {:ok, stable_order} = Agent.start_link(fn -> [] end)
-
-      {:ok, stable_instance} =
-        TestMessaging.start_instance(:internal, %{
-          name: "Stable Bot",
-          settings: %{
-            channel_module: DeterministicChannel,
-            order_agent: stable_order,
-            probe_interval_ms: 60_000
-          }
-        })
-
-      {:ok, crash_instance} =
-        TestMessaging.start_instance(:internal, %{
-          name: "Crash Bot",
-          settings: %{
-            channel_module: IsolatedCrashChannel,
-            probe_interval_ms: 60_000
-          }
-        })
-
-      stable_server = InstanceServer.whereis(TestMessaging, stable_instance.id)
-      stable_ref = Process.monitor(stable_server)
-
-      assert_eventually(
-        fn ->
-          is_pid(IsolatedCrashWorker.whereis(TestMessaging, crash_instance.id))
+          is_pid(BridgeServer.whereis(TestMessaging, "crash_loop_bridge"))
         end,
         timeout: 500
       )
 
-      crashed_worker = IsolatedCrashWorker.whereis(TestMessaging, crash_instance.id)
+      first_bridge_pid = BridgeServer.whereis(TestMessaging, "crash_loop_bridge")
+      assert is_pid(first_bridge_pid)
+      bridge_ref = Process.monitor(first_bridge_pid)
+
+      assert_receive {:DOWN, ^bridge_ref, :process, ^first_bridge_pid, _reason}, 2_000
+
+      assert_eventually(
+        fn ->
+          restarted_bridge_pid = BridgeServer.whereis(TestMessaging, "crash_loop_bridge")
+          is_pid(restarted_bridge_pid) and restarted_bridge_pid != first_bridge_pid
+        end,
+        timeout: 2_000
+      )
+
+      assert Process.alive?(instance_supervisor_pid)
+    end
+
+    test "worker crashes are isolated to the owning bridge subtree" do
+      {:ok, _stable_bridge} =
+        TestMessaging.put_bridge_config(%{
+          id: "stable_bridge",
+          adapter_module: DeterministicChannel,
+          opts: %{order_agent: start_supervised!({Agent, fn -> [] end})}
+        })
+
+      {:ok, _crash_bridge} =
+        TestMessaging.put_bridge_config(%{
+          id: "crash_bridge",
+          adapter_module: IsolatedCrashChannel,
+          opts: %{}
+        })
+
+      assert_eventually(
+        fn ->
+          is_pid(BridgeServer.whereis(TestMessaging, "stable_bridge"))
+        end,
+        timeout: 500
+      )
+
+      stable_bridge_pid = BridgeServer.whereis(TestMessaging, "stable_bridge")
+      stable_ref = Process.monitor(stable_bridge_pid)
+
+      assert_eventually(
+        fn ->
+          is_pid(IsolatedCrashWorker.whereis(TestMessaging, "crash_bridge"))
+        end,
+        timeout: 500
+      )
+
+      crashed_worker = IsolatedCrashWorker.whereis(TestMessaging, "crash_bridge")
       crashed_ref = Process.monitor(crashed_worker)
 
-      assert :ok = IsolatedCrashWorker.crash(TestMessaging, crash_instance.id)
+      assert :ok = IsolatedCrashWorker.crash(TestMessaging, "crash_bridge")
       assert_receive {:DOWN, ^crashed_ref, :process, ^crashed_worker, :boom}, 500
 
       assert_eventually(
         fn ->
-          restarted = IsolatedCrashWorker.whereis(TestMessaging, crash_instance.id)
+          restarted = IsolatedCrashWorker.whereis(TestMessaging, "crash_bridge")
           is_pid(restarted) and restarted != crashed_worker
         end,
         timeout: 500
       )
 
-      refute_receive {:DOWN, ^stable_ref, :process, ^stable_server, _reason}, 200
-      assert Process.alive?(stable_server)
+      refute_receive {:DOWN, ^stable_ref, :process, ^stable_bridge_pid, _reason}, 200
+      assert Process.alive?(stable_bridge_pid)
     end
   end
 

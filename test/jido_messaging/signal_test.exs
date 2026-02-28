@@ -1,16 +1,16 @@
-defmodule JidoMessaging.SignalTest do
+defmodule Jido.Messaging.SignalTest do
   # Not async because telemetry handlers can interfere across concurrent tests
   use ExUnit.Case, async: false
 
-  alias JidoMessaging.{Signal, Ingest, Deliver}
+  alias Jido.Messaging.{Signal, Ingest, Deliver}
 
   defmodule TestMessaging do
-    use JidoMessaging,
-      adapter: JidoMessaging.Adapters.ETS
+    use Jido.Messaging,
+      adapter: Jido.Messaging.Adapters.ETS
   end
 
   defmodule MockChannel do
-    @behaviour JidoMessaging.Channel
+    @behaviour Jido.Chat.Adapter
 
     @impl true
     def channel_type, do: :mock
@@ -64,7 +64,7 @@ defmodule JidoMessaging.SignalTest do
       assert metadata.room_id == message.room_id
       assert metadata.participant_id == message.sender_id
       assert metadata.channel == MockChannel
-      assert metadata.instance_id == context.instance_id
+      assert metadata.bridge_id == context.bridge_id
 
       :telemetry.detach(handler_id)
     end
@@ -118,7 +118,7 @@ defmodule JidoMessaging.SignalTest do
         text: "Setup"
       }
 
-      {:ok, original_message, context} =
+      {:ok, original_message, _context} =
         Ingest.ingest_incoming(TestMessaging, MockChannel, "room_inst", incoming)
 
       :telemetry.attach(
@@ -130,8 +130,15 @@ defmodule JidoMessaging.SignalTest do
         nil
       )
 
+      {:ok, _bridge} = TestMessaging.put_bridge_config(%{id: "bridge_signal", adapter_module: MockChannel})
+
+      {:ok, _binding} =
+        TestMessaging.create_room_binding(original_message.room_id, :mock, "bridge_signal", "signal_route_chat", %{
+          direction: :both
+        })
+
       {:ok, sent_message} =
-        Deliver.send_to_room(TestMessaging, original_message.room_id, "Proactive!", context)
+        Deliver.send_to_room(TestMessaging, original_message.room_id, "Proactive!")
 
       assert_receive {:telemetry_event, event, measurements, metadata}
 
@@ -197,7 +204,7 @@ defmodule JidoMessaging.SignalTest do
         nil
       )
 
-      message = %JidoMessaging.Message{
+      message = %Jido.Chat.LegacyMessage{
         id: "msg_test",
         room_id: "room_123",
         sender_id: "sender_456",
@@ -207,7 +214,7 @@ defmodule JidoMessaging.SignalTest do
         metadata: %{}
       }
 
-      context = %{channel: MockChannel, instance_id: "inst_1"}
+      context = %{channel: MockChannel, bridge_id: "inst_1"}
 
       Signal.emit_received(message, context)
 
@@ -232,7 +239,7 @@ defmodule JidoMessaging.SignalTest do
         nil
       )
 
-      message = %JidoMessaging.Message{
+      message = %Jido.Chat.LegacyMessage{
         id: "msg_sent",
         room_id: "room_789",
         sender_id: "system",

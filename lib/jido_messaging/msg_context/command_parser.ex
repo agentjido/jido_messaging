@@ -1,4 +1,4 @@
-defmodule JidoMessaging.MsgContext.CommandParser do
+defmodule Jido.Messaging.MsgContext.CommandParser do
   @moduledoc """
   Deterministic command parser for normalized inbound message text.
 

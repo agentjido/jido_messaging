@@ -1,4 +1,4 @@
-defmodule JidoMessaging.AgentRunner do
+defmodule Jido.Messaging.AgentRunner do
   @moduledoc """
   GenServer that manages an agent's participation in a specific room.
 
@@ -35,8 +35,9 @@ defmodule JidoMessaging.AgentRunner do
   use GenServer
   require Logger
 
-  alias JidoMessaging.{Participant, RoomServer, Signal}
-  alias JidoMessaging.Supervisor, as: MessagingSupervisor
+  alias Jido.Chat.Participant
+  alias Jido.Messaging.{RoomServer, Signal}
+  alias Jido.Messaging.Supervisor, as: MessagingSupervisor
 
   @schema Zoi.struct(
             __MODULE__,
@@ -73,7 +74,7 @@ defmodule JidoMessaging.AgentRunner do
   - `:room_id` - Required. The room this agent participates in
   - `:agent_id` - Required. Unique identifier for this agent
   - `:agent_config` - Required. Configuration map with handler, trigger, and name
-  - `:instance_module` - Required. The JidoMessaging instance module
+  - `:instance_module` - Required. The Jido.Messaging instance module
   """
   def start_link(opts) do
     room_id = Keyword.fetch!(opts, :room_id)
@@ -144,7 +145,7 @@ defmodule JidoMessaging.AgentRunner do
     # Schedule subscription to Signal Bus
     send(self(), :subscribe)
 
-    Logger.debug("[JidoMessaging.AgentRunner] Agent #{agent_id} started in room #{room_id}")
+    Logger.debug("[Jido.Messaging.AgentRunner] Agent #{agent_id} started in room #{room_id}")
 
     {:ok, state}
   end
@@ -194,7 +195,7 @@ defmodule JidoMessaging.AgentRunner do
 
   @impl true
   def terminate(_reason, state) do
-    Logger.debug("[JidoMessaging.AgentRunner] Agent #{state.agent_id} stopping in room #{state.room_id}")
+    Logger.debug("[Jido.Messaging.AgentRunner] Agent #{state.agent_id} stopping in room #{state.room_id}")
 
     :ok
   end
@@ -278,7 +279,7 @@ defmodule JidoMessaging.AgentRunner do
         })
 
       {:error, reason} ->
-        Logger.warning("[JidoMessaging.AgentRunner] Handler error for agent #{state.agent_id}: #{inspect(reason)}")
+        Logger.warning("[Jido.Messaging.AgentRunner] Handler error for agent #{state.agent_id}: #{inspect(reason)}")
 
         Signal.emit_agent(:failed, state.instance_module, state.room_id, state.agent_id, %{
           message_id: message.id,
@@ -288,7 +289,7 @@ defmodule JidoMessaging.AgentRunner do
   end
 
   defp send_reply(text, original_message, state) do
-    alias JidoMessaging.Content.Text
+    alias Jido.Chat.Content.Text
 
     message_attrs = %{
       room_id: state.room_id,
@@ -309,12 +310,12 @@ defmodule JidoMessaging.AgentRunner do
       {:ok, message} ->
         add_to_room_server(state, message)
 
-        Logger.debug("[JidoMessaging.AgentRunner] Agent #{state.agent_id} sent reply in room #{state.room_id}")
+        Logger.debug("[Jido.Messaging.AgentRunner] Agent #{state.agent_id} sent reply in room #{state.room_id}")
 
         {:ok, message}
 
       {:error, reason} = error ->
-        Logger.warning("[JidoMessaging.AgentRunner] Failed to save reply: #{inspect(reason)}")
+        Logger.warning("[Jido.Messaging.AgentRunner] Failed to save reply: #{inspect(reason)}")
 
         error
     end
@@ -323,7 +324,7 @@ defmodule JidoMessaging.AgentRunner do
   defp add_to_room_server(state, message) do
     case RoomServer.whereis(state.instance_module, state.room_id) do
       nil ->
-        Logger.debug("[JidoMessaging.AgentRunner] Room server not running for #{state.room_id}, skipping")
+        Logger.debug("[Jido.Messaging.AgentRunner] Room server not running for #{state.room_id}, skipping")
 
       pid ->
         RoomServer.add_message(pid, message)
@@ -341,7 +342,7 @@ defmodule JidoMessaging.AgentRunner do
 
     case RoomServer.whereis(state.instance_module, state.room_id) do
       nil ->
-        Logger.debug("[JidoMessaging.AgentRunner] Room server not running, skipping participant registration")
+        Logger.debug("[Jido.Messaging.AgentRunner] Room server not running, skipping participant registration")
 
       pid ->
         RoomServer.add_participant(pid, participant)

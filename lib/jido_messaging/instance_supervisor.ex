@@ -1,4 +1,4 @@
-defmodule JidoMessaging.InstanceSupervisor do
+defmodule Jido.Messaging.InstanceSupervisor do
   @moduledoc """
   Dynamic supervisor for channel instances.
 
@@ -10,19 +10,12 @@ defmodule JidoMessaging.InstanceSupervisor do
   use DynamicSupervisor
   require Logger
 
-  alias JidoMessaging.{Channel, Instance, InstanceReconnectWorker, InstanceServer, PluginRegistry}
+  alias Jido.Messaging.{Instance, InstanceReconnectWorker, InstanceServer, BridgeRegistry}
 
   @instance_domain_max_restarts 6
   @instance_domain_max_seconds 30
   @instance_subtree_max_restarts 5
   @instance_subtree_max_seconds 30
-
-  @channel_modules %{
-    telegram: JidoMessaging.Channels.Telegram,
-    discord: JidoMessaging.Channels.Discord,
-    slack: JidoMessaging.Channels.Slack,
-    whatsapp: JidoMessaging.Channels.WhatsApp
-  }
 
   def start_link(opts) do
     name = Keyword.fetch!(opts, :name)
@@ -63,11 +56,11 @@ defmodule JidoMessaging.InstanceSupervisor do
 
     case DynamicSupervisor.start_child(supervisor, child_spec) do
       {:ok, _pid} ->
-        Logger.info("[JidoMessaging.InstanceSupervisor] Started instance #{instance.id} (#{channel_type})")
+        Logger.info("[Jido.Messaging.InstanceSupervisor] Started instance #{instance.id} (#{channel_type})")
         {:ok, instance}
 
       {:error, reason} = error ->
-        Logger.error("[JidoMessaging.InstanceSupervisor] Failed to start instance: #{inspect(reason)}")
+        Logger.error("[Jido.Messaging.InstanceSupervisor] Failed to start instance: #{inspect(reason)}")
         error
     end
   end
@@ -77,7 +70,6 @@ defmodule JidoMessaging.InstanceSupervisor do
   """
   def start_instance_tree(messaging_module, instance) do
     channel_module = resolve_channel_module(instance)
-    {:ok, listener_children} = resolve_listener_children(messaging_module, instance, channel_module)
 
     instance_server_spec = {InstanceServer, instance_module: messaging_module, instance: instance}
 
@@ -93,7 +85,7 @@ defmodule JidoMessaging.InstanceSupervisor do
         id: {:instance_reconnect_worker, instance.id}
       )
 
-    children = [instance_server_spec, reconnect_worker_spec | listener_children]
+    children = [instance_server_spec, reconnect_worker_spec]
 
     opts = [
       strategy: :one_for_one,
@@ -120,7 +112,7 @@ defmodule JidoMessaging.InstanceSupervisor do
       sup_pid ->
         case DynamicSupervisor.terminate_child(supervisor, sup_pid) do
           :ok ->
-            Logger.info("[JidoMessaging.InstanceSupervisor] Stopped instance #{instance_id}")
+            Logger.info("[Jido.Messaging.InstanceSupervisor] Stopped instance #{instance_id}")
             :ok
 
           {:error, :not_found} ->
@@ -202,56 +194,22 @@ defmodule JidoMessaging.InstanceSupervisor do
     {:via, Registry, {Module.concat(messaging_module, Registry.Instances), {:instance, instance_id}}}
   end
 
-  defp resolve_listener_children(_messaging_module, instance, nil) do
-    Logger.warning(
-      "[JidoMessaging.InstanceSupervisor] No channel module available for #{instance.channel_type}; starting instance #{instance.id} with lifecycle worker only"
-    )
-
-    {:ok, []}
-  end
-
-  defp resolve_listener_children(messaging_module, instance, channel_module) do
-    opts = [
-      instance_module: messaging_module,
-      instance: instance,
-      settings: normalize_settings(instance.settings)
-    ]
-
-    case Channel.listener_child_specs(channel_module, instance.id, opts) do
-      {:ok, child_specs} ->
-        {:ok, child_specs}
-
-      {:error, failure} ->
-        case Channel.failure_disposition(failure) do
-          :degrade ->
-            Logger.warning(
-              "[JidoMessaging.InstanceSupervisor] Listener child specs degraded for #{instance.id}: #{inspect(failure.reason)}"
-            )
-
-            {:ok, []}
-
-          :retry ->
-            {:error, {:listener_child_specs_recoverable_failure, failure}}
-
-          :crash ->
-            {:error, {:listener_child_specs_fatal_failure, failure}}
-        end
-    end
-  end
-
   defp resolve_channel_module(instance) do
     settings = normalize_settings(instance.settings)
-    custom_module = Map.get(settings, :channel_module) || Map.get(settings, "channel_module")
+
+    custom_module =
+      Map.get(settings, :adapter_module) || Map.get(settings, "adapter_module") ||
+        Map.get(settings, :channel_module) || Map.get(settings, "channel_module")
 
     cond do
       is_atom(custom_module) and Code.ensure_loaded?(custom_module) ->
         custom_module
 
-      plugin_module = PluginRegistry.get_channel_module(instance.channel_type) ->
-        plugin_module
+      bridge_module = BridgeRegistry.get_adapter_module(instance.channel_type) ->
+        bridge_module
 
       true ->
-        Map.get(@channel_modules, instance.channel_type)
+        nil
     end
   end
 

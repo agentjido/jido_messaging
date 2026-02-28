@@ -1,4 +1,4 @@
-defmodule JidoMessaging.Ingest do
+defmodule Jido.Messaging.Ingest do
   @moduledoc """
   Inbound message processing pipeline.
 
@@ -21,10 +21,11 @@ defmodule JidoMessaging.Ingest do
 
   require Logger
 
-  alias JidoMessaging.{
+  alias Jido.Chat.LegacyMessage
+  alias Jido.Chat.Content.Text
+
+  alias Jido.Messaging.{
     MediaPolicy,
-    Message,
-    Content.Text,
     MsgContext,
     MsgContext.Normalizer,
     MsgContext.CommandParser,
@@ -36,7 +37,7 @@ defmodule JidoMessaging.Ingest do
     Signal
   }
 
-  @type incoming :: JidoMessaging.Channel.incoming_message()
+  @type incoming :: Jido.Chat.Incoming.t() | map()
   @type policy_stage :: :gating | :moderation
   @type policy_denial :: {:policy_denied, policy_stage(), atom(), String.t()}
   @type security_denial :: Security.security_denial()
@@ -44,10 +45,10 @@ defmodule JidoMessaging.Ingest do
   @type ingest_opts :: keyword()
 
   @type context :: %{
-          room: JidoMessaging.Room.t(),
-          participant: JidoMessaging.Participant.t(),
+          room: Jido.Chat.Room.t(),
+          participant: Jido.Chat.Participant.t(),
           channel: module(),
-          instance_id: String.t(),
+          bridge_id: String.t(),
           external_room_id: term(),
           instance_module: module(),
           msg_context: MsgContext.t()
@@ -66,9 +67,9 @@ defmodule JidoMessaging.Ingest do
   Returns `{:ok, :duplicate}` if the message has already been processed.
   """
   @spec ingest_incoming(module(), module(), String.t(), incoming()) ::
-          {:ok, Message.t(), context()} | {:ok, :duplicate} | {:error, ingest_error()}
-  def ingest_incoming(messaging_module, channel_module, instance_id, incoming) do
-    ingest_incoming(messaging_module, channel_module, instance_id, incoming, [])
+          {:ok, LegacyMessage.t(), context()} | {:ok, :duplicate} | {:error, ingest_error()}
+  def ingest_incoming(messaging_module, channel_module, bridge_id, incoming) do
+    ingest_incoming(messaging_module, channel_module, bridge_id, incoming, [])
   end
 
   @doc """
@@ -76,15 +77,15 @@ defmodule JidoMessaging.Ingest do
 
   ## Options
 
-    * `:gaters` - List of modules implementing `JidoMessaging.Gating` behaviour
+    * `:gaters` - List of modules implementing `Jido.Messaging.Gating` behaviour
     * `:gating_opts` - Keyword options passed to each gater
     * `:gating_timeout_ms` - Timeout per gater check (default: `50`)
-    * `:moderators` - List of modules implementing `JidoMessaging.Moderation` behaviour
+    * `:moderators` - List of modules implementing `Jido.Messaging.Moderation` behaviour
     * `:moderation_opts` - Keyword options passed to each moderator
     * `:moderation_timeout_ms` - Timeout per moderator check (default: `50`)
     * `:policy_timeout_fallback` - Timeout fallback policy (`:deny` or `:allow_with_flag`)
     * `:policy_error_fallback` - Crash/error fallback policy (`:deny` or `:allow_with_flag`)
-    * `:security` - Runtime overrides for `JidoMessaging.Security` config
+    * `:security` - Runtime overrides for `Jido.Messaging.Security` config
     * `:require_mention` - Require `MsgContext.was_mentioned` to be true
     * `:allowed_prefixes` - Allowed command prefixes for parsed commands
     * `:mention_targets` - Mention targets used to normalize `was_mentioned`
@@ -93,18 +94,18 @@ defmodule JidoMessaging.Ingest do
     * `:mentions_max_text_bytes` - Max message size for mention adapter parsing
   """
   @spec ingest_incoming(module(), module(), String.t(), incoming(), ingest_opts()) ::
-          {:ok, Message.t(), context()} | {:ok, :duplicate} | {:error, ingest_error()}
-  def ingest_incoming(messaging_module, channel_module, instance_id, incoming, opts)
+          {:ok, LegacyMessage.t(), context()} | {:ok, :duplicate} | {:error, ingest_error()}
+  def ingest_incoming(messaging_module, channel_module, bridge_id, incoming, opts)
       when is_list(opts) do
-    channel_type = channel_module.channel_type()
-    instance_id = to_string(instance_id)
+    channel_type = Jido.Messaging.AdapterBridge.channel_type(channel_module)
+    bridge_id = to_string(bridge_id)
     external_room_id = incoming.external_room_id
 
-    dedupe_key = build_dedupe_key(channel_type, instance_id, incoming)
+    dedupe_key = build_dedupe_key(channel_type, bridge_id, incoming)
 
-    case JidoMessaging.Deduper.check_and_mark(messaging_module, dedupe_key) do
+    case Jido.Messaging.Deduper.check_and_mark(messaging_module, dedupe_key) do
       :duplicate ->
-        Logger.debug("[JidoMessaging.Ingest] Duplicate message ignored: #{inspect(dedupe_key)}")
+        Logger.debug("[Jido.Messaging.Ingest] Duplicate message ignored: #{inspect(dedupe_key)}")
         {:ok, :duplicate}
 
       :new ->
@@ -112,7 +113,7 @@ defmodule JidoMessaging.Ingest do
           messaging_module,
           channel_module,
           channel_type,
-          instance_id,
+          bridge_id,
           external_room_id,
           incoming,
           opts
@@ -127,27 +128,27 @@ defmodule JidoMessaging.Ingest do
   or when deduplication is handled externally.
   """
   @spec ingest_incoming!(module(), module(), String.t(), incoming()) ::
-          {:ok, Message.t(), context()} | {:error, ingest_error()}
-  def ingest_incoming!(messaging_module, channel_module, instance_id, incoming) do
-    ingest_incoming!(messaging_module, channel_module, instance_id, incoming, [])
+          {:ok, LegacyMessage.t(), context()} | {:error, ingest_error()}
+  def ingest_incoming!(messaging_module, channel_module, bridge_id, incoming) do
+    ingest_incoming!(messaging_module, channel_module, bridge_id, incoming, [])
   end
 
   @doc """
   Process an incoming message without deduplication check and with ingest policy options.
   """
   @spec ingest_incoming!(module(), module(), String.t(), incoming(), ingest_opts()) ::
-          {:ok, Message.t(), context()} | {:error, ingest_error()}
-  def ingest_incoming!(messaging_module, channel_module, instance_id, incoming, opts)
+          {:ok, LegacyMessage.t(), context()} | {:error, ingest_error()}
+  def ingest_incoming!(messaging_module, channel_module, bridge_id, incoming, opts)
       when is_list(opts) do
-    channel_type = channel_module.channel_type()
-    instance_id = to_string(instance_id)
+    channel_type = Jido.Messaging.AdapterBridge.channel_type(channel_module)
+    bridge_id = to_string(bridge_id)
     external_room_id = incoming.external_room_id
 
     do_ingest(
       messaging_module,
       channel_module,
       channel_type,
-      instance_id,
+      bridge_id,
       external_room_id,
       incoming,
       opts
@@ -158,7 +159,7 @@ defmodule JidoMessaging.Ingest do
          messaging_module,
          channel_module,
          channel_type,
-         instance_id,
+         bridge_id,
          external_room_id,
          incoming,
          opts
@@ -167,12 +168,12 @@ defmodule JidoMessaging.Ingest do
 
     with {:ok, verify_result} <-
            Security.verify_sender(messaging_module, channel_module, incoming, raw_payload, opts),
-         {:ok, room} <- resolve_room(messaging_module, channel_type, instance_id, incoming),
+         {:ok, room} <- resolve_room(messaging_module, channel_type, bridge_id, incoming),
          {:ok, participant} <- resolve_participant(messaging_module, channel_type, incoming),
          {:ok, message} <-
-           build_message(messaging_module, room, participant, incoming, channel_type, instance_id, opts),
+           build_message(messaging_module, room, participant, incoming, channel_type, bridge_id, opts),
          message <- put_verify_metadata(message, verify_result),
-         msg_context <- build_msg_context(channel_module, instance_id, incoming, room, participant, opts),
+         msg_context <- build_msg_context(channel_module, bridge_id, incoming, room, participant, opts),
          {:ok, policy_message} <- apply_policy_pipeline(message, msg_context, opts),
          {:ok, persisted_message} <- messaging_module.save_message_struct(policy_message) do
       resolved_msg_context = MsgContext.with_resolved(msg_context, room, participant, persisted_message)
@@ -181,7 +182,7 @@ defmodule JidoMessaging.Ingest do
         room: room,
         participant: participant,
         channel: channel_module,
-        instance_id: instance_id,
+        bridge_id: bridge_id,
         external_room_id: external_room_id,
         instance_module: messaging_module,
         msg_context: resolved_msg_context
@@ -192,13 +193,13 @@ defmodule JidoMessaging.Ingest do
         resolved_msg_context,
         room,
         channel_type,
-        instance_id,
+        bridge_id,
         external_room_id
       )
 
       add_to_room_server(messaging_module, room, persisted_message, participant)
 
-      Logger.debug("[JidoMessaging.Ingest] Message #{persisted_message.id} ingested in room #{room.id}")
+      Logger.debug("[Jido.Messaging.Ingest] Message #{persisted_message.id} ingested in room #{room.id}")
 
       Signal.emit_received(persisted_message, context)
 
@@ -211,12 +212,12 @@ defmodule JidoMessaging.Ingest do
          %MsgContext{} = msg_context,
          room,
          channel_type,
-         instance_id,
+         bridge_id,
          external_room_id
        ) do
     route = %{
       channel_type: channel_type,
-      instance_id: instance_id,
+      bridge_id: bridge_id,
       room_id: room.id,
       thread_id: msg_context.thread_root_id || msg_context.external_thread_id,
       external_room_id: to_string(external_room_id)
@@ -227,21 +228,21 @@ defmodule JidoMessaging.Ingest do
         :ok
 
       {:error, reason} ->
-        Logger.warning("[JidoMessaging.Ingest] Session route update skipped: #{inspect(reason)}")
+        Logger.warning("[Jido.Messaging.Ingest] Session route update skipped: #{inspect(reason)}")
         :ok
     end
   end
 
-  defp build_dedupe_key(channel_type, instance_id, incoming) do
+  defp build_dedupe_key(channel_type, bridge_id, incoming) do
     external_message_id = incoming[:external_message_id]
     external_room_id = incoming.external_room_id
 
-    {channel_type, instance_id, external_room_id, external_message_id}
+    {channel_type, bridge_id, external_room_id, external_message_id}
   end
 
   # Private helpers
 
-  defp resolve_room(messaging_module, channel_type, instance_id, incoming) do
+  defp resolve_room(messaging_module, channel_type, bridge_id, incoming) do
     external_id = to_string(incoming.external_room_id)
 
     room_attrs = %{
@@ -251,7 +252,7 @@ defmodule JidoMessaging.Ingest do
 
     messaging_module.get_or_create_room_by_external_binding(
       channel_type,
-      instance_id,
+      bridge_id,
       external_id,
       room_attrs
     )
@@ -275,9 +276,9 @@ defmodule JidoMessaging.Ingest do
     )
   end
 
-  defp build_message(messaging_module, room, participant, incoming, channel_type, instance_id, opts) do
+  defp build_message(messaging_module, room, participant, incoming, channel_type, bridge_id, opts) do
     with {:ok, content, media_metadata} <- build_content(incoming, opts) do
-      reply_to_id = resolve_reply_to_id(messaging_module, channel_type, instance_id, incoming)
+      reply_to_id = resolve_reply_to_id(messaging_module, channel_type, bridge_id, incoming)
 
       message_attrs = %{
         room_id: room.id,
@@ -287,27 +288,27 @@ defmodule JidoMessaging.Ingest do
         reply_to_id: reply_to_id,
         external_id: incoming[:external_message_id],
         status: :sent,
-        metadata: build_metadata(incoming, channel_type, instance_id, media_metadata)
+        metadata: build_metadata(incoming, channel_type, bridge_id, media_metadata)
       }
 
-      {:ok, Message.new(message_attrs)}
+      {:ok, LegacyMessage.new(message_attrs)}
     end
   end
 
-  defp build_msg_context(channel_module, instance_id, incoming, room, participant, opts) do
+  defp build_msg_context(channel_module, bridge_id, incoming, room, participant, opts) do
     channel_module
-    |> MsgContext.from_incoming(instance_id, incoming)
+    |> MsgContext.from_incoming(bridge_id, incoming)
     |> Normalizer.normalize(incoming, opts)
     |> then(fn msg_context ->
       %{msg_context | room_id: room.id, participant_id: participant.id}
     end)
   end
 
-  defp resolve_reply_to_id(messaging_module, channel_type, instance_id, incoming) do
+  defp resolve_reply_to_id(messaging_module, channel_type, bridge_id, incoming) do
     external_reply_to_id = incoming[:external_reply_to_id]
 
     if external_reply_to_id do
-      case messaging_module.get_message_by_external_id(channel_type, instance_id, external_reply_to_id) do
+      case messaging_module.get_message_by_external_id(channel_type, bridge_id, external_reply_to_id) do
         {:ok, msg} -> msg.id
         _ -> nil
       end
@@ -331,7 +332,7 @@ defmodule JidoMessaging.Ingest do
         {:ok, text_content ++ media_content, media_metadata}
 
       {:error, {:media_policy_denied, reason}, media_metadata} ->
-        Logger.warning("[JidoMessaging.Ingest] Media policy rejection: #{inspect(reason)}")
+        Logger.warning("[Jido.Messaging.Ingest] Media policy rejection: #{inspect(reason)}")
         {:error, {:media_policy_denied, reason, media_metadata}}
     end
   end
@@ -343,7 +344,7 @@ defmodule JidoMessaging.Ingest do
     end
   end
 
-  defp put_verify_metadata(%Message{} = message, %{decision: decision, metadata: metadata}) do
+  defp put_verify_metadata(%LegacyMessage{} = message, %{decision: decision, metadata: metadata}) do
     security_metadata =
       Map.get(message.metadata, :security, %{})
       |> Map.put(
@@ -357,12 +358,12 @@ defmodule JidoMessaging.Ingest do
     %{message | metadata: Map.put(message.metadata, :security, security_metadata)}
   end
 
-  defp build_metadata(incoming, channel_type, instance_id, media_metadata) do
+  defp build_metadata(incoming, channel_type, bridge_id, media_metadata) do
     %{
       external_message_id: incoming[:external_message_id],
       timestamp: incoming[:timestamp],
       channel: channel_type,
-      instance_id: instance_id,
+      bridge_id: bridge_id,
       username: incoming[:username],
       display_name: incoming[:display_name]
     }
@@ -528,7 +529,7 @@ defmodule JidoMessaging.Ingest do
                  |> append_decision(decision)
                  |> append_flag(flag)}}
 
-             {:ok, {:modify, %Message{} = modified_message}, elapsed_ms} ->
+             {:ok, {:modify, %LegacyMessage{} = modified_message}, elapsed_ms} ->
                decision = build_decision(:moderation, moderator, :modify, elapsed_ms)
                emit_policy_telemetry(decision)
                merged_message = merge_modified_message(current_message, modified_message)
@@ -684,7 +685,7 @@ defmodule JidoMessaging.Ingest do
     end
   end
 
-  defp merge_modified_message(%Message{} = original, %Message{} = modified) do
+  defp merge_modified_message(%LegacyMessage{} = original, %LegacyMessage{} = modified) do
     merged_metadata =
       Map.merge(original.metadata || %{}, modified.metadata || %{})
 
@@ -814,7 +815,7 @@ defmodule JidoMessaging.Ingest do
         RoomServer.add_participant(pid, participant)
 
       {:error, reason} ->
-        Logger.warning("[JidoMessaging.Ingest] Failed to start room server: #{inspect(reason)}")
+        Logger.warning("[Jido.Messaging.Ingest] Failed to start room server: #{inspect(reason)}")
     end
   end
 end

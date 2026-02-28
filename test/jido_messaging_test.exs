@@ -1,14 +1,14 @@
-defmodule JidoMessagingTest do
+defmodule Jido.MessagingTest do
   use ExUnit.Case, async: true
 
-  alias JidoMessaging.TestMessaging
+  alias Jido.Messaging.TestMessaging
 
   setup do
     start_supervised!(TestMessaging)
     :ok
   end
 
-  describe "use JidoMessaging" do
+  describe "use Jido.Messaging" do
     test "generates child_spec/1" do
       spec = TestMessaging.child_spec([])
       assert spec.id == TestMessaging
@@ -16,9 +16,9 @@ defmodule JidoMessagingTest do
     end
 
     test "__jido_messaging__/1 returns correct names" do
-      assert TestMessaging.__jido_messaging__(:supervisor) == JidoMessaging.TestMessaging.Supervisor
-      assert TestMessaging.__jido_messaging__(:runtime) == JidoMessaging.TestMessaging.Runtime
-      assert TestMessaging.__jido_messaging__(:adapter) == JidoMessaging.Adapters.ETS
+      assert TestMessaging.__jido_messaging__(:supervisor) == Jido.Messaging.TestMessaging.Supervisor
+      assert TestMessaging.__jido_messaging__(:runtime) == Jido.Messaging.TestMessaging.Runtime
+      assert TestMessaging.__jido_messaging__(:adapter) == Jido.Messaging.Adapters.ETS
     end
   end
 
@@ -28,7 +28,8 @@ defmodule JidoMessagingTest do
 
       assert room.type == :direct
       assert room.name == "Test"
-      assert Jido.Signal.ID.valid?(room.id)
+      assert is_binary(room.id)
+      assert String.starts_with?(room.id, "jch_")
     end
 
     test "get_room/1 fetches room" do

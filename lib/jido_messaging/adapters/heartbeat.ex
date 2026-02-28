@@ -1,4 +1,4 @@
-defmodule JidoMessaging.Adapters.Heartbeat do
+defmodule Jido.Messaging.Adapters.Heartbeat do
   @moduledoc """
   Behaviour for channel-specific health checking.
 
@@ -10,10 +10,10 @@ defmodule JidoMessaging.Adapters.Heartbeat do
   Channels can implement this behaviour to provide platform-specific health checks:
 
       defmodule MyApp.Channels.Telegram do
-        @behaviour JidoMessaging.Channel
-        @behaviour JidoMessaging.Adapters.Heartbeat
+        @behaviour Jido.Messaging.Channel
+        @behaviour Jido.Messaging.Adapters.Heartbeat
 
-        @impl JidoMessaging.Adapters.Heartbeat
+        @impl Jido.Messaging.Adapters.Heartbeat
         def check_health(instance) do
           case Telegex.get_me() do
             {:ok, _bot_info} -> :ok
@@ -21,7 +21,7 @@ defmodule JidoMessaging.Adapters.Heartbeat do
           end
         end
 
-        @impl JidoMessaging.Adapters.Heartbeat
+        @impl Jido.Messaging.Adapters.Heartbeat
         def probe_interval_ms, do: :timer.seconds(30)
       end
 
@@ -44,7 +44,7 @@ defmodule JidoMessaging.Adapters.Heartbeat do
       end
   """
 
-  alias JidoMessaging.Instance
+  alias Jido.Messaging.Instance
 
   @doc """
   Performs a health check on the channel instance.

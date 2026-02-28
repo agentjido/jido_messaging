@@ -1,9 +1,9 @@
-defmodule JidoMessaging.SessionKey do
+defmodule Jido.Messaging.SessionKey do
   @moduledoc """
   Session key derivation for conversation scoping.
 
   Provides a canonical way to derive a unique session identifier from a message context.
-  This enables applications to scope conversations by channel, instance, room, and optionally thread.
+  This enables applications to scope conversations by channel, bridge, room, and optionally thread.
 
   The session key is a tuple that can be used as a process registry key, ETS key,
   or any other lookup mechanism that requires a unique conversation identifier.
@@ -23,11 +23,11 @@ defmodule JidoMessaging.SessionKey do
       #=> "telegram:bot_123:chat_456"
   """
 
-  alias JidoMessaging.MsgContext
+  alias Jido.Messaging.MsgContext
 
   @type t :: {
           channel_type :: atom(),
-          instance_id :: String.t(),
+          bridge_id :: String.t(),
           room_id :: String.t(),
           thread_id :: String.t() | nil
         }
@@ -40,18 +40,18 @@ defmodule JidoMessaging.SessionKey do
 
   ## Examples
 
-      iex> ctx = %MsgContext{channel_type: :telegram, instance_id: "bot_1", external_room_id: "123", room_id: nil, thread_root_id: nil}
+      iex> ctx = %MsgContext{channel_type: :telegram, bridge_id: "bot_1", external_room_id: "123", room_id: nil, thread_root_id: nil}
       iex> SessionKey.from_context(ctx)
       {:telegram, "bot_1", "123", nil}
 
-      iex> ctx = %MsgContext{channel_type: :discord, instance_id: "guild_1", external_room_id: "ch_1", room_id: "uuid-123", thread_root_id: "thread_456"}
+      iex> ctx = %MsgContext{channel_type: :discord, bridge_id: "guild_1", external_room_id: "ch_1", room_id: "uuid-123", thread_root_id: "thread_456"}
       iex> SessionKey.from_context(ctx)
       {:discord, "guild_1", "uuid-123", "thread_456"}
   """
   @spec from_context(MsgContext.t()) :: t()
   def from_context(%MsgContext{} = ctx) do
     room_id = ctx.room_id || ctx.external_room_id
-    {ctx.channel_type, ctx.instance_id, room_id, ctx.thread_root_id}
+    {ctx.channel_type, ctx.bridge_id, room_id, ctx.thread_root_id}
   end
 
   @doc """
@@ -69,12 +69,12 @@ defmodule JidoMessaging.SessionKey do
       "discord:guild_1:ch_1:thread_456"
   """
   @spec to_string(t()) :: String.t()
-  def to_string({channel_type, instance_id, room_id, nil}) do
-    "#{channel_type}:#{instance_id}:#{room_id}"
+  def to_string({channel_type, bridge_id, room_id, nil}) do
+    "#{channel_type}:#{bridge_id}:#{room_id}"
   end
 
-  def to_string({channel_type, instance_id, room_id, thread_id}) do
-    "#{channel_type}:#{instance_id}:#{room_id}:#{thread_id}"
+  def to_string({channel_type, bridge_id, room_id, thread_id}) do
+    "#{channel_type}:#{bridge_id}:#{room_id}:#{thread_id}"
   end
 
   @doc """
@@ -96,11 +96,11 @@ defmodule JidoMessaging.SessionKey do
   @spec parse(String.t()) :: {:ok, t()} | {:error, :invalid_format}
   def parse(str) when is_binary(str) do
     case String.split(str, ":") do
-      [channel_type, instance_id, room_id] ->
-        {:ok, {String.to_existing_atom(channel_type), instance_id, room_id, nil}}
+      [channel_type, bridge_id, room_id] ->
+        {:ok, {String.to_existing_atom(channel_type), bridge_id, room_id, nil}}
 
-      [channel_type, instance_id, room_id, thread_id] ->
-        {:ok, {String.to_existing_atom(channel_type), instance_id, room_id, thread_id}}
+      [channel_type, bridge_id, room_id, thread_id] ->
+        {:ok, {String.to_existing_atom(channel_type), bridge_id, room_id, thread_id}}
 
       _ ->
         {:error, :invalid_format}
@@ -112,7 +112,7 @@ defmodule JidoMessaging.SessionKey do
   @doc """
   Checks if two session keys belong to the same conversation scope.
 
-  Two keys match if channel_type, instance_id, and room_id are equal.
+  Two keys match if channel_type, bridge_id, and room_id are equal.
   Thread IDs are not compared (both threaded and non-threaded messages in the same room match).
 
   ## Examples
@@ -129,9 +129,9 @@ defmodule JidoMessaging.SessionKey do
   """
   @spec same_room?(t(), t()) :: boolean()
   def same_room?(
-        {channel1, instance1, room1, _thread1},
-        {channel2, instance2, room2, _thread2}
+        {channel1, bridge1, room1, _thread1},
+        {channel2, bridge2, room2, _thread2}
       ) do
-    channel1 == channel2 and instance1 == instance2 and room1 == room2
+    channel1 == channel2 and bridge1 == bridge2 and room1 == room2
   end
 end

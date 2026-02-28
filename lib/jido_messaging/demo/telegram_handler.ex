@@ -1,52 +1,24 @@
-defmodule JidoMessaging.Demo.TelegramHandler do
+defmodule Jido.Messaging.Demo.TelegramHandler do
   @moduledoc """
-  Demo Telegram handler.
+  Demo process placeholder for Telegram ingress wiring.
 
-  Bridge forwarding is now handled via Signal Bus subscription in the Bridge module.
-  This handler just logs incoming messages and returns :noreply.
+  Phase 3 removed in-package platform handler stacks from `jido_messaging`.
+  Live Telegram ingress should be wired through `jido_chat_telegram`.
   """
-  use JidoMessaging.Channels.Telegram.Handler,
-    messaging: JidoMessaging.Demo.Messaging,
-    on_message: &JidoMessaging.Demo.TelegramHandler.handle_message/2
 
+  use GenServer
   require Logger
 
-  @doc """
-  Handle incoming Telegram messages.
-
-  The message has already been ingested (persisted, added to RoomServer) by the
-  channel handler infrastructure. RoomServer emits a signal which the Bridge
-  receives and forwards to Discord.
-  """
-  def handle_message(message, context) do
-    text = extract_text(message)
-    username = get_username_from_context(context)
-    chat_id = context[:external_room_id]
-
-    Logger.info("[Demo.Telegram] Chat ID: #{chat_id}, User: #{username}")
-    Logger.info("[Demo.Telegram] Received: #{inspect(text)}")
-
-    # Bridge forwarding removed - handled by Signal Bus subscriber
-    :noreply
+  def start_link(opts \\ []) do
+    GenServer.start_link(__MODULE__, opts, name: __MODULE__)
   end
 
-  defp extract_text(%{content: [%{text: text} | _]}) when is_binary(text), do: text
-  defp extract_text(%{content: [%{"text" => text} | _]}) when is_binary(text), do: text
-
-  defp extract_text(%{content: content}) when is_list(content) do
-    Enum.find_value(content, fn
-      %{type: :text, text: text} -> text
-      %{"type" => "text", "text" => text} -> text
-      %JidoMessaging.Content.Text{text: text} -> text
-      _ -> nil
-    end)
+  @impl true
+  def init(state) do
+    Logger.info("[Demo.TelegramHandler] Started placeholder process")
+    {:ok, state}
   end
 
-  defp extract_text(_), do: nil
-
-  defp get_username_from_context(%{participant: %{identity: identity}}) do
-    identity[:username] || identity[:display_name] || "unknown"
-  end
-
-  defp get_username_from_context(_), do: "unknown"
+  @doc false
+  def handle_message(_message, _context), do: :noreply
 end

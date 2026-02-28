@@ -1,8 +1,8 @@
-defmodule JidoMessaging.RuntimeTest do
+defmodule Jido.Messaging.RuntimeTest do
   use ExUnit.Case, async: true
 
-  alias JidoMessaging.Runtime
-  alias JidoMessaging.Adapters.ETS
+  alias Jido.Messaging.Runtime
+  alias Jido.Messaging.Adapters.ETS
 
   describe "Runtime" do
     test "get_state/1 returns full runtime state" do

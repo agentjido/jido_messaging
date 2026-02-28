@@ -1,8 +1,8 @@
-defmodule JidoMessaging.Adapters.ETSTest do
+defmodule Jido.Messaging.Adapters.ETSTest do
   use ExUnit.Case, async: true
 
-  alias JidoMessaging.Adapters.ETS
-  alias JidoMessaging.{Room, Participant, Message}
+  alias Jido.Messaging.Adapters.ETS
+  alias Jido.Chat.{LegacyMessage, Participant, Room}
 
   setup do
     {:ok, state} = ETS.init([])
@@ -97,7 +97,7 @@ defmodule JidoMessaging.Adapters.ETSTest do
       {:ok, _} = ETS.save_room(state, room)
 
       message =
-        Message.new(%{
+        LegacyMessage.new(%{
           room_id: room.id,
           sender_id: "user_1",
           role: :user,
@@ -113,8 +113,8 @@ defmodule JidoMessaging.Adapters.ETSTest do
       room = Room.new(%{type: :direct})
       {:ok, _} = ETS.save_room(state, room)
 
-      msg1 = Message.new(%{room_id: room.id, sender_id: "u1", role: :user, content: []})
-      msg2 = Message.new(%{room_id: room.id, sender_id: "u2", role: :user, content: []})
+      msg1 = LegacyMessage.new(%{room_id: room.id, sender_id: "u1", role: :user, content: []})
+      msg2 = LegacyMessage.new(%{room_id: room.id, sender_id: "u2", role: :user, content: []})
 
       {:ok, _} = ETS.save_message(state, msg1)
       {:ok, _} = ETS.save_message(state, msg2)
@@ -128,7 +128,7 @@ defmodule JidoMessaging.Adapters.ETSTest do
       {:ok, _} = ETS.save_room(state, room)
 
       for i <- 1..10 do
-        msg = Message.new(%{room_id: room.id, sender_id: "u#{i}", role: :user, content: []})
+        msg = LegacyMessage.new(%{room_id: room.id, sender_id: "u#{i}", role: :user, content: []})
         ETS.save_message(state, msg)
       end
 
@@ -140,7 +140,7 @@ defmodule JidoMessaging.Adapters.ETSTest do
       room = Room.new(%{type: :direct})
       {:ok, _} = ETS.save_room(state, room)
 
-      message = Message.new(%{room_id: room.id, sender_id: "u1", role: :user, content: []})
+      message = LegacyMessage.new(%{room_id: room.id, sender_id: "u1", role: :user, content: []})
       {:ok, _} = ETS.save_message(state, message)
 
       assert :ok = ETS.delete_message(state, message.id)
@@ -365,10 +365,27 @@ defmodule JidoMessaging.Adapters.ETSTest do
 
       assert binding.room_id == room.id
       assert binding.channel == :discord
-      assert binding.instance_id == "guild_1"
+      assert binding.bridge_id == "guild_1"
       assert binding.external_room_id == "channel_456"
       assert binding.direction == :both
       assert String.starts_with?(binding.id, "bind_")
+    end
+
+    test "create_room_binding/6 uses canonical bridge_id from function arguments", %{state: state} do
+      room = Room.new(%{type: :group})
+      {:ok, _} = ETS.save_room(state, room)
+
+      {:ok, binding} =
+        ETS.create_room_binding(state, room.id, :telegram, "legacy_inst", "chat_999", %{
+          bridge_id: "bridge_telegram_primary"
+        })
+
+      assert binding.bridge_id == "legacy_inst"
+
+      assert {:ok, by_bridge_room} =
+               ETS.get_room_by_external_binding(state, :telegram, "legacy_inst", "chat_999")
+
+      assert by_bridge_room.id == room.id
     end
 
     test "list_room_bindings/2 returns all bindings for a room", %{state: state} do
@@ -481,7 +498,7 @@ defmodule JidoMessaging.Adapters.ETSTest do
                ETS.directory_search(
                  state,
                  :room,
-                 %{channel: :discord, instance_id: "guild_1", external_id: "chan_22"},
+                 %{channel: :discord, bridge_id: "guild_1", external_id: "chan_22"},
                  []
                )
 

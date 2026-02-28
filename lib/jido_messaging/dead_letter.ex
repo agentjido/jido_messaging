@@ -1,15 +1,15 @@
-defmodule JidoMessaging.DeadLetter do
+defmodule Jido.Messaging.DeadLetter do
   @moduledoc """
   Dead-letter storage and replay control plane for terminal outbound failures.
 
   Dead-letter records are written when outbound gateway work reaches terminal
   failure paths (including explicit load shedding). Replay execution is
-  partitioned by dead-letter id via `JidoMessaging.DeadLetter.ReplayWorker`.
+  partitioned by dead-letter id via `Jido.Messaging.DeadLetter.ReplayWorker`.
   """
   use GenServer
 
-  alias JidoMessaging.OutboundGateway
-  alias JidoMessaging.DeadLetter.ReplayWorker
+  alias Jido.Messaging.OutboundGateway
+  alias Jido.Messaging.DeadLetter.ReplayWorker
 
   @default_max_records 5_000
   @default_replay_partitions max(2, System.schedulers_online())

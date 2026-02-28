@@ -1,4 +1,4 @@
-defmodule JidoMessaging.Signal do
+defmodule Jido.Messaging.Signal do
   @moduledoc """
   Signal emission for messaging events using dual-emission pattern.
 
@@ -46,12 +46,12 @@ defmodule JidoMessaging.Signal do
 
   require Logger
 
-  alias JidoMessaging.Supervisor, as: MessagingSupervisor
+  alias Jido.Messaging.Supervisor, as: MessagingSupervisor
 
   @metadata_keys [
     :instance_module,
     :room_id,
-    :instance_id,
+    :bridge_id,
     :timestamp,
     :correlation_id
   ]
@@ -66,16 +66,16 @@ defmodule JidoMessaging.Signal do
   Emits a `:received` signal when a message has been ingested.
 
   ## Metadata
-  - `:message` - the ingested `JidoMessaging.Message` struct
+  - `:message` - the ingested `Jido.Chat.LegacyMessage` struct
   - `:room_id` - the room ID where the message was received
   - `:participant_id` - the sender's participant ID
   - `:channel` - the channel module that received the message
-  - `:instance_id` - the instance ID of the channel
+  - `:bridge_id` - the bridge ID of the channel
   - `:instance_module` - the messaging module
   - `:timestamp` - when the event occurred
   - `:correlation_id` - message ID or generated ID for tracing
   """
-  @spec emit_received(JidoMessaging.Message.t(), map()) :: :ok
+  @spec emit_received(Jido.Chat.LegacyMessage.t(), map()) :: :ok
   def emit_received(message, context) do
     timestamp = DateTime.utc_now()
     correlation_id = message.id || generate_correlation_id()
@@ -85,7 +85,7 @@ defmodule JidoMessaging.Signal do
       room_id: message.room_id,
       participant_id: message.sender_id,
       channel: context[:channel],
-      instance_id: context[:instance_id],
+      bridge_id: context[:bridge_id],
       instance_module: context[:instance_module],
       timestamp: timestamp,
       correlation_id: correlation_id
@@ -106,16 +106,16 @@ defmodule JidoMessaging.Signal do
   Emits a `:sent` signal when a message has been delivered successfully.
 
   ## Metadata
-  - `:message` - the sent `JidoMessaging.Message` struct
+  - `:message` - the sent `Jido.Chat.LegacyMessage` struct
   - `:room_id` - the room ID where the message was sent
   - `:channel` - the channel module used for delivery
   - `:external_room_id` - the external room identifier
   - `:instance_module` - the messaging module
-  - `:instance_id` - the instance ID
+  - `:bridge_id` - the bridge ID
   - `:timestamp` - when the event occurred
   - `:correlation_id` - message ID or generated ID for tracing
   """
-  @spec emit_sent(JidoMessaging.Message.t(), map()) :: :ok
+  @spec emit_sent(Jido.Chat.LegacyMessage.t(), map()) :: :ok
   def emit_sent(message, context) do
     timestamp = DateTime.utc_now()
     correlation_id = message.id || generate_correlation_id()
@@ -125,7 +125,7 @@ defmodule JidoMessaging.Signal do
       room_id: message.room_id,
       channel: context[:channel],
       external_room_id: context[:external_room_id],
-      instance_id: context[:instance_id],
+      bridge_id: context[:bridge_id],
       instance_module: context[:instance_module],
       timestamp: timestamp,
       correlation_id: correlation_id
@@ -151,7 +151,7 @@ defmodule JidoMessaging.Signal do
   - `:channel` - the channel module used for delivery attempt
   - `:external_room_id` - the external room identifier
   - `:instance_module` - the messaging module
-  - `:instance_id` - the instance ID
+  - `:bridge_id` - the bridge ID
   - `:timestamp` - when the event occurred
   - `:correlation_id` - message ID or generated ID for tracing
   """
@@ -165,7 +165,7 @@ defmodule JidoMessaging.Signal do
       reason: reason,
       channel: context[:channel],
       external_room_id: context[:external_room_id],
-      instance_id: context[:instance_id],
+      bridge_id: context[:bridge_id],
       instance_module: context[:instance_module],
       timestamp: timestamp,
       correlation_id: correlation_id
@@ -180,7 +180,7 @@ defmodule JidoMessaging.Signal do
         reason: inspect(reason),
         channel: channel_name(context[:channel]),
         external_room_id: context[:external_room_id],
-        instance_id: context[:instance_id]
+        bridge_id: context[:bridge_id]
       },
       context[:instance_module],
       room_id,
@@ -340,7 +340,7 @@ defmodule JidoMessaging.Signal do
 
     # Note: Signal Bus doesn't register with Process.whereis - just try to publish
     if instance_module do
-      source = build_source(instance_module, opts[:instance_id])
+      source = build_source(instance_module, opts[:bridge_id] || opts[:instance_id])
 
       signal_opts =
         %{
@@ -361,11 +361,11 @@ defmodule JidoMessaging.Signal do
               :ok
 
             {:error, reason} ->
-              Logger.debug("[JidoMessaging.Signal] Failed to publish signal #{type}: #{inspect(reason)}")
+              Logger.debug("[Jido.Messaging.Signal] Failed to publish signal #{type}: #{inspect(reason)}")
           end
 
         {:error, reason} ->
-          Logger.warning("[JidoMessaging.Signal] Failed to create signal #{type}: #{inspect(reason)}")
+          Logger.warning("[Jido.Messaging.Signal] Failed to create signal #{type}: #{inspect(reason)}")
       end
     end
 
@@ -394,7 +394,7 @@ defmodule JidoMessaging.Signal do
       role: message.role,
       status: message.status,
       channel: channel_name(metadata[:channel]),
-      instance_id: metadata[:instance_id],
+      bridge_id: metadata[:bridge_id],
       external_room_id: metadata[:external_room_id]
     }
   end

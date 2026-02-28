@@ -1,9 +1,9 @@
-defmodule JidoMessaging.DirectoryTest do
+defmodule Jido.Messaging.DirectoryTest do
   use ExUnit.Case, async: true
 
   defmodule TestMessaging do
-    use JidoMessaging,
-      adapter: JidoMessaging.Adapters.ETS
+    use Jido.Messaging,
+      adapter: Jido.Messaging.Adapters.ETS
   end
 
   setup do
@@ -50,7 +50,24 @@ defmodule JidoMessaging.DirectoryTest do
       assert {:ok, resolved_room} =
                TestMessaging.directory_lookup(
                  :room,
-                 %{channel: :telegram, instance_id: "bot_1", external_id: "room_9"}
+                 %{channel: :telegram, bridge_id: "bot_1", external_id: "room_9"}
+               )
+
+      assert resolved_room.id == room.id
+    end
+
+    test "room lookup resolves by canonical bridge_id key" do
+      {:ok, room} = TestMessaging.create_room(%{type: :group, name: "Bridge Ops"})
+
+      {:ok, _binding} =
+        TestMessaging.create_room_binding(room.id, :telegram, "tg_primary", "room_bridge_1", %{
+          direction: :both
+        })
+
+      assert {:ok, resolved_room} =
+               TestMessaging.directory_lookup(
+                 :room,
+                 %{channel: :telegram, bridge_id: "tg_primary", external_id: "room_bridge_1"}
                )
 
       assert resolved_room.id == room.id

@@ -1,13 +1,13 @@
-defmodule JidoMessaging.SenderIdempotencyTest do
+defmodule Jido.Messaging.SenderIdempotencyTest do
   use ExUnit.Case, async: true
 
-  import JidoMessaging.TestHelpers
+  import Jido.Messaging.TestHelpers
 
-  alias JidoMessaging.Sender
+  alias Jido.Messaging.Sender
 
   defmodule TestMessaging do
-    use JidoMessaging,
-      adapter: JidoMessaging.Adapters.ETS
+    use Jido.Messaging,
+      adapter: Jido.Messaging.Adapters.ETS
   end
 
   defmodule TrackingChannel do

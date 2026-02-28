@@ -1,4 +1,4 @@
-defmodule JidoMessaging.Specs.Story00RuntimeTopologyAndSLOsTest do
+defmodule Jido.Messaging.Specs.Story00RuntimeTopologyAndSLOsTest do
   use ExUnit.Case, async: true
 
   @story_file "specs/stories/00-runtime-topology-and-slos.md"

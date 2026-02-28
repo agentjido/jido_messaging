@@ -27,8 +27,8 @@ end
 
 ```elixir
 defmodule MyApp.Messaging do
-  use JidoMessaging,
-    adapter: JidoMessaging.Adapters.ETS
+  use Jido.Messaging,
+    adapter: Jido.Messaging.Adapters.ETS
 end
 ```
 
@@ -56,60 +56,55 @@ end
   room_id: room.id,
   sender_id: "user_123",
   role: :user,
-  content: [%JidoMessaging.Content.Text{text: "Hello!"}]
+  content: [%Jido.Messaging.Content.Text{text: "Hello!"}]
 })
 
 # List messages
 {:ok, messages} = MyApp.Messaging.list_messages(room.id)
 ```
 
-## Telegram Integration
+## Adapter Integration (Telegram + Discord)
 
-### Configuration
+`jido_messaging` no longer ships in-package Telegram/Discord handlers.  
+Use adapter packages directly:
 
-Configure Telegex in your config:
+- `jido_chat_telegram` (`Jido.Chat.Telegram.Adapter`)
+- `jido_chat_discord` (`Jido.Chat.Discord.Adapter`)
 
-```elixir
-# config/config.exs
-config :telegex, caller_adapter: Telegex.Caller.Adapter.Finch
-
-# config/runtime.exs
-config :telegex, token: System.get_env("TELEGRAM_BOT_TOKEN")
-```
-
-### Create a Telegram Handler
+### Dependencies
 
 ```elixir
-defmodule MyApp.TelegramBot do
-  use JidoMessaging.Channels.Telegram.Handler,
-    messaging: MyApp.Messaging,
-    on_message: &MyApp.TelegramBot.handle_message/2
-
-  def handle_message(message, _context) do
-    # Echo bot example
-    text = hd(message.content).text
-    {:reply, "You said: #{text}"}
-  end
+def deps do
+  [
+    {:jido_messaging, "~> 0.1.0"},
+    {:jido_chat_telegram, "~> 0.1.0"},
+    {:jido_chat_discord, "~> 0.1.0"}
+  ]
 end
 ```
 
-### Add to Supervision Tree
+### Runtime Configuration
 
 ```elixir
-children = [
-  MyApp.Messaging,
-  MyApp.TelegramBot
-]
+# Telegram
+config :jido_chat_telegram,
+  telegram_bot_token: System.get_env("TELEGRAM_BOT_TOKEN")
+
+# Discord (Nostrum transport)
+config :nostrum,
+  token: System.get_env("DISCORD_BOT_TOKEN")
+
+# Discord webhook verification (optional, recommended)
+config :jido_chat_discord,
+  discord_public_key: System.get_env("DISCORD_PUBLIC_KEY")
 ```
 
-### Handler Callback Options
+### Ingest Wiring Pattern
 
-The `on_message` callback can return:
-
-- `{:reply, text}` - Send a reply message
-- `{:reply, text, opts}` - Send a reply with options (parse_mode, etc.)
-- `:noreply` - Don't send a reply
-- `{:error, reason}` - Log an error
+1. Receive platform payload in your webhook/gateway boundary.
+2. Normalize through the adapter package (`Jido.Chat.Telegram.Adapter` or `Jido.Chat.Discord.Adapter`).
+3. Pass normalized incoming data into `Jido.Messaging.Ingest.ingest_incoming/4`.
+4. Use `Jido.Messaging.AdapterBridge.send_message/4` for outbound delivery.
 
 ## Architecture
 
@@ -119,11 +114,11 @@ MyApp.Messaging (Supervisor)
 └── (Future) RoomSupervisor, InstanceSupervisor
 
 Message Flow:
-1. Channel receives update (Telegram getUpdates)
+1. Adapter package receives platform update/webhook/gateway event
 2. Transform to normalized incoming struct
 3. Ingest: resolve room/participant, persist message
-4. Handler callback processes message
-5. Deliver: send reply via channel
+4. Runtime/agent logic processes message
+5. Deliver: send reply via adapter bridge
 ```
 
 ## Domain Model
@@ -131,7 +126,7 @@ Message Flow:
 ### Message
 
 ```elixir
-%JidoMessaging.Message{
+%Jido.Messaging.Message{
   id: "msg_abc123",
   room_id: "room_xyz",
   sender_id: "user_123",
@@ -145,7 +140,7 @@ Message Flow:
 ### Room
 
 ```elixir
-%JidoMessaging.Room{
+%Jido.Messaging.Room{
   id: "room_xyz",
   type: :direct | :group | :channel | :thread,
   name: "Support Chat",
@@ -156,7 +151,7 @@ Message Flow:
 ### Participant
 
 ```elixir
-%JidoMessaging.Participant{
+%Jido.Messaging.Participant{
   id: "part_abc",
   type: :human | :agent | :system,
   identity: %{username: "john", display_name: "John"},

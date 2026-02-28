@@ -1,17 +1,17 @@
-defmodule JidoMessaging.OutboundGateway do
+defmodule Jido.Messaging.OutboundGateway do
   @moduledoc """
   Partitioned outbound gateway for send/edit delivery operations.
 
   The gateway enforces:
 
-  - Stable partition routing by `instance_id:external_room_id`
+  - Stable partition routing by `bridge_id:external_room_id`
   - Bounded per-partition queues with pressure transition signals
   - Normalized outbound error categories for retry and terminal handling
   """
 
-  alias JidoMessaging.Channel
-  alias JidoMessaging.OutboundGateway.Partition
-  alias JidoMessaging.SessionManager
+  alias Jido.Messaging.AdapterBridge
+  alias Jido.Messaging.OutboundGateway.Partition
+  alias Jido.Messaging.SessionManager
 
   @default_partition_count max(2, System.schedulers_online() * 2)
   @default_queue_capacity 128
@@ -36,7 +36,7 @@ defmodule JidoMessaging.OutboundGateway do
   @type request :: %{
           required(:operation) => operation(),
           required(:channel) => module(),
-          required(:instance_id) => String.t(),
+          required(:bridge_id) => String.t(),
           required(:external_room_id) => term(),
           required(:payload) => String.t() | map(),
           required(:opts) => keyword(),
@@ -135,9 +135,9 @@ defmodule JidoMessaging.OutboundGateway do
   Resolve a stable partition for a routing key tuple.
   """
   @spec route_partition(module(), String.t(), term()) :: non_neg_integer()
-  def route_partition(instance_module, instance_id, external_room_id) when is_atom(instance_module) do
+  def route_partition(instance_module, bridge_id, external_room_id) when is_atom(instance_module) do
     count = partition_count(instance_module)
-    :erlang.phash2(routing_key(instance_id, external_room_id), count)
+    :erlang.phash2(routing_key(bridge_id, external_room_id), count)
   end
 
   @doc """
@@ -198,7 +198,7 @@ defmodule JidoMessaging.OutboundGateway do
   def classify_error({:media_policy_denied, _reason}), do: :terminal
 
   def classify_error(reason) do
-    case Channel.classify_failure(reason) do
+    case AdapterBridge.classify_failure(reason) do
       :recoverable -> :retryable
       :degraded -> :terminal
       :fatal -> :fatal
@@ -209,12 +209,12 @@ defmodule JidoMessaging.OutboundGateway do
   Returns a stable routing key used by partition hashing.
   """
   @spec routing_key(String.t(), term()) :: String.t()
-  def routing_key(instance_id, external_room_id) do
-    "#{instance_id}:#{external_room_id}"
+  def routing_key(bridge_id, external_room_id) do
+    "#{bridge_id}:#{external_room_id}"
   end
 
   defp dispatch(instance_module, request) do
-    partition = route_partition(instance_module, request.instance_id, request.external_room_id)
+    partition = route_partition(instance_module, request.bridge_id, request.external_room_id)
 
     case Partition.dispatch(instance_module, partition, request) do
       {:error, :partition_unavailable} ->
@@ -238,28 +238,28 @@ defmodule JidoMessaging.OutboundGateway do
   end
 
   defp build_request(instance_module, operation, context, payload, external_message_id, opts) do
-    instance_id = context_instance_id(context)
+    bridge_id = context_bridge_id(context)
     context_external_room_id = Map.get(context, :external_room_id)
-    session_key = context_session_key(context, instance_id, context_external_room_id)
+    session_key = context_session_key(context, bridge_id, context_external_room_id)
 
     {external_room_id, route_resolution} =
       resolve_route_context(
         instance_module,
         session_key,
         context,
-        instance_id,
+        bridge_id,
         context_external_room_id
       )
 
     %{
       operation: operation,
       channel: Map.get(context, :channel),
-      instance_id: instance_id,
+      bridge_id: bridge_id,
       external_room_id: external_room_id,
       payload: payload,
       opts: opts,
       external_message_id: external_message_id,
-      routing_key: routing_key(instance_id, external_room_id),
+      routing_key: routing_key(bridge_id, external_room_id),
       session_key: session_key,
       route_resolution: route_resolution,
       idempotency_key: keyword_or_map_get(opts, :idempotency_key),
@@ -293,19 +293,19 @@ defmodule JidoMessaging.OutboundGateway do
     |> Keyword.update(:pressure_policy, @default_pressure_policy, &sanitize_pressure_policy/1)
   end
 
-  defp context_instance_id(context) do
+  defp context_bridge_id(context) do
     context
-    |> Map.get(:instance_id, "unknown")
+    |> Map.get(:bridge_id, "unknown")
     |> to_string()
   end
 
-  defp resolve_route_context(instance_module, session_key, context, instance_id, nil) do
-    fallback_route = fallback_route(context, instance_id, nil)
+  defp resolve_route_context(instance_module, session_key, context, bridge_id, nil) do
+    fallback_route = fallback_route(context, bridge_id, nil)
     {nil, fallback_resolution(instance_module, session_key, fallback_route, :miss, nil)}
   end
 
-  defp resolve_route_context(instance_module, session_key, context, instance_id, context_external_room_id) do
-    fallback_route = fallback_route(context, instance_id, context_external_room_id)
+  defp resolve_route_context(instance_module, session_key, context, bridge_id, context_external_room_id) do
+    fallback_route = fallback_route(context, bridge_id, context_external_room_id)
 
     case SessionManager.resolve(instance_module, session_key, [fallback_route]) do
       {:ok, resolution} ->
@@ -336,21 +336,21 @@ defmodule JidoMessaging.OutboundGateway do
     }
   end
 
-  defp fallback_route(context, instance_id, external_room_id) do
+  defp fallback_route(context, bridge_id, external_room_id) do
     %{
       channel_type: context_channel_type(context),
-      instance_id: instance_id,
+      bridge_id: bridge_id,
       room_id: context_room_id(context),
       thread_id: context_thread_id(context),
       external_room_id: external_room_id
     }
   end
 
-  defp context_session_key(context, instance_id, external_room_id) do
+  defp context_session_key(context, bridge_id, external_room_id) do
     channel_type = context_channel_type(context)
     room_scope = context_room_id(context) || to_string(external_room_id || "unknown_room")
 
-    {channel_type, instance_id, room_scope, context_thread_id(context)}
+    {channel_type, bridge_id, room_scope, context_thread_id(context)}
   end
 
   defp context_channel_type(context) do

@@ -1,4 +1,4 @@
-defmodule JidoMessaging.Demo.BridgeTest do
+defmodule Jido.Messaging.Demo.BridgeTest do
   @moduledoc """
   Tests for the signal-driven Bridge (Phase 3 of Bridge Refactor).
 
@@ -10,11 +10,49 @@ defmodule JidoMessaging.Demo.BridgeTest do
   """
   use ExUnit.Case, async: false
 
-  alias JidoMessaging.{Room, Message, RoomServer, RoomSupervisor}
-  alias JidoMessaging.Demo.Bridge
+  alias Jido.Chat.{LegacyMessage, Room}
+  alias Jido.Messaging.{RoomServer, RoomSupervisor}
+  alias Jido.Messaging.Demo.Bridge
 
   defmodule TestMessaging do
-    use JidoMessaging, adapter: JidoMessaging.Adapters.ETS
+    use Jido.Messaging, adapter: Jido.Messaging.Adapters.ETS
+  end
+
+  defmodule TelegramAdapterStub do
+    @behaviour Jido.Chat.Adapter
+
+    @impl true
+    def channel_type, do: :telegram
+
+    @impl true
+    def transform_incoming(_raw), do: {:error, :not_implemented}
+
+    @impl true
+    def send_message(_room_id, _text, _opts), do: {:ok, %{message_id: "tg_stub"}}
+  end
+
+  defmodule DiscordAdapterStub do
+    @behaviour Jido.Chat.Adapter
+
+    @impl true
+    def channel_type, do: :discord
+
+    @impl true
+    def transform_incoming(_raw), do: {:error, :not_implemented}
+
+    @impl true
+    def send_message(_room_id, _text, _opts), do: {:ok, %{message_id: "dc_stub"}}
+  end
+
+  defp bridge_opts(overrides) do
+    Keyword.merge(
+      [
+        instance_module: TestMessaging,
+        telegram_adapter: TelegramAdapterStub,
+        discord_adapter: DiscordAdapterStub
+      ],
+      overrides
+    )
   end
 
   setup do
@@ -25,7 +63,7 @@ defmodule JidoMessaging.Demo.BridgeTest do
   describe "Bridge initialization" do
     test "starts and subscribes to Signal Bus" do
       {:ok, pid} =
-        start_supervised({Bridge, instance_module: TestMessaging, telegram_chat_id: "123", discord_channel_id: "456"})
+        start_supervised({Bridge, bridge_opts(telegram_chat_id: "123", discord_channel_id: "456")})
 
       assert Process.alive?(pid)
 
@@ -40,22 +78,17 @@ defmodule JidoMessaging.Demo.BridgeTest do
 
     test "stores bindings correctly" do
       {:ok, pid} =
-        start_supervised(
-          {Bridge, instance_module: TestMessaging, telegram_chat_id: "tg_chat_789", discord_channel_id: "dc_chan_012"}
-        )
+        start_supervised({Bridge, bridge_opts(telegram_chat_id: "tg_chat_789", discord_channel_id: "dc_chan_012")})
 
       state = :sys.get_state(pid)
 
-      # Bindings use full module name as instance_id
-      assert {:telegram, "Elixir.JidoMessaging.Demo.TelegramHandler", "tg_chat_789"} in state.bindings
-      assert {:discord, "Elixir.JidoMessaging.Demo.DiscordHandler", "dc_chan_012"} in state.bindings
+      assert {:telegram, TelegramAdapterStub, to_string(TelegramAdapterStub), "tg_chat_789"} in state.bindings
+      assert {:discord, DiscordAdapterStub, to_string(DiscordAdapterStub), "dc_chan_012"} in state.bindings
     end
 
     test "creates shared room with fixed ID on startup" do
       {:ok, _pid} =
-        start_supervised(
-          {Bridge, instance_module: TestMessaging, telegram_chat_id: "shared_tg", discord_channel_id: "shared_dc"}
-        )
+        start_supervised({Bridge, bridge_opts(telegram_chat_id: "shared_tg", discord_channel_id: "shared_dc")})
 
       # Wait for setup
       Process.sleep(200)
@@ -63,22 +96,20 @@ defmodule JidoMessaging.Demo.BridgeTest do
       # Verify shared room exists with our fixed ID
       {:ok, room} = TestMessaging.get_room("demo:lobby")
       assert room.id == "demo:lobby"
-      assert room.name == "JidoMessaging Bridge Room"
+      assert room.name == "Jido.Messaging Bridge Room"
       assert room.type == :group
     end
 
     test "creates room bindings for both platforms" do
       {:ok, _pid} =
-        start_supervised(
-          {Bridge, instance_module: TestMessaging, telegram_chat_id: "bind_tg_123", discord_channel_id: "bind_dc_456"}
-        )
+        start_supervised({Bridge, bridge_opts(telegram_chat_id: "bind_tg_123", discord_channel_id: "bind_dc_456")})
 
       # Wait for setup
       Process.sleep(200)
 
       # Verify bindings exist - these should resolve to the shared room
-      tg_instance = to_string(JidoMessaging.Demo.TelegramHandler)
-      dc_instance = to_string(JidoMessaging.Demo.DiscordHandler)
+      tg_instance = to_string(TelegramAdapterStub)
+      dc_instance = to_string(DiscordAdapterStub)
       {:ok, tg_room} = TestMessaging.get_room_by_external_binding(:telegram, tg_instance, "bind_tg_123")
       {:ok, dc_room} = TestMessaging.get_room_by_external_binding(:discord, dc_instance, "bind_dc_456")
 
@@ -89,9 +120,7 @@ defmodule JidoMessaging.Demo.BridgeTest do
 
     test "sets room_id filter to shared room ID" do
       {:ok, pid} =
-        start_supervised(
-          {Bridge, instance_module: TestMessaging, telegram_chat_id: "filter_tg", discord_channel_id: "filter_dc"}
-        )
+        start_supervised({Bridge, bridge_opts(telegram_chat_id: "filter_tg", discord_channel_id: "filter_dc")})
 
       state = :sys.get_state(pid)
       assert state.room_id == "demo:lobby"
@@ -101,16 +130,14 @@ defmodule JidoMessaging.Demo.BridgeTest do
   describe "Ingest integration with shared room" do
     test "get_or_create_room_by_external_binding resolves to shared room after Bridge setup" do
       {:ok, _pid} =
-        start_supervised(
-          {Bridge, instance_module: TestMessaging, telegram_chat_id: "ingest_tg", discord_channel_id: "ingest_dc"}
-        )
+        start_supervised({Bridge, bridge_opts(telegram_chat_id: "ingest_tg", discord_channel_id: "ingest_dc")})
 
       # Wait for Bridge to create room and bindings
       Process.sleep(200)
 
       # Simulate what Ingest.resolve_room does (using actual instance_ids)
-      tg_instance = to_string(JidoMessaging.Demo.TelegramHandler)
-      dc_instance = to_string(JidoMessaging.Demo.DiscordHandler)
+      tg_instance = to_string(TelegramAdapterStub)
+      dc_instance = to_string(DiscordAdapterStub)
 
       {:ok, room_from_tg} =
         TestMessaging.get_or_create_room_by_external_binding(
@@ -139,7 +166,7 @@ defmodule JidoMessaging.Demo.BridgeTest do
     test "receives message_added signals from RoomServer" do
       # Start bridge
       {:ok, bridge_pid} =
-        start_supervised({Bridge, instance_module: TestMessaging, telegram_chat_id: "111", discord_channel_id: "222"})
+        start_supervised({Bridge, bridge_opts(telegram_chat_id: "111", discord_channel_id: "222")})
 
       # Wait for subscription
       Process.sleep(100)
@@ -149,11 +176,11 @@ defmodule JidoMessaging.Demo.BridgeTest do
       {:ok, room_pid} = RoomSupervisor.start_room(TestMessaging, room)
 
       message =
-        Message.new(%{
+        LegacyMessage.new(%{
           room_id: room.id,
           sender_id: "user_abc",
           role: :user,
-          content: [%JidoMessaging.Content.Text{text: "Hello from test"}],
+          content: [%Jido.Chat.Content.Text{text: "Hello from test"}],
           metadata: %{channel: :telegram, username: "testuser"}
         })
 
@@ -174,22 +201,20 @@ defmodule JidoMessaging.Demo.BridgeTest do
       # The bridge should not forward back to the origin platform
 
       {:ok, _bridge_pid} =
-        start_supervised(
-          {Bridge, instance_module: TestMessaging, telegram_chat_id: "loop_test_tg", discord_channel_id: "loop_test_dc"}
-        )
+        start_supervised({Bridge, bridge_opts(telegram_chat_id: "loop_test_tg", discord_channel_id: "loop_test_dc")})
 
       Process.sleep(100)
 
       room = Room.new(%{type: :group, name: "Loop Test Room"})
       {:ok, room_pid} = RoomSupervisor.start_room(TestMessaging, room)
 
-      # Message from Telegram - should NOT forward back to Telegram
+      # LegacyMessage from Telegram - should NOT forward back to Telegram
       tg_message =
-        Message.new(%{
+        LegacyMessage.new(%{
           room_id: room.id,
           sender_id: "tg_user",
           role: :user,
-          content: [%JidoMessaging.Content.Text{text: "From TG"}],
+          content: [%Jido.Chat.Content.Text{text: "From TG"}],
           metadata: %{channel: :telegram, username: "tg_user"}
         })
 
@@ -199,13 +224,13 @@ defmodule JidoMessaging.Demo.BridgeTest do
       :ok = RoomServer.add_message(room_pid, tg_message)
       Process.sleep(50)
 
-      # Message from Discord - should NOT forward back to Discord
+      # LegacyMessage from Discord - should NOT forward back to Discord
       dc_message =
-        Message.new(%{
+        LegacyMessage.new(%{
           room_id: room.id,
           sender_id: "dc_user",
           role: :user,
-          content: [%JidoMessaging.Content.Text{text: "From DC"}],
+          content: [%Jido.Chat.Content.Text{text: "From DC"}],
           metadata: %{channel: :discord, username: "dc_user"}
         })
 
@@ -220,9 +245,7 @@ defmodule JidoMessaging.Demo.BridgeTest do
   describe "Legacy API deprecation" do
     test "forward_from_telegram returns :ok but does nothing" do
       {:ok, _pid} =
-        start_supervised(
-          {Bridge, instance_module: TestMessaging, telegram_chat_id: "legacy_tg", discord_channel_id: "legacy_dc"}
-        )
+        start_supervised({Bridge, bridge_opts(telegram_chat_id: "legacy_tg", discord_channel_id: "legacy_dc")})
 
       # Legacy call should not crash
       assert :ok = Bridge.forward_from_telegram(%{}, %{})
@@ -230,9 +253,7 @@ defmodule JidoMessaging.Demo.BridgeTest do
 
     test "forward_from_discord returns :ok but does nothing" do
       {:ok, _pid} =
-        start_supervised(
-          {Bridge, instance_module: TestMessaging, telegram_chat_id: "legacy_tg", discord_channel_id: "legacy_dc"}
-        )
+        start_supervised({Bridge, bridge_opts(telegram_chat_id: "legacy_tg", discord_channel_id: "legacy_dc")})
 
       # Legacy call should not crash
       assert :ok = Bridge.forward_from_discord(%{}, %{})

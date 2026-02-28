@@ -1,4 +1,4 @@
-defmodule JidoMessaging.Demo.ChatAgent do
+defmodule Jido.Messaging.Demo.ChatAgent do
   @moduledoc """
   A ReAct-based chat agent that participates in bridged conversations.
 
@@ -18,7 +18,7 @@ defmodule JidoMessaging.Demo.ChatAgent do
       export DISCORD_CHANNEL_ID="your_channel_id"
 
       # Start the demo with agent
-      JidoMessaging.Demo.Supervisor.start_link(
+      Jido.Messaging.Demo.Supervisor.start_link(
         mode: :agent,
         telegram_chat_id: "...",
         discord_channel_id: "..."
@@ -35,9 +35,9 @@ defmodule JidoMessaging.Demo.ChatAgent do
     description: "Helpful chat assistant for cross-platform messaging",
     model: "cerebras:gpt-oss-120b",
     tools: [
-      JidoMessaging.Demo.ChatAgent.Actions.Echo,
-      JidoMessaging.Demo.ChatAgent.Actions.Help,
-      JidoMessaging.Demo.ChatAgent.Actions.Time
+      Jido.Messaging.Demo.ChatAgent.Actions.Echo,
+      Jido.Messaging.Demo.ChatAgent.Actions.Help,
+      Jido.Messaging.Demo.ChatAgent.Actions.Time
     ],
     system_prompt: """
     You are Agent Jido (自動), an advanced cybernetic intelligence system operating
@@ -81,7 +81,7 @@ defmodule JidoMessaging.Demo.ChatAgent do
   end
 end
 
-defmodule JidoMessaging.Demo.ChatAgent.Actions.Echo do
+defmodule Jido.Messaging.Demo.ChatAgent.Actions.Echo do
   @moduledoc "Echo back the input text"
 
   use Jido.Action,
@@ -98,7 +98,7 @@ defmodule JidoMessaging.Demo.ChatAgent.Actions.Echo do
   end
 end
 
-defmodule JidoMessaging.Demo.ChatAgent.Actions.Help do
+defmodule Jido.Messaging.Demo.ChatAgent.Actions.Help do
   @moduledoc "Provide help about the bridge system"
 
   use Jido.Action,
@@ -157,7 +157,7 @@ defmodule JidoMessaging.Demo.ChatAgent.Actions.Help do
   end
 end
 
-defmodule JidoMessaging.Demo.ChatAgent.Actions.Time do
+defmodule Jido.Messaging.Demo.ChatAgent.Actions.Time do
   @moduledoc "Get the current time"
 
   use Jido.Action,

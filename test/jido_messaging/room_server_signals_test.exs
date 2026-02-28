@@ -1,4 +1,4 @@
-defmodule JidoMessaging.RoomServerSignalsTest do
+defmodule Jido.Chat.RoomServerSignalsTest do
   @moduledoc """
   Tests for RoomServer signal emissions (Phase 1 of Bridge Refactor).
 
@@ -9,10 +9,11 @@ defmodule JidoMessaging.RoomServerSignalsTest do
   """
   use ExUnit.Case, async: false
 
-  alias JidoMessaging.{Room, Message, Participant, RoomServer, RoomSupervisor}
+  alias Jido.Chat.{LegacyMessage, Participant, Room}
+  alias Jido.Messaging.{RoomServer, RoomSupervisor}
 
   defmodule TestMessaging do
-    use JidoMessaging, adapter: JidoMessaging.Adapters.ETS
+    use Jido.Messaging, adapter: Jido.Messaging.Adapters.ETS
   end
 
   setup do
@@ -38,7 +39,7 @@ defmodule JidoMessaging.RoomServerSignalsTest do
       {:ok, pid} = RoomSupervisor.start_room(TestMessaging, room)
 
       message =
-        Message.new(%{
+        LegacyMessage.new(%{
           room_id: room.id,
           sender_id: "user_123",
           role: :user,
@@ -75,7 +76,7 @@ defmodule JidoMessaging.RoomServerSignalsTest do
       {:ok, pid} = RoomSupervisor.start_room(TestMessaging, room)
 
       message =
-        Message.new(%{
+        LegacyMessage.new(%{
           room_id: room.id,
           sender_id: "sender_abc",
           role: :assistant,
@@ -239,7 +240,7 @@ defmodule JidoMessaging.RoomServerSignalsTest do
       {:ok, pid} = RoomSupervisor.start_room(TestMessaging, room)
 
       message =
-        Message.new(%{
+        LegacyMessage.new(%{
           room_id: room.id,
           sender_id: "user_1",
           role: :user,

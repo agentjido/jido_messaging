@@ -1,4 +1,4 @@
-defmodule JidoMessaging.Onboarding do
+defmodule Jido.Messaging.Onboarding do
   @moduledoc """
   Onboarding flow orchestration APIs.
 
@@ -6,15 +6,15 @@ defmodule JidoMessaging.Onboarding do
   supervisor-managed workers keyed by onboarding ID.
   """
 
-  alias JidoMessaging.Onboarding.Supervisor
-  alias JidoMessaging.Onboarding.Worker
-  alias JidoMessaging.Runtime
+  alias Jido.Messaging.Onboarding.Supervisor
+  alias Jido.Messaging.Onboarding.Worker
+  alias Jido.Messaging.Runtime
 
-  @type transition :: JidoMessaging.Onboarding.StateMachine.transition()
+  @type transition :: Jido.Messaging.Onboarding.StateMachine.transition()
   @worker_retry_attempts 3
 
   @doc "Start (or resume) an onboarding flow."
-  @spec start(module(), map(), keyword()) :: {:ok, JidoMessaging.Onboarding.Flow.t()} | {:error, term()}
+  @spec start(module(), map(), keyword()) :: {:ok, Jido.Messaging.Onboarding.Flow.t()} | {:error, term()}
   def start(instance_module, attrs, opts \\ [])
       when is_atom(instance_module) and is_map(attrs) and is_list(opts) do
     onboarding_id = normalize_onboarding_id(attrs)
@@ -27,7 +27,7 @@ defmodule JidoMessaging.Onboarding do
 
   @doc "Advance an onboarding flow with a deterministic transition."
   @spec advance(module(), String.t(), transition(), map(), keyword()) ::
-          {:ok, %{required(:flow) => JidoMessaging.Onboarding.Flow.t(), required(:transition) => map()}}
+          {:ok, %{required(:flow) => Jido.Messaging.Onboarding.Flow.t(), required(:transition) => map()}}
           | {:error, term()}
   def advance(instance_module, onboarding_id, transition, metadata \\ %{}, opts \\ [])
       when is_atom(instance_module) and is_binary(onboarding_id) and is_atom(transition) and is_map(metadata) and
@@ -38,7 +38,7 @@ defmodule JidoMessaging.Onboarding do
   end
 
   @doc "Resume an onboarding flow from persisted state."
-  @spec resume(module(), String.t()) :: {:ok, JidoMessaging.Onboarding.Flow.t()} | {:error, term()}
+  @spec resume(module(), String.t()) :: {:ok, Jido.Messaging.Onboarding.Flow.t()} | {:error, term()}
   def resume(instance_module, onboarding_id)
       when is_atom(instance_module) and is_binary(onboarding_id) do
     with_worker(instance_module, onboarding_id, [], fn pid ->
@@ -48,7 +48,7 @@ defmodule JidoMessaging.Onboarding do
 
   @doc "Cancel an onboarding flow."
   @spec cancel(module(), String.t(), map(), keyword()) ::
-          {:ok, %{required(:flow) => JidoMessaging.Onboarding.Flow.t(), required(:transition) => map()}}
+          {:ok, %{required(:flow) => Jido.Messaging.Onboarding.Flow.t(), required(:transition) => map()}}
           | {:error, term()}
   def cancel(instance_module, onboarding_id, metadata \\ %{}, opts \\ [])
       when is_atom(instance_module) and is_binary(onboarding_id) and is_map(metadata) and is_list(opts) do
@@ -57,7 +57,7 @@ defmodule JidoMessaging.Onboarding do
 
   @doc "Complete an onboarding flow."
   @spec complete(module(), String.t(), map(), keyword()) ::
-          {:ok, %{required(:flow) => JidoMessaging.Onboarding.Flow.t(), required(:transition) => map()}}
+          {:ok, %{required(:flow) => Jido.Messaging.Onboarding.Flow.t(), required(:transition) => map()}}
           | {:error, term()}
   def complete(instance_module, onboarding_id, metadata \\ %{}, opts \\ [])
       when is_atom(instance_module) and is_binary(onboarding_id) and is_map(metadata) and is_list(opts) do
@@ -65,7 +65,7 @@ defmodule JidoMessaging.Onboarding do
   end
 
   @doc "Fetch onboarding flow state without changing worker state."
-  @spec get(module(), String.t()) :: {:ok, JidoMessaging.Onboarding.Flow.t()} | {:error, term()}
+  @spec get(module(), String.t()) :: {:ok, Jido.Messaging.Onboarding.Flow.t()} | {:error, term()}
   def get(instance_module, onboarding_id)
       when is_atom(instance_module) and is_binary(onboarding_id) do
     runtime = instance_module.__jido_messaging__(:runtime)

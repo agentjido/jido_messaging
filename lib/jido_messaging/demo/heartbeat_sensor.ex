@@ -1,4 +1,4 @@
-defmodule JidoMessaging.Demo.HeartbeatSensor do
+defmodule Jido.Messaging.Demo.HeartbeatSensor do
   @moduledoc """
   A Jido Sensor that emits periodic heartbeat messages to a chat room.
 
@@ -11,11 +11,11 @@ defmodule JidoMessaging.Demo.HeartbeatSensor do
   Start the sensor with the messaging room context:
 
       {:ok, _pid} = Jido.Sensor.Runtime.start_link(
-        sensor: JidoMessaging.Demo.HeartbeatSensor,
+        sensor: Jido.Messaging.Demo.HeartbeatSensor,
         config: %{
           interval: 60_000,
           room_id: "demo:lobby",
-          instance_module: JidoMessaging.Demo.Messaging
+          instance_module: Jido.Messaging.Demo.Messaging
         }
       )
 
@@ -69,8 +69,8 @@ defmodule JidoMessaging.Demo.HeartbeatSensor do
   end
 
   defp send_heartbeat_message(state) do
-    alias JidoMessaging.Content.Text
-    alias JidoMessaging.RoomServer
+    alias Jido.Chat.Content.Text
+    alias Jido.Messaging.RoomServer
 
     now = DateTime.utc_now()
     formatted_time = Calendar.strftime(now, "%H:%M:%S UTC")

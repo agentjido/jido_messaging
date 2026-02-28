@@ -1,6 +1,6 @@
-defmodule JidoMessaging.AuditLogger do
+defmodule Jido.Messaging.AuditLogger do
   @moduledoc """
-  Telemetry-based audit logging for JidoMessaging events.
+  Telemetry-based audit logging for Jido.Messaging events.
 
   Attaches to telemetry events and logs them using Elixir's Logger.
   Provides structured audit trails for all significant messaging events.
@@ -8,17 +8,17 @@ defmodule JidoMessaging.AuditLogger do
   ## Usage
 
       # Attach to all events with default settings
-      JidoMessaging.AuditLogger.attach()
+      Jido.Messaging.AuditLogger.attach()
 
       # Attach with options
-      JidoMessaging.AuditLogger.attach(
+      Jido.Messaging.AuditLogger.attach(
         log_level: :info,
         include_typing: false,  # Don't log typing events (can be noisy)
         prefix: "audit"
       )
 
       # Detach when no longer needed
-      JidoMessaging.AuditLogger.detach()
+      Jido.Messaging.AuditLogger.detach()
 
   ## Logged Events
 
@@ -74,13 +74,13 @@ defmodule JidoMessaging.AuditLogger do
   ]
 
   @doc """
-  Attach the audit logger to all JidoMessaging telemetry events.
+  Attach the audit logger to all Jido.Messaging telemetry events.
 
   ## Options
 
   - `:log_level` - Logger level to use (default: `:info`)
   - `:include_typing` - Whether to log typing events (default: `false`)
-  - `:prefix` - Prefix for log messages (default: `"JidoMessaging.Audit"`)
+  - `:prefix` - Prefix for log messages (default: `"Jido.Messaging.Audit"`)
   """
   @spec attach(keyword()) :: :ok | {:error, :already_exists}
   def attach(opts \\ []) do
@@ -94,7 +94,7 @@ defmodule JidoMessaging.AuditLogger do
 
     config = %{
       log_level: Keyword.get(opts, :log_level, :info),
-      prefix: Keyword.get(opts, :prefix, "JidoMessaging.Audit")
+      prefix: Keyword.get(opts, :prefix, "Jido.Messaging.Audit")
     }
 
     :telemetry.attach_many(

@@ -1,8 +1,8 @@
-defmodule JidoMessaging.Demo.ChatAgentRunner do
+defmodule Jido.Messaging.Demo.ChatAgentRunner do
   @moduledoc """
-  Wrapper that runs the ChatAgent within the JidoMessaging AgentRunner framework.
+  Wrapper that runs the ChatAgent within the Jido.Messaging AgentRunner framework.
 
-  This module bridges the Jido.AI.Agent with JidoMessaging's agent system by:
+  This module bridges the Jido.AI.Agent with Jido.Messaging's agent system by:
   1. Starting the ChatAgent GenServer
   2. Providing a handler function for the AgentRunner
   3. Managing the agent lifecycle
@@ -37,7 +37,7 @@ defmodule JidoMessaging.Demo.ChatAgentRunner do
   use GenServer
   require Logger
 
-  alias JidoMessaging.Demo.ChatAgent
+  alias Jido.Messaging.Demo.ChatAgent
 
   defstruct [:agent_pid, :room_id, :instance_module]
 
@@ -120,7 +120,7 @@ defmodule JidoMessaging.Demo.ChatAgentRunner do
     |> Enum.find_value("", fn
       %{text: text} when is_binary(text) -> text
       %{"text" => text} when is_binary(text) -> text
-      %JidoMessaging.Content.Text{text: text} -> text
+      %Jido.Chat.Content.Text{text: text} -> text
       _ -> nil
     end)
   end
@@ -132,8 +132,8 @@ defmodule JidoMessaging.Demo.ChatAgentRunner do
   @impl true
   def init(opts) do
     room_id = Keyword.get(opts, :room_id, "demo:lobby")
-    instance_module = Keyword.get(opts, :instance_module, JidoMessaging.Demo.Messaging)
-    jido_name = Keyword.get(opts, :jido_name, JidoMessaging.Demo.Jido)
+    instance_module = Keyword.get(opts, :instance_module, Jido.Messaging.Demo.Messaging)
+    jido_name = Keyword.get(opts, :jido_name, Jido.Messaging.Demo.Jido)
 
     # Start the ChatAgent GenServer via Jido runtime
     case start_chat_agent(jido_name) do

@@ -1,6 +1,6 @@
-defmodule JidoMessaging.Adapter do
+defmodule Jido.Messaging.Adapter do
   @moduledoc """
-  Behaviour for JidoMessaging storage adapters.
+  Behaviour for Jido.Messaging storage adapters.
 
   Adapters provide persistence for rooms, participants, and messages.
   Each adapter instance maintains its own state (e.g., ETS table references)
@@ -9,7 +9,7 @@ defmodule JidoMessaging.Adapter do
   ## Implementing an Adapter
 
       defmodule MyApp.CustomAdapter do
-        @behaviour JidoMessaging.Adapter
+        @behaviour Jido.Messaging.Adapter
 
         @impl true
         def init(opts) do
@@ -21,14 +21,14 @@ defmodule JidoMessaging.Adapter do
       end
   """
 
-  alias JidoMessaging.{Message, Room, Participant}
+  alias Jido.Chat.{LegacyMessage, Participant, Room}
 
   @type state :: term()
   @type room_id :: String.t()
   @type participant_id :: String.t()
   @type message_id :: String.t()
   @type channel :: atom()
-  @type instance_id :: String.t()
+  @type bridge_id :: String.t()
   @type external_id :: String.t()
   @type directory_target :: :participant | :room
   @type directory_query :: map()
@@ -64,13 +64,13 @@ defmodule JidoMessaging.Adapter do
 
   # Message operations
   @doc "Save a message"
-  @callback save_message(state, Message.t()) :: {:ok, Message.t()} | {:error, term()}
+  @callback save_message(state, LegacyMessage.t()) :: {:ok, LegacyMessage.t()} | {:error, term()}
 
   @doc "Get a message by ID"
-  @callback get_message(state, message_id) :: {:ok, Message.t()} | {:error, :not_found}
+  @callback get_message(state, message_id) :: {:ok, LegacyMessage.t()} | {:error, :not_found}
 
   @doc "Get messages for a room with options (limit, before, after)"
-  @callback get_messages(state, room_id, opts :: keyword()) :: {:ok, [Message.t()]}
+  @callback get_messages(state, room_id, opts :: keyword()) :: {:ok, [LegacyMessage.t()]}
 
   @doc "Delete a message by ID"
   @callback delete_message(state, message_id) :: :ok | {:error, term()}
@@ -85,7 +85,7 @@ defmodule JidoMessaging.Adapter do
   @callback get_or_create_room_by_external_binding(
               state,
               channel,
-              instance_id,
+              bridge_id,
               external_id,
               attrs :: map()
             ) :: {:ok, Room.t()}
@@ -109,8 +109,8 @@ defmodule JidoMessaging.Adapter do
 
   Used for resolving reply_to references from external platforms.
   """
-  @callback get_message_by_external_id(state, channel, instance_id, external_id) ::
-              {:ok, Message.t()} | {:error, :not_found}
+  @callback get_message_by_external_id(state, channel, bridge_id, external_id) ::
+              {:ok, LegacyMessage.t()} | {:error, :not_found}
 
   @doc """
   Update a message's external_id after successful channel delivery.
@@ -118,7 +118,7 @@ defmodule JidoMessaging.Adapter do
   Used to record the external platform's message ID after sending.
   """
   @callback update_message_external_id(state, message_id, external_id) ::
-              {:ok, Message.t()} | {:error, term()}
+              {:ok, LegacyMessage.t()} | {:error, term()}
 
   # Room binding operations
 
@@ -127,7 +127,7 @@ defmodule JidoMessaging.Adapter do
 
   Returns the room if a binding exists, otherwise :not_found.
   """
-  @callback get_room_by_external_binding(state, channel, instance_id, external_id) ::
+  @callback get_room_by_external_binding(state, channel, bridge_id, external_id) ::
               {:ok, Room.t()} | {:error, :not_found}
 
   @doc """
@@ -137,15 +137,15 @@ defmodule JidoMessaging.Adapter do
               state,
               room_id,
               channel,
-              instance_id,
+              bridge_id,
               external_id,
               attrs :: map()
-            ) :: {:ok, JidoMessaging.RoomBinding.t()} | {:error, term()}
+            ) :: {:ok, Jido.Messaging.RoomBinding.t()} | {:error, term()}
 
   @doc """
   List all bindings for a room.
   """
-  @callback list_room_bindings(state, room_id) :: {:ok, [JidoMessaging.RoomBinding.t()]}
+  @callback list_room_bindings(state, room_id) :: {:ok, [Jido.Messaging.RoomBinding.t()]}
 
   @doc """
   Delete a room binding by ID.

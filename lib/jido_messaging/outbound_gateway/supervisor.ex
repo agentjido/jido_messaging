@@ -1,11 +1,11 @@
-defmodule JidoMessaging.OutboundGateway.Supervisor do
+defmodule Jido.Messaging.OutboundGateway.Supervisor do
   @moduledoc """
   Supervisor for outbound gateway partition workers.
   """
   use Supervisor
 
-  alias JidoMessaging.OutboundGateway
-  alias JidoMessaging.OutboundGateway.Partition
+  alias Jido.Messaging.OutboundGateway
+  alias Jido.Messaging.OutboundGateway.Partition
 
   @doc false
   def start_link(opts) do

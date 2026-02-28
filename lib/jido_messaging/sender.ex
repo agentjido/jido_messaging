@@ -1,4 +1,4 @@
-defmodule JidoMessaging.Sender do
+defmodule Jido.Messaging.Sender do
   @moduledoc """
   Per-instance message sender with retry queue and exponential backoff.
 
@@ -230,7 +230,7 @@ defmodule JidoMessaging.Sender do
         external_message_id: external_id
       })
 
-      Logger.debug("[JidoMessaging.Sender] Skipped duplicate message #{job.message_id} (key: #{job.idempotency_key})")
+      Logger.debug("[Jido.Messaging.Sender] Skipped duplicate message #{job.message_id} (key: #{job.idempotency_key})")
 
       send(self(), :process_queue)
       {:noreply, state}
@@ -254,10 +254,10 @@ defmodule JidoMessaging.Sender do
         external_message_id = extract_external_message_id(result)
 
         if state.instance_server do
-          JidoMessaging.InstanceServer.notify_success(state.instance_server)
+          Jido.Messaging.InstanceServer.notify_success(state.instance_server)
         end
 
-        Logger.debug("[JidoMessaging.Sender] Delivered message #{job.message_id} (attempt #{attempt})")
+        Logger.debug("[Jido.Messaging.Sender] Delivered message #{job.message_id} (attempt #{attempt})")
 
         new_state = store_sent_message(state, job.idempotency_key, external_message_id)
         send(self(), :process_queue)
@@ -296,7 +296,7 @@ defmodule JidoMessaging.Sender do
 
   defp handle_delivery_failure(job, attempt, reason, state) do
     if state.instance_server do
-      JidoMessaging.InstanceServer.notify_failure(state.instance_server, reason)
+      Jido.Messaging.InstanceServer.notify_failure(state.instance_server, reason)
     end
 
     if attempt >= state.max_attempts do
@@ -309,7 +309,7 @@ defmodule JidoMessaging.Sender do
       })
 
       Logger.warning(
-        "[JidoMessaging.Sender] Gave up on message #{job.message_id} after #{attempt} attempts: #{inspect(reason)}"
+        "[Jido.Messaging.Sender] Gave up on message #{job.message_id} after #{attempt} attempts: #{inspect(reason)}"
       )
 
       send(self(), :process_queue)
@@ -326,7 +326,7 @@ defmodule JidoMessaging.Sender do
         reason: reason
       })
 
-      Logger.debug("[JidoMessaging.Sender] Scheduling retry for message #{job.message_id} in #{backoff_ms}ms")
+      Logger.debug("[Jido.Messaging.Sender] Scheduling retry for message #{job.message_id} in #{backoff_ms}ms")
 
       updated_job = %{
         job

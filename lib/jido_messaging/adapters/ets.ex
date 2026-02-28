@@ -1,6 +1,6 @@
-defmodule JidoMessaging.Adapters.ETS do
+defmodule Jido.Messaging.Adapters.ETS do
   @moduledoc """
-  In-memory ETS adapter for JidoMessaging.
+  In-memory ETS adapter for Jido.Messaging.
 
   Uses anonymous ETS tables for per-instance isolation, enabling
   multiple messaging instances in the same BEAM without conflicts.
@@ -8,8 +8,8 @@ defmodule JidoMessaging.Adapters.ETS do
   ## Usage
 
       defmodule MyApp.Messaging do
-        use JidoMessaging,
-          adapter: JidoMessaging.Adapters.ETS
+        use Jido.Messaging,
+          adapter: Jido.Messaging.Adapters.ETS
       end
 
   ## State Structure
@@ -24,8 +24,8 @@ defmodule JidoMessaging.Adapters.ETS do
   - `:onboarding_flows` - Onboarding flow records keyed by onboarding_id
   """
 
-  @behaviour JidoMessaging.Adapter
-  @behaviour JidoMessaging.Directory
+  @behaviour Jido.Messaging.Adapter
+  @behaviour Jido.Messaging.Directory
 
   @schema Zoi.struct(
             __MODULE__,
@@ -52,7 +52,8 @@ defmodule JidoMessaging.Adapters.ETS do
   @doc "Returns the Zoi schema"
   def schema, do: @schema
 
-  alias JidoMessaging.{Room, Participant, Message, RoomBinding}
+  alias Jido.Chat.{LegacyMessage, Participant, Room}
+  alias Jido.Messaging.RoomBinding
 
   @impl true
   def init(_opts) do
@@ -136,21 +137,21 @@ defmodule JidoMessaging.Adapters.ETS do
   # Message operations
 
   @impl true
-  def save_message(state, %Message{} = message) do
+  def save_message(state, %LegacyMessage{} = message) do
     true = :ets.insert(state.messages, {message.id, message})
     true = :ets.insert(state.room_messages, {message.room_id, message.id})
     index_external_id(state, message)
     {:ok, message}
   end
 
-  defp index_external_id(_state, %Message{external_id: nil}), do: :ok
+  defp index_external_id(_state, %LegacyMessage{external_id: nil}), do: :ok
 
-  defp index_external_id(state, %Message{} = message) do
+  defp index_external_id(state, %LegacyMessage{} = message) do
     channel = get_in(message.metadata, [:channel])
-    instance_id = get_in(message.metadata, [:instance_id])
+    bridge_id = get_in(message.metadata, [:bridge_id])
 
-    if channel && instance_id do
-      key = {channel, instance_id, message.external_id}
+    if channel && bridge_id do
+      key = {channel, bridge_id, message.external_id}
       true = :ets.insert(state.message_external_ids, {key, message.id})
     end
 
@@ -205,8 +206,8 @@ defmodule JidoMessaging.Adapters.ETS do
   # External binding operations
 
   @impl true
-  def get_or_create_room_by_external_binding(state, channel, instance_id, external_id, attrs) do
-    binding_key = {channel, instance_id, external_id}
+  def get_or_create_room_by_external_binding(state, channel, bridge_id, external_id, attrs) do
+    binding_key = binding_key(channel, bridge_id, external_id)
 
     case :ets.lookup(state.room_bindings, binding_key) do
       [{^binding_key, room_id}] ->
@@ -217,11 +218,11 @@ defmodule JidoMessaging.Adapters.ETS do
           {:error, :not_found} ->
             # Remove stale binding only if it still points at the missing room.
             true = :ets.delete_object(state.room_bindings, {binding_key, room_id})
-            get_or_create_room_by_external_binding(state, channel, instance_id, external_id, attrs)
+            get_or_create_room_by_external_binding(state, channel, bridge_id, external_id, attrs)
         end
 
       [] ->
-        room = build_bound_room(channel, instance_id, external_id, attrs)
+        room = build_bound_room(channel, bridge_id, external_id, attrs)
         {:ok, room} = save_room(state, room)
 
         case :ets.insert_new(state.room_bindings, {binding_key, room.id}) do
@@ -265,8 +266,8 @@ defmodule JidoMessaging.Adapters.ETS do
   end
 
   @impl true
-  def get_message_by_external_id(state, channel, instance_id, external_id) do
-    key = {channel, instance_id, external_id}
+  def get_message_by_external_id(state, channel, bridge_id, external_id) do
+    key = {channel, bridge_id, external_id}
 
     case :ets.lookup(state.message_external_ids, key) do
       [{^key, message_id}] -> get_message(state, message_id)
@@ -279,13 +280,13 @@ defmodule JidoMessaging.Adapters.ETS do
     case get_message(state, message_id) do
       {:ok, message} ->
         channel = get_in(message.metadata, [:channel])
-        instance_id = get_in(message.metadata, [:instance_id])
+        bridge_id = get_in(message.metadata, [:bridge_id])
 
         updated_message = %{message | external_id: external_id}
         true = :ets.insert(state.messages, {message_id, updated_message})
 
-        if channel && instance_id do
-          key = {channel, instance_id, external_id}
+        if channel && bridge_id do
+          key = {channel, bridge_id, external_id}
           true = :ets.insert(state.message_external_ids, {key, message_id})
         end
 
@@ -299,8 +300,8 @@ defmodule JidoMessaging.Adapters.ETS do
   # Room binding operations
 
   @impl true
-  def get_room_by_external_binding(state, channel, instance_id, external_id) do
-    binding_key = {channel, instance_id, external_id}
+  def get_room_by_external_binding(state, channel, bridge_id, external_id) do
+    binding_key = binding_key(channel, bridge_id, external_id)
 
     case :ets.lookup(state.room_bindings, binding_key) do
       [{^binding_key, room_id}] -> get_room(state, room_id)
@@ -309,20 +310,20 @@ defmodule JidoMessaging.Adapters.ETS do
   end
 
   @impl true
-  def create_room_binding(state, room_id, channel, instance_id, external_id, attrs) do
-    binding_key = {channel, instance_id, external_id}
-
+  def create_room_binding(state, room_id, channel, bridge_id, external_id, attrs) do
     binding =
       RoomBinding.new(
         Map.merge(attrs, %{
           room_id: room_id,
           channel: channel,
-          instance_id: instance_id,
+          bridge_id: to_string(bridge_id),
           external_room_id: external_id
         })
       )
 
-    true = :ets.insert(state.room_bindings, {binding_key, room_id})
+    key = binding_key(channel, binding.bridge_id, external_id)
+    true = :ets.insert(state.room_bindings, {key, room_id})
+
     true = :ets.insert(state.room_bindings_by_id, {binding.id, binding})
     true = :ets.insert(state.room_bindings_by_room, {room_id, binding.id})
 
@@ -351,8 +352,8 @@ defmodule JidoMessaging.Adapters.ETS do
   def delete_room_binding(state, binding_id) do
     case :ets.lookup(state.room_bindings_by_id, binding_id) do
       [{^binding_id, binding}] ->
-        binding_key = {binding.channel, binding.instance_id, binding.external_room_id}
-        true = :ets.delete(state.room_bindings, binding_key)
+        key = binding_key(binding.channel, binding.bridge_id, binding.external_room_id)
+        true = :ets.delete(state.room_bindings, key)
         true = :ets.delete(state.room_bindings_by_id, binding_id)
         true = :ets.delete_object(state.room_bindings_by_room, {binding.room_id, binding_id})
         :ok
@@ -364,12 +365,12 @@ defmodule JidoMessaging.Adapters.ETS do
 
   # Directory operations
 
-  @impl JidoMessaging.Directory
+  @impl Jido.Messaging.Directory
   def lookup(state, target, query) when is_map(query) do
     directory_lookup(state, target, query, [])
   end
 
-  @impl JidoMessaging.Directory
+  @impl Jido.Messaging.Directory
   def search(state, target, query) when is_map(query) do
     directory_search(state, target, query, [])
   end
@@ -473,26 +474,26 @@ defmodule JidoMessaging.Adapters.ETS do
 
   defp room_external_binding_matches?(room_id, state, query) do
     channel = query_value(query, :channel)
-    instance_id = query_value(query, :instance_id)
+    bridge_id = query_value(query, :bridge_id)
     external_id = query_value(query, :external_id)
 
     cond do
-      is_nil(channel) and is_nil(instance_id) and is_nil(external_id) ->
+      is_nil(channel) and is_nil(bridge_id) and is_nil(external_id) ->
         true
 
-      is_nil(channel) or is_nil(instance_id) or is_nil(external_id) ->
+      is_nil(channel) or is_nil(bridge_id) or is_nil(external_id) ->
         false
 
       true ->
         expected_channel = normalize_term(channel)
-        expected_instance_id = normalize_term(instance_id)
+        expected_bridge_id = normalize_term(bridge_id)
         expected_external_id = normalize_term(external_id)
 
         :ets.tab2list(state.room_bindings)
-        |> Enum.any?(fn {{binding_channel, binding_instance_id, binding_external_id}, binding_room_id} ->
+        |> Enum.any?(fn {{binding_channel, binding_bridge_id, binding_external_id}, binding_room_id} ->
           binding_room_id == room_id and
             normalize_term(binding_channel) == expected_channel and
-            normalize_term(binding_instance_id) == expected_instance_id and
+            normalize_term(binding_bridge_id) == expected_bridge_id and
             normalize_term(binding_external_id) == expected_external_id
         end)
     end
@@ -526,16 +527,20 @@ defmodule JidoMessaging.Adapters.ETS do
     Map.get(query, key) || Map.get(query, Atom.to_string(key))
   end
 
+  defp binding_key(channel, bridge_id, external_id) do
+    {channel, to_string(bridge_id), normalize_term(external_id)}
+  end
+
   defp normalize_term(value) when is_binary(value), do: value
   defp normalize_term(value) when is_atom(value), do: Atom.to_string(value)
   defp normalize_term(value) when is_integer(value), do: Integer.to_string(value)
   defp normalize_term(value), do: to_string(value)
 
-  defp build_bound_room(channel, instance_id, external_id, attrs) do
+  defp build_bound_room(channel, bridge_id, external_id, attrs) do
     Room.new(
       Map.merge(attrs, %{
         external_bindings: %{
-          channel => %{instance_id => external_id}
+          channel => %{bridge_id => external_id}
         }
       })
     )

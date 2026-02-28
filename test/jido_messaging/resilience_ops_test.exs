@@ -1,18 +1,18 @@
-defmodule JidoMessaging.ResilienceOpsTest do
+defmodule Jido.Messaging.ResilienceOpsTest do
   use ExUnit.Case, async: false
 
-  alias JidoMessaging.OutboundGateway
-  alias JidoMessaging.OutboundGateway.Partition
-  import JidoMessaging.TestHelpers
+  alias Jido.Messaging.OutboundGateway
+  alias Jido.Messaging.OutboundGateway.Partition
+  import Jido.Messaging.TestHelpers
 
   defmodule TestMessaging do
-    use JidoMessaging,
-      adapter: JidoMessaging.Adapters.ETS
+    use Jido.Messaging,
+      adapter: Jido.Messaging.Adapters.ETS
   end
 
   defmodule ReplayChannel do
     use Agent
-    @behaviour JidoMessaging.Channel
+    @behaviour Jido.Chat.Adapter
 
     def start_link(_opts) do
       Agent.start_link(fn -> %{failures_left: 1, send_count: 0} end, name: __MODULE__)
@@ -47,7 +47,7 @@ defmodule JidoMessaging.ResilienceOpsTest do
   end
 
   defmodule SlowPressureChannel do
-    @behaviour JidoMessaging.Channel
+    @behaviour Jido.Chat.Adapter
 
     @impl true
     def channel_type, do: :slow_pressure_channel
@@ -215,15 +215,15 @@ defmodule JidoMessaging.ResilienceOpsTest do
     assert {:error, outbound_error} = OutboundGateway.send_message(TestMessaging, context, "crash-first")
     dead_letter_id = outbound_error.dead_letter_id
 
-    replay_partition = JidoMessaging.DeadLetter.ReplayWorker.route_partition(TestMessaging, dead_letter_id)
-    replay_worker = JidoMessaging.DeadLetter.ReplayWorker.whereis(TestMessaging, replay_partition)
+    replay_partition = Jido.Messaging.DeadLetter.ReplayWorker.route_partition(TestMessaging, dead_letter_id)
+    replay_worker = Jido.Messaging.DeadLetter.ReplayWorker.whereis(TestMessaging, replay_partition)
     assert is_pid(replay_worker)
 
     Process.exit(replay_worker, :kill)
 
     assert_eventually(
       fn ->
-        case JidoMessaging.DeadLetter.ReplayWorker.whereis(TestMessaging, replay_partition) do
+        case Jido.Messaging.DeadLetter.ReplayWorker.whereis(TestMessaging, replay_partition) do
           nil -> false
           pid -> is_pid(pid) and pid != replay_worker
         end

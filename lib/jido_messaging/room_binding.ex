@@ -1,9 +1,9 @@
-defmodule JidoMessaging.RoomBinding do
+defmodule Jido.Messaging.RoomBinding do
   @moduledoc """
   Represents a binding between an internal room and an external platform room.
 
   Constraints:
-  - Unique: {channel, instance_id, external_room_id} - one internal room per external
+  - Unique: {channel, bridge_id, external_room_id} - one internal room per external bridge
   - Non-unique: room_id - one internal room can have many external bindings
 
   ## Direction
@@ -20,7 +20,7 @@ defmodule JidoMessaging.RoomBinding do
               id: Zoi.string(),
               room_id: Zoi.string(),
               channel: Zoi.atom(),
-              instance_id: Zoi.string(),
+              bridge_id: Zoi.string(),
               external_room_id: Zoi.string(),
               direction: Zoi.atom() |> Zoi.default(:both),
               enabled: Zoi.boolean() |> Zoi.default(true),
@@ -43,7 +43,10 @@ defmodule JidoMessaging.RoomBinding do
   Create a new RoomBinding with auto-generated ID and timestamp.
   """
   def new(attrs) do
+    bridge_id = Map.get(attrs, :bridge_id) || Map.get(attrs, "bridge_id")
+
     attrs = Map.put_new(attrs, :id, generate_id())
+    attrs = Map.put_new(attrs, :bridge_id, bridge_id)
     attrs = Map.put_new(attrs, :inserted_at, DateTime.utc_now())
     struct!(__MODULE__, attrs)
   end

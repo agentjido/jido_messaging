@@ -1,17 +1,17 @@
-defmodule JidoMessaging.SessionManagerTest do
+defmodule Jido.Messaging.SessionManagerTest do
   use ExUnit.Case, async: false
 
-  import JidoMessaging.TestHelpers
+  import Jido.Messaging.TestHelpers
 
-  alias JidoMessaging.{Ingest, OutboundGateway, SessionManager}
+  alias Jido.Messaging.{Ingest, OutboundGateway, SessionManager}
 
   defmodule TestMessaging do
-    use JidoMessaging,
-      adapter: JidoMessaging.Adapters.ETS
+    use Jido.Messaging,
+      adapter: Jido.Messaging.Adapters.ETS
   end
 
   defmodule RoutingChannel do
-    @behaviour JidoMessaging.Channel
+    @behaviour Jido.Chat.Adapter
 
     @impl true
     def channel_type, do: :routing

@@ -1,29 +1,26 @@
-defmodule JidoMessaging.Plugin do
+defmodule Jido.Messaging.BridgePlugin do
   @moduledoc """
-  Channel plugin metadata struct.
+  Adapter bridge metadata struct.
 
-  Represents a registered channel plugin with its metadata, capabilities,
+  Represents a registered adapter bridge with its metadata, capabilities,
   and optional adapter implementations.
 
   ## Fields
 
     * `:id` - Unique atom identifier (e.g., `:telegram`, `:discord`)
-    * `:channel_module` - The module implementing `JidoMessaging.Channel`
-    * `:label` - Human-readable display name (e.g., "Telegram")
+    * `:adapter_module` - The module implementing `Jido.Chat.Adapter`
+    * `:label` - Human-readable display name (e.g., "Telegram Adapter")
     * `:capabilities` - List of supported capabilities (e.g., `[:text, :image, :streaming]`)
     * `:adapters` - Map of adapter type to module (e.g., `%{mentions: MyMentionsAdapter}`)
 
   ## Example
 
-      %Plugin{
+      %BridgePlugin{
         id: :telegram,
-        channel_module: JidoMessaging.Channels.Telegram,
-        label: "Telegram",
-        capabilities: [:text, :image, :streaming],
-        adapters: %{
-          mentions: JidoMessaging.Channels.Telegram.Mentions,
-          threading: JidoMessaging.Channels.Telegram.Threading
-        }
+        adapter_module: MyApp.TelegramAdapter,
+        label: "Telegram Adapter",
+        capabilities: [:text, :typing],
+        adapters: %{}
       }
   """
 
@@ -31,7 +28,7 @@ defmodule JidoMessaging.Plugin do
             __MODULE__,
             %{
               id: Zoi.atom(),
-              channel_module: Zoi.module(),
+              adapter_module: Zoi.module(),
               label: Zoi.string(),
               capabilities: Zoi.array(Zoi.atom()) |> Zoi.default([]),
               adapters: Zoi.map() |> Zoi.default(%{})
@@ -44,17 +41,17 @@ defmodule JidoMessaging.Plugin do
   @enforce_keys Zoi.Struct.enforce_keys(@schema)
   defstruct Zoi.Struct.struct_fields(@schema)
 
-  @doc "Returns the Zoi schema for Plugin"
+  @doc "Returns the Zoi schema for BridgePlugin"
   def schema, do: @schema
 
   @doc """
-  Creates a new Plugin from a channel module.
+  Creates a new BridgePlugin from an adapter module.
 
-  Automatically extracts capabilities if the channel implements the callback.
+  Automatically extracts capabilities from `Jido.Messaging.AdapterBridge`.
 
   ## Parameters
 
-    * `channel_module` - Module implementing `JidoMessaging.Channel`
+    * `adapter_module` - Module implementing `Jido.Chat.Adapter`
     * `opts` - Optional overrides:
       * `:id` - Override the channel type as the ID
       * `:label` - Override the default label
@@ -62,22 +59,22 @@ defmodule JidoMessaging.Plugin do
 
   ## Examples
 
-      Plugin.from_channel(JidoMessaging.Channels.Telegram)
-      # => %Plugin{id: :telegram, label: "Telegram", ...}
+      BridgePlugin.from_adapter(MyApp.TelegramAdapter)
+      # => %BridgePlugin{id: :telegram, label: "Telegram", ...}
 
-      Plugin.from_channel(MyChannel, label: "My Custom Channel", adapters: %{mentions: MyMentions})
+      BridgePlugin.from_adapter(MyAdapter, label: "My Custom Adapter")
   """
-  @spec from_channel(module(), keyword()) :: t()
-  def from_channel(channel_module, opts \\ []) do
-    id = Keyword.get(opts, :id, channel_module.channel_type())
+  @spec from_adapter(module(), keyword()) :: t()
+  def from_adapter(adapter_module, opts \\ []) do
+    id = Keyword.get(opts, :id, Jido.Messaging.AdapterBridge.channel_type(adapter_module))
     label = Keyword.get(opts, :label, humanize_channel_type(id))
     adapters = Keyword.get(opts, :adapters, %{})
 
-    capabilities = JidoMessaging.Channel.capabilities(channel_module)
+    capabilities = Jido.Messaging.AdapterBridge.capabilities(adapter_module)
 
     struct!(__MODULE__, %{
       id: id,
-      channel_module: channel_module,
+      adapter_module: adapter_module,
       label: label,
       capabilities: capabilities,
       adapters: adapters
@@ -89,7 +86,7 @@ defmodule JidoMessaging.Plugin do
 
   ## Examples
 
-      Plugin.has_capability?(telegram_plugin, :streaming)
+      BridgePlugin.has_capability?(telegram_plugin, :streaming)
       # => true
   """
   @spec has_capability?(t(), atom()) :: boolean()
@@ -102,8 +99,8 @@ defmodule JidoMessaging.Plugin do
 
   ## Examples
 
-      Plugin.get_adapter(telegram_plugin, :mentions)
-      # => JidoMessaging.Channels.Telegram.Mentions
+      BridgePlugin.get_adapter(telegram_plugin, :mentions)
+      # => MyApp.TelegramMentionsAdapter
   """
   @spec get_adapter(t(), atom()) :: module() | nil
   def get_adapter(%__MODULE__{adapters: adapters}, adapter_type) do

@@ -1,4 +1,4 @@
-defmodule JidoMessaging.Demo.Bridge do
+defmodule Jido.Messaging.Demo.Bridge do
   @moduledoc """
   Bridges messages between Telegram and Discord via Signal Bus subscription.
 
@@ -17,31 +17,44 @@ defmodule JidoMessaging.Demo.Bridge do
   use GenServer
   require Logger
 
-  alias JidoMessaging.Channels.{Telegram, Discord}
-  alias JidoMessaging.Supervisor, as: MessagingSupervisor
+  alias Jido.Messaging.AdapterBridge
+  alias Jido.Messaging.Supervisor, as: MessagingSupervisor
 
   defstruct [:instance_module, :bindings, :room_id, :subscribed]
 
-  @type binding :: {:telegram | :discord, String.t(), String.t()}
+  @type binding :: {:telegram | :discord, module(), String.t(), String.t()}
 
   def start_link(opts) do
     GenServer.start_link(__MODULE__, opts, name: __MODULE__)
   end
 
   @shared_room_id "demo:lobby"
-  @shared_room_name "JidoMessaging Bridge Room"
+  @shared_room_name "Jido.Messaging Bridge Room"
 
   @impl true
   def init(opts) do
-    instance_module = Keyword.get(opts, :instance_module, JidoMessaging.Demo.Messaging)
+    instance_module = Keyword.get(opts, :instance_module, Jido.Messaging.Demo.Messaging)
     telegram_chat_id = Keyword.fetch!(opts, :telegram_chat_id)
     discord_channel_id = Keyword.fetch!(opts, :discord_channel_id)
 
-    # Bindings: {channel, instance_id, external_id}
-    # instance_id must match what the handlers use (full module name as string)
+    telegram_adapter =
+      resolve_adapter_module(
+        opts,
+        :telegram_adapter,
+        "JIDO_MESSAGING_DEMO_TELEGRAM_ADAPTER"
+      )
+
+    discord_adapter =
+      resolve_adapter_module(
+        opts,
+        :discord_adapter,
+        "JIDO_MESSAGING_DEMO_DISCORD_ADAPTER"
+      )
+
+    # Bindings: {channel, adapter_module, bridge_id, external_id}
     bindings = [
-      {:telegram, to_string(JidoMessaging.Demo.TelegramHandler), to_string(telegram_chat_id)},
-      {:discord, to_string(JidoMessaging.Demo.DiscordHandler), to_string(discord_channel_id)}
+      {:telegram, telegram_adapter, to_string(telegram_adapter), to_string(telegram_chat_id)},
+      {:discord, discord_adapter, to_string(discord_adapter), to_string(discord_channel_id)}
     ]
 
     state = %__MODULE__{
@@ -127,8 +140,8 @@ defmodule JidoMessaging.Demo.Bridge do
     case get_or_create_shared_room(messaging) do
       {:ok, room} ->
         # Create bindings for each platform
-        Enum.each(state.bindings, fn {channel, instance_id, external_id} ->
-          create_binding_if_missing(messaging, room.id, channel, instance_id, external_id)
+        Enum.each(state.bindings, fn {channel, _adapter, bridge_id, external_id} ->
+          create_binding_if_missing(messaging, room.id, channel, bridge_id, external_id)
         end)
 
         Logger.info("[Bridge] Shared room #{room.id} ready with #{length(state.bindings)} bindings")
@@ -146,7 +159,7 @@ defmodule JidoMessaging.Demo.Bridge do
 
       {:error, :not_found} ->
         # Create room struct with our fixed ID
-        room = %JidoMessaging.Room{
+        room = %Jido.Chat.Room{
           id: @shared_room_id,
           type: :group,
           name: @shared_room_name,
@@ -159,18 +172,16 @@ defmodule JidoMessaging.Demo.Bridge do
     end
   end
 
-  defp create_binding_if_missing(messaging, room_id, channel, instance_id, external_id) do
-    case messaging.get_room_by_external_binding(channel, instance_id, external_id) do
+  defp create_binding_if_missing(messaging, room_id, channel, bridge_id, external_id) do
+    case messaging.get_room_by_external_binding(channel, bridge_id, external_id) do
       {:ok, _existing} ->
-        Logger.debug("[Bridge] Binding already exists: #{channel}/#{instance_id}/#{external_id}")
+        Logger.debug("[Bridge] Binding already exists: #{channel}/#{bridge_id}/#{external_id}")
         :ok
 
       {:error, :not_found} ->
-        case messaging.create_room_binding(room_id, channel, instance_id, external_id, %{}) do
+        case messaging.create_room_binding(room_id, channel, bridge_id, external_id, %{}) do
           {:ok, binding} ->
-            Logger.info(
-              "[Bridge] Created binding #{binding.id}: #{channel}/#{instance_id}/#{external_id} -> #{room_id}"
-            )
+            Logger.info("[Bridge] Created binding #{binding.id}: #{channel}/#{bridge_id}/#{external_id} -> #{room_id}")
 
             :ok
 
@@ -190,7 +201,7 @@ defmodule JidoMessaging.Demo.Bridge do
 
   defp get_origin(_), do: {nil, nil}
 
-  defp not_origin?({channel, _instance, _external_id}, {origin_channel, _}) do
+  defp not_origin?({channel, _adapter, _bridge_id, _external_id}, {origin_channel, _}) do
     # Convert both to atoms for comparison
     normalize_channel(channel) != normalize_channel(origin_channel)
   end
@@ -202,12 +213,12 @@ defmodule JidoMessaging.Demo.Bridge do
 
   # Delivery
 
-  defp send_to_binding({:telegram, _instance, chat_id}, message) do
+  defp send_to_binding({:telegram, adapter_module, _bridge_id, chat_id}, message) do
     text = format_message(message, :telegram)
     Logger.info("[Bridge] -> TG: #{text}")
 
     try do
-      case Telegram.send_message(chat_id, text) do
+      case AdapterBridge.send_message(adapter_module, chat_id, text, []) do
         {:ok, _} -> :ok
         {:error, reason} -> Logger.warning("[Bridge] Telegram send failed: #{inspect(reason)}")
       end
@@ -216,12 +227,12 @@ defmodule JidoMessaging.Demo.Bridge do
     end
   end
 
-  defp send_to_binding({:discord, _instance, channel_id}, message) do
+  defp send_to_binding({:discord, adapter_module, _bridge_id, channel_id}, message) do
     text = format_message(message, :discord)
     Logger.info("[Bridge] -> DC: #{text}")
 
     try do
-      case Discord.send_message(channel_id, text) do
+      case AdapterBridge.send_message(adapter_module, channel_id, text, []) do
         {:ok, _} -> :ok
         {:error, reason} -> Logger.warning("[Bridge] Discord send failed: #{inspect(reason)}")
       end
@@ -262,12 +273,35 @@ defmodule JidoMessaging.Demo.Bridge do
       %{type: :text, text: text} -> text
       %{"type" => "text", "text" => text} -> text
       %{text: text} when is_binary(text) -> text
-      %JidoMessaging.Content.Text{text: text} -> text
+      %Jido.Chat.Content.Text{text: text} -> text
       _ -> nil
     end)
   end
 
   defp extract_text(_), do: nil
+
+  defp resolve_adapter_module(opts, opt_key, env_key) do
+    module =
+      Keyword.get(opts, opt_key) ||
+        Application.get_env(:jido_messaging, opt_key) ||
+        System.get_env(env_key)
+
+    normalize_module(module)
+  end
+
+  defp normalize_module(module) when is_atom(module), do: module
+
+  defp normalize_module(module_name) when is_binary(module_name) and module_name != "" do
+    module_name
+    |> String.split(".")
+    |> Module.concat()
+  end
+
+  defp normalize_module(nil),
+    do: raise(ArgumentError, "missing adapter module configuration (set opts or env)")
+
+  defp normalize_module(other),
+    do: raise(ArgumentError, "invalid adapter module configuration: #{inspect(other)}")
 
   # Legacy API - kept for backwards compatibility during migration
   # These will be removed once Phase 3 is verified working

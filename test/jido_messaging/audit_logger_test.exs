@@ -1,9 +1,9 @@
-defmodule JidoMessaging.AuditLoggerTest do
+defmodule Jido.Messaging.AuditLoggerTest do
   use ExUnit.Case, async: false
 
   import ExUnit.CaptureLog
 
-  alias JidoMessaging.AuditLogger
+  alias Jido.Messaging.AuditLogger
 
   setup do
     on_exit(fn ->

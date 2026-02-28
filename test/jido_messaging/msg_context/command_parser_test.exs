@@ -1,7 +1,7 @@
-defmodule JidoMessaging.MsgContext.CommandParserTest do
+defmodule Jido.Messaging.MsgContext.CommandParserTest do
   use ExUnit.Case, async: true
 
-  alias JidoMessaging.MsgContext.CommandParser
+  alias Jido.Messaging.MsgContext.CommandParser
 
   describe "parse/2" do
     test "parses prefixed commands deterministically" do

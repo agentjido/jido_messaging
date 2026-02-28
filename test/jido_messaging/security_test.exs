@@ -1,15 +1,15 @@
-defmodule JidoMessaging.SecurityTest do
+defmodule Jido.Messaging.SecurityTest do
   use ExUnit.Case, async: true
 
-  alias JidoMessaging.Security
+  alias Jido.Messaging.Security
 
   defmodule TestMessaging do
-    use JidoMessaging,
-      adapter: JidoMessaging.Adapters.ETS
+    use Jido.Messaging,
+      adapter: Jido.Messaging.Adapters.ETS
   end
 
   defmodule SlackChannel do
-    @behaviour JidoMessaging.Channel
+    @behaviour Jido.Chat.Adapter
 
     @impl true
     def channel_type, do: :slack
@@ -22,7 +22,7 @@ defmodule JidoMessaging.SecurityTest do
   end
 
   defmodule SlowAdapter do
-    @behaviour JidoMessaging.Security
+    @behaviour Jido.Messaging.Security
 
     @impl true
     def verify_sender(_channel_module, _incoming_message, _raw_payload, opts) do

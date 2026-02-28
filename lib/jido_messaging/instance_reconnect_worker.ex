@@ -1,4 +1,4 @@
-defmodule JidoMessaging.InstanceReconnectWorker do
+defmodule Jido.Messaging.InstanceReconnectWorker do
   @moduledoc """
   Per-instance lifecycle worker that runs connection probes and reconnect policy.
 
@@ -8,7 +8,7 @@ defmodule JidoMessaging.InstanceReconnectWorker do
   """
   use GenServer
 
-  alias JidoMessaging.{Adapters.Heartbeat, Channel, Instance, InstanceServer}
+  alias Jido.Messaging.{AdapterBridge, Adapters.Heartbeat, Instance, InstanceServer}
 
   @default_max_reconnect_attempts 5
   @default_reconnect_base_backoff_ms 250
@@ -99,7 +99,7 @@ defmodule JidoMessaging.InstanceReconnectWorker do
          |> schedule_probe()}
 
       {:error, reason} ->
-        class = Channel.classify_failure(reason)
+        class = AdapterBridge.classify_failure(reason)
 
         emit_event(:health_probe, %{}, state, %{
           failure_class: class,
@@ -156,7 +156,7 @@ defmodule JidoMessaging.InstanceReconnectWorker do
          |> schedule_probe()}
 
       {:error, reason} ->
-        class = Channel.classify_failure(reason)
+        class = AdapterBridge.classify_failure(reason)
 
         emit_event(:reconnect_failed, %{attempt: attempt}, state, %{
           failure_class: class,

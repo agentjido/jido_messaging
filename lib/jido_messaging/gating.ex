@@ -1,4 +1,4 @@
-defmodule JidoMessaging.Gating do
+defmodule Jido.Messaging.Gating do
   @moduledoc """
   Gating hook for authorization decisions.
 
@@ -7,10 +7,10 @@ defmodule JidoMessaging.Gating do
 
   ## Usage
 
-  Implement the `JidoMessaging.Gating` behaviour in your application:
+  Implement the `Jido.Messaging.Gating` behaviour in your application:
 
       defmodule MyApp.RequireMentionGater do
-        @behaviour JidoMessaging.Gating
+        @behaviour Jido.Messaging.Gating
 
         @impl true
         def check(%MsgContext{was_mentioned: true}, _opts), do: :allow
@@ -20,7 +20,7 @@ defmodule JidoMessaging.Gating do
 
   Then pass gaters to the ingest pipeline:
 
-      Ingest.ingest_incoming(messaging, channel, instance_id, incoming,
+      Ingest.ingest_incoming(messaging, channel, bridge_id, incoming,
         gaters: [MyApp.RequireMentionGater, MyApp.RateLimitGater]
       )
 
@@ -39,7 +39,7 @@ defmodule JidoMessaging.Gating do
     * Default policy implementations
   """
 
-  alias JidoMessaging.MsgContext
+  alias Jido.Messaging.MsgContext
 
   @type reason :: atom()
   @type description :: String.t()

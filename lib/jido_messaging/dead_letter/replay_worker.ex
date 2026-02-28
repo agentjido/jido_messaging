@@ -1,9 +1,9 @@
-defmodule JidoMessaging.DeadLetter.ReplayWorker do
+defmodule Jido.Messaging.DeadLetter.ReplayWorker do
   @moduledoc false
   use GenServer
 
-  alias JidoMessaging.DeadLetter
-  alias JidoMessaging.OutboundGateway
+  alias Jido.Messaging.DeadLetter
+  alias Jido.Messaging.OutboundGateway
 
   @default_replay_timeout 30_000
 
@@ -140,7 +140,7 @@ defmodule JidoMessaging.DeadLetter.ReplayWorker do
   defp replay_context(request) do
     %{
       channel: request[:channel],
-      instance_id: request[:instance_id],
+      bridge_id: request[:bridge_id],
       external_room_id: request[:external_room_id]
     }
   end

@@ -1,6 +1,6 @@
-defmodule JidoMessaging.TestHelpers do
+defmodule Jido.Messaging.TestHelpers do
   @moduledoc """
-  Shared test helpers for JidoMessaging tests.
+  Shared test helpers for Jido.Messaging tests.
   """
 
   import ExUnit.Assertions

@@ -1,10 +1,10 @@
-defmodule JidoMessaging.MsgContextTest do
+defmodule Jido.Messaging.MsgContextTest do
   use ExUnit.Case, async: true
 
-  alias JidoMessaging.MsgContext
+  alias Jido.Messaging.MsgContext
 
   defmodule MockChannel do
-    @behaviour JidoMessaging.Channel
+    @behaviour Jido.Chat.Adapter
 
     @impl true
     def channel_type, do: :mock
@@ -35,7 +35,7 @@ defmodule JidoMessaging.MsgContextTest do
 
       assert ctx.channel_type == :mock
       assert ctx.channel_module == MockChannel
-      assert ctx.instance_id == "instance_1"
+      assert ctx.bridge_id == "instance_1"
       assert ctx.external_room_id == "chat_123"
       assert ctx.external_user_id == "user_456"
       assert ctx.body == "Hello world!"
@@ -75,7 +75,7 @@ defmodule JidoMessaging.MsgContextTest do
       assert ctx.raw == %{original: "payload"}
     end
 
-    test "converts integer instance_id to string" do
+    test "converts integer bridge_id to string" do
       incoming = %{
         external_room_id: "chat_1",
         external_user_id: "user_1",
@@ -83,7 +83,7 @@ defmodule JidoMessaging.MsgContextTest do
       }
 
       ctx = MsgContext.from_incoming(MockChannel, 12345, incoming)
-      assert ctx.instance_id == "12345"
+      assert ctx.bridge_id == "12345"
     end
 
     test "converts integer external IDs to strings" do
@@ -188,7 +188,7 @@ defmodule JidoMessaging.MsgContextTest do
       assert legacy.room.id == "room_1"
       assert legacy.participant.id == "participant_1"
       assert legacy.channel == MockChannel
-      assert legacy.instance_id == "inst"
+      assert legacy.bridge_id == "inst"
       assert legacy.external_room_id == "chat_1"
     end
   end

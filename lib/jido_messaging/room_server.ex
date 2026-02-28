@@ -1,4 +1,4 @@
-defmodule JidoMessaging.RoomServer do
+defmodule Jido.Messaging.RoomServer do
   @moduledoc """
   GenServer that manages a single room's state.
 
@@ -12,7 +12,7 @@ defmodule JidoMessaging.RoomServer do
   use GenServer
   require Logger
 
-  alias JidoMessaging.{Room, Message, Participant}
+  alias Jido.Chat.{LegacyMessage, Participant, Room}
 
   @default_message_limit 100
   @default_timeout_ms :timer.minutes(5)
@@ -24,7 +24,7 @@ defmodule JidoMessaging.RoomServer do
             %{
               room: Zoi.struct(Room),
               instance_module: Zoi.any(),
-              messages: Zoi.array(Zoi.struct(Message)) |> Zoi.default([]),
+              messages: Zoi.array(Zoi.struct(LegacyMessage)) |> Zoi.default([]),
               participants: Zoi.map() |> Zoi.default(%{}),
               typing: Zoi.map() |> Zoi.default(%{}),
               message_limit: Zoi.integer() |> Zoi.default(@default_message_limit),
@@ -49,7 +49,7 @@ defmodule JidoMessaging.RoomServer do
 
   Options:
   - `:room` - Required. The Room struct or room attributes
-  - `:instance_module` - Required. The JidoMessaging instance module
+  - `:instance_module` - Required. The Jido.Messaging instance module
   - `:message_limit` - Optional. Max messages to keep (default: 100)
   - `:timeout_ms` - Optional. Inactivity timeout before hibernation (default: 5 min)
   """
@@ -77,7 +77,7 @@ defmodule JidoMessaging.RoomServer do
   end
 
   @doc "Add a message to the room's history"
-  def add_message(server, %Message{} = message) do
+  def add_message(server, %LegacyMessage{} = message) do
     GenServer.call(server, {:add_message, message})
   end
 
@@ -148,7 +148,7 @@ defmodule JidoMessaging.RoomServer do
   end
 
   @doc "Add a reply to a thread"
-  def add_thread_reply(server, root_message_id, %Message{} = reply) do
+  def add_thread_reply(server, root_message_id, %LegacyMessage{} = reply) do
     GenServer.call(server, {:add_thread_reply, root_message_id, reply})
   end
 
@@ -169,7 +169,7 @@ defmodule JidoMessaging.RoomServer do
 
   @doc "Get list of agent PIDs participating in a room"
   def get_agent_pids(instance_module, room_id) do
-    JidoMessaging.AgentSupervisor.list_agents(instance_module, room_id)
+    Jido.Messaging.AgentSupervisor.list_agents(instance_module, room_id)
     |> Enum.map(fn {_agent_id, pid} -> pid end)
   end
 
@@ -617,7 +617,7 @@ defmodule JidoMessaging.RoomServer do
   # Private functions
 
   defp broadcast_event(instance_module, room_id, event) do
-    JidoMessaging.PubSub.broadcast(instance_module, room_id, event)
+    Jido.Messaging.PubSub.broadcast(instance_module, room_id, event)
   end
 
   defp update_message(state, message_id, update_fn) do
@@ -678,6 +678,6 @@ defmodule JidoMessaging.RoomServer do
   end
 
   defp emit_signal(event_type, state, data) do
-    JidoMessaging.Signal.emit(event_type, state.instance_module, state.room.id, data)
+    Jido.Messaging.Signal.emit(event_type, state.instance_module, state.room.id, data)
   end
 end

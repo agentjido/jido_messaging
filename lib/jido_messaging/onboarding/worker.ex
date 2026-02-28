@@ -1,10 +1,10 @@
-defmodule JidoMessaging.Onboarding.Worker do
+defmodule Jido.Messaging.Onboarding.Worker do
   @moduledoc false
   use GenServer
 
-  alias JidoMessaging.Onboarding.Flow
-  alias JidoMessaging.Onboarding.StateMachine
-  alias JidoMessaging.Runtime
+  alias Jido.Messaging.Onboarding.Flow
+  alias Jido.Messaging.Onboarding.StateMachine
+  alias Jido.Messaging.Runtime
 
   @default_call_timeout 5_000
 

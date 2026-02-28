@@ -1,4 +1,4 @@
-defmodule JidoMessaging.MultiRoomIntegrationTest do
+defmodule Jido.Messaging.MultiRoomIntegrationTest do
   @moduledoc """
   Comprehensive integration tests for multi-room, multi-participant scenarios.
 
@@ -7,10 +7,11 @@ defmodule JidoMessaging.MultiRoomIntegrationTest do
   use ExUnit.Case, async: false
   @moduletag :integration
 
-  alias JidoMessaging.{Ingest, Deliver, RoomServer, RoomSupervisor, PubSub, Content.Text}
+  alias Jido.Chat.Content.Text
+  alias Jido.Messaging.{Ingest, Deliver, RoomServer, RoomSupervisor, PubSub}
 
   defmodule MockTelegramChannel do
-    @behaviour JidoMessaging.Channel
+    @behaviour Jido.Chat.Adapter
 
     @impl true
     def channel_type, do: :telegram
@@ -38,14 +39,14 @@ defmodule JidoMessaging.MultiRoomIntegrationTest do
 
   setup do
     if PubSub.pubsub_available?() do
-      start_supervised!({Phoenix.PubSub, name: JidoMessaging.TestPubSub})
-      start_supervised!(JidoMessaging.TestMessagingWithPubSub)
-      JidoMessaging.TestMessagingWithPubSub.clear_dedupe()
-      {:ok, messaging: JidoMessaging.TestMessagingWithPubSub, pubsub_enabled: true}
+      start_supervised!({Phoenix.PubSub, name: Jido.Messaging.TestPubSub})
+      start_supervised!(Jido.Messaging.TestMessagingWithPubSub)
+      Jido.Messaging.TestMessagingWithPubSub.clear_dedupe()
+      {:ok, messaging: Jido.Messaging.TestMessagingWithPubSub, pubsub_enabled: true}
     else
-      start_supervised!(JidoMessaging.TestMessaging)
-      JidoMessaging.TestMessaging.clear_dedupe()
-      {:ok, messaging: JidoMessaging.TestMessaging, pubsub_enabled: false}
+      start_supervised!(Jido.Messaging.TestMessaging)
+      Jido.Messaging.TestMessaging.clear_dedupe()
+      {:ok, messaging: Jido.Messaging.TestMessaging, pubsub_enabled: false}
     end
   end
 
@@ -150,8 +151,8 @@ defmodule JidoMessaging.MultiRoomIntegrationTest do
       # if pubsub_enabled do
       #   reply_a1_id = reply_a1.id
       #   reply_b1_id = reply_b1.id
-      #   assert_receive {:message_added, %JidoMessaging.Message{id: ^reply_a1_id}}, 1_000
-      #   assert_receive {:message_added, %JidoMessaging.Message{id: ^reply_b1_id}}, 1_000
+      #   assert_receive {:message_added, %Jido.Chat.LegacyMessage{id: ^reply_a1_id}}, 1_000
+      #   assert_receive {:message_added, %Jido.Chat.LegacyMessage{id: ^reply_b1_id}}, 1_000
       # end
       _ = pubsub_enabled
 
@@ -335,7 +336,7 @@ defmodule JidoMessaging.MultiRoomIntegrationTest do
 
         # Should receive events only from subscribed room
         msg_sub2_id = msg_sub2.id
-        assert_receive {:message_added, %JidoMessaging.Message{id: ^msg_sub2_id}}, 1_000
+        assert_receive {:message_added, %Jido.Chat.LegacyMessage{id: ^msg_sub2_id}}, 1_000
         assert_receive {:participant_joined, _}, 1_000
 
         # Drain any remaining events for subscribed room
@@ -403,7 +404,7 @@ defmodule JidoMessaging.MultiRoomIntegrationTest do
 
       # Add more messages than the limit
       for i <- 501..(500 + message_limit + 10) do
-        {msg, msg_ctx} = ingest!(messaging, "bounded_room", "user_bounded", "Message #{i}", i)
+        {msg, msg_ctx} = ingest!(messaging, "bounded_room", "user_bounded", "LegacyMessage #{i}", i)
         _reply = reply!(messaging, msg, msg_ctx, "Reply #{i}")
       end
 

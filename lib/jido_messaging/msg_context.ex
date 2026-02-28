@@ -1,4 +1,4 @@
-defmodule JidoMessaging.MsgContext do
+defmodule Jido.Messaging.MsgContext do
   @moduledoc """
   Normalized message envelope for routing and transport.
 
@@ -10,7 +10,7 @@ defmodule JidoMessaging.MsgContext do
   ## Usage
 
       # Populated by Ingest pipeline
-      {:ok, message, msg_context} = Ingest.ingest_incoming(messaging, channel, instance_id, incoming)
+      {:ok, message, msg_context} = Ingest.ingest_incoming(messaging, channel, bridge_id, incoming)
 
       # Use for routing decisions
       if msg_context.chat_type == :direct do
@@ -27,7 +27,7 @@ defmodule JidoMessaging.MsgContext do
               # Channel identification
               channel_type: Zoi.atom(),
               channel_module: Zoi.module() |> Zoi.nullish(),
-              instance_id: Zoi.string(),
+              bridge_id: Zoi.string(),
 
               # Conversation scope
               external_room_id: Zoi.string(),
@@ -85,7 +85,7 @@ defmodule JidoMessaging.MsgContext do
   ## Parameters
 
     * `channel_module` - The channel module that received the message
-    * `instance_id` - The instance identifier
+    * `bridge_id` - The bridge identifier
     * `incoming` - The normalized incoming message map
 
   ## Examples
@@ -100,14 +100,14 @@ defmodule JidoMessaging.MsgContext do
       "chat_123"
   """
   @spec from_incoming(module(), String.t(), map()) :: t()
-  def from_incoming(channel_module, instance_id, incoming) do
+  def from_incoming(channel_module, bridge_id, incoming) do
     channel_type = channel_module.channel_type()
 
     attrs = %{
       # Channel identification
       channel_type: channel_type,
       channel_module: channel_module,
-      instance_id: to_string(instance_id),
+      bridge_id: to_string(bridge_id),
 
       # Conversation scope
       external_room_id: to_string(incoming.external_room_id),
@@ -172,7 +172,7 @@ defmodule JidoMessaging.MsgContext do
       room: %{id: ctx.room_id},
       participant: %{id: ctx.participant_id},
       channel: ctx.channel_module,
-      instance_id: ctx.instance_id,
+      bridge_id: ctx.bridge_id,
       external_room_id: ctx.external_room_id,
       instance_module: nil
     }

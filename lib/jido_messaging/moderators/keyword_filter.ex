@@ -1,4 +1,4 @@
-defmodule JidoMessaging.Moderators.KeywordFilter do
+defmodule Jido.Messaging.Moderators.KeywordFilter do
   @moduledoc """
   A simple keyword-based content filter.
 
@@ -15,9 +15,9 @@ defmodule JidoMessaging.Moderators.KeywordFilter do
       KeywordFilter.moderate(message, blocked_words: ["spam", "scam"], action: :reject)
   """
 
-  @behaviour JidoMessaging.Moderation
+  @behaviour Jido.Messaging.Moderation
 
-  alias JidoMessaging.Content.Text
+  alias Jido.Chat.Content.Text
 
   @impl true
   def moderate(message, opts) do

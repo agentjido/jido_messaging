@@ -1,9 +1,9 @@
-defmodule JidoMessaging.Onboarding.StateMachine do
+defmodule Jido.Messaging.Onboarding.StateMachine do
   @moduledoc """
   Deterministic onboarding state transitions with persisted idempotency.
   """
 
-  alias JidoMessaging.Onboarding.Flow
+  alias Jido.Messaging.Onboarding.Flow
 
   @transitions %{
     started: %{resolve_directory: :directory_resolved, cancel: :cancelled},

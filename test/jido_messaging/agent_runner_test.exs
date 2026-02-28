@@ -1,19 +1,13 @@
-defmodule JidoMessaging.AgentRunnerTest do
+defmodule Jido.Messaging.AgentRunnerTest do
   use ExUnit.Case, async: true
 
-  import JidoMessaging.TestHelpers
+  import Jido.Messaging.TestHelpers
 
-  alias JidoMessaging.{
-    Room,
-    Message,
-    RoomServer,
-    RoomSupervisor,
-    AgentRunner,
-    AgentSupervisor
-  }
+  alias Jido.Chat.{LegacyMessage, Room}
+  alias Jido.Messaging.{RoomServer, RoomSupervisor, AgentRunner, AgentSupervisor}
 
   defmodule TestMessaging do
-    use JidoMessaging, adapter: JidoMessaging.Adapters.ETS
+    use Jido.Messaging, adapter: Jido.Messaging.Adapters.ETS
   end
 
   setup do
@@ -131,7 +125,7 @@ defmodule JidoMessaging.AgentRunnerTest do
       {:ok, _agent_pid} = AgentSupervisor.start_agent(TestMessaging, room.id, "echo_bot", agent_config)
 
       message =
-        Message.new(%{
+        LegacyMessage.new(%{
           room_id: room.id,
           sender_id: "user_1",
           role: :user,
@@ -162,7 +156,7 @@ defmodule JidoMessaging.AgentRunnerTest do
       {:ok, _agent_pid} = AgentSupervisor.start_agent(TestMessaging, room.id, "echo_bot", agent_config)
 
       own_message =
-        Message.new(%{
+        LegacyMessage.new(%{
           room_id: room.id,
           sender_id: "echo_bot",
           role: :assistant,
@@ -194,7 +188,7 @@ defmodule JidoMessaging.AgentRunnerTest do
       {:ok, _agent_pid} = AgentSupervisor.start_agent(TestMessaging, room.id, "help_bot", agent_config)
 
       message_with_mention =
-        Message.new(%{
+        LegacyMessage.new(%{
           room_id: room.id,
           sender_id: "user_1",
           role: :user,
@@ -224,7 +218,7 @@ defmodule JidoMessaging.AgentRunnerTest do
       {:ok, _agent_pid} = AgentSupervisor.start_agent(TestMessaging, room.id, "help_bot", agent_config)
 
       message_without_mention =
-        Message.new(%{
+        LegacyMessage.new(%{
           room_id: room.id,
           sender_id: "user_1",
           role: :user,
@@ -256,7 +250,7 @@ defmodule JidoMessaging.AgentRunnerTest do
       {:ok, _agent_pid} = AgentSupervisor.start_agent(TestMessaging, room.id, "cmd_bot", agent_config)
 
       message_with_prefix =
-        Message.new(%{
+        LegacyMessage.new(%{
           room_id: room.id,
           sender_id: "user_1",
           role: :user,
@@ -286,7 +280,7 @@ defmodule JidoMessaging.AgentRunnerTest do
       {:ok, _agent_pid} = AgentSupervisor.start_agent(TestMessaging, room.id, "cmd_bot", agent_config)
 
       message_without_prefix =
-        Message.new(%{
+        LegacyMessage.new(%{
           room_id: room.id,
           sender_id: "user_1",
           role: :user,
@@ -321,7 +315,7 @@ defmodule JidoMessaging.AgentRunnerTest do
       {:ok, _agent_pid} = AgentSupervisor.start_agent(TestMessaging, room.id, "echo_bot", agent_config)
 
       message =
-        Message.new(%{
+        LegacyMessage.new(%{
           room_id: room.id,
           sender_id: "user_1",
           role: :user,
@@ -362,7 +356,7 @@ defmodule JidoMessaging.AgentRunnerTest do
       {:ok, _agent_pid} = AgentSupervisor.start_agent(TestMessaging, room.id, "silent_bot", agent_config)
 
       message =
-        Message.new(%{
+        LegacyMessage.new(%{
           room_id: room.id,
           sender_id: "user_1",
           role: :user,

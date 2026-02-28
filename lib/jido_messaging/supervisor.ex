@@ -1,13 +1,13 @@
-defmodule JidoMessaging.Supervisor do
+defmodule Jido.Messaging.Supervisor do
   @moduledoc """
-  Main supervisor for a JidoMessaging instance.
+  Main supervisor for a Jido.Messaging instance.
 
-  Started by the host application's messaging module (defined with `use JidoMessaging`).
+  Started by the host application's messaging module (defined with `use Jido.Messaging`).
   Each instance has its own isolated supervision tree.
   """
   use Supervisor
 
-  alias JidoMessaging.PluginRegistry
+  alias Jido.Messaging.BridgeRegistry
 
   def start_link(opts) do
     name = Keyword.fetch!(opts, :name)
@@ -16,20 +16,20 @@ defmodule JidoMessaging.Supervisor do
 
   @impl true
   def init(opts) do
-    # Ensure JidoMessaging signal extensions are registered
-    JidoMessaging.Signal.Ext.CorrelationId.ensure_registered()
+    # Ensure Jido.Messaging signal extensions are registered
+    Jido.Messaging.Signal.Ext.CorrelationId.ensure_registered()
 
     instance_module = Keyword.fetch!(opts, :instance_module)
     adapter = Keyword.fetch!(opts, :adapter)
     adapter_opts = Keyword.get(opts, :adapter_opts, [])
-    plugin_manifest_paths = Keyword.get(opts, :plugin_manifest_paths, [])
-    required_plugins = Keyword.get(opts, :required_plugins, [])
-    plugin_collision_policy = Keyword.get(opts, :plugin_collision_policy, :prefer_last)
+    bridge_manifest_paths = Keyword.get(opts, :bridge_manifest_paths, [])
+    required_bridges = Keyword.get(opts, :required_bridges, [])
+    bridge_collision_policy = Keyword.get(opts, :bridge_collision_policy, :prefer_last)
 
-    case PluginRegistry.bootstrap_from_manifests(
-           manifest_paths: plugin_manifest_paths,
-           required_plugins: required_plugins,
-           collision_policy: plugin_collision_policy
+    case BridgeRegistry.bootstrap_from_manifests(
+           manifest_paths: bridge_manifest_paths,
+           required_bridges: required_bridges,
+           collision_policy: bridge_collision_policy
          ) do
       {:ok, _bootstrap_result} ->
         runtime_name = Module.concat(instance_module, Runtime)
@@ -38,13 +38,16 @@ defmodule JidoMessaging.Supervisor do
         agent_registry_name = Module.concat(instance_module, Registry.Agents)
         agent_supervisor_name = Module.concat(instance_module, AgentSupervisor)
         instance_registry_name = Module.concat(instance_module, Registry.Instances)
+        bridge_registry_name = Module.concat(instance_module, Registry.Bridges)
         instance_supervisor_name = Module.concat(instance_module, InstanceSupervisor)
+        bridge_supervisor_name = Module.concat(instance_module, BridgeSupervisor)
         onboarding_registry_name = Module.concat(instance_module, Registry.Onboarding)
         onboarding_supervisor_name = Module.concat(instance_module, OnboardingSupervisor)
         session_manager_supervisor_name = Module.concat(instance_module, SessionManagerSupervisor)
         dead_letter_name = Module.concat(instance_module, DeadLetter)
         dead_letter_replay_supervisor_name = Module.concat(instance_module, DeadLetterReplaySupervisor)
         outbound_gateway_supervisor_name = Module.concat(instance_module, OutboundGatewaySupervisor)
+        config_store_name = Module.concat(instance_module, ConfigStore)
         deduper_name = Module.concat(instance_module, Deduper)
         signal_bus_name = Module.concat(instance_module, SignalBus)
 
@@ -52,28 +55,31 @@ defmodule JidoMessaging.Supervisor do
           {Registry, keys: :unique, name: room_registry_name},
           {Registry, keys: :unique, name: agent_registry_name},
           {Registry, keys: :unique, name: instance_registry_name},
+          {Registry, keys: :unique, name: bridge_registry_name},
           {Registry, keys: :unique, name: onboarding_registry_name},
           {Jido.Signal.Bus, name: signal_bus_name},
-          {JidoMessaging.RoomSupervisor, name: room_supervisor_name, instance_module: instance_module},
-          {JidoMessaging.AgentSupervisor, name: agent_supervisor_name, instance_module: instance_module},
-          {JidoMessaging.Onboarding.Supervisor, name: onboarding_supervisor_name, instance_module: instance_module},
-          {JidoMessaging.SessionManager.Supervisor,
+          {Jido.Messaging.RoomSupervisor, name: room_supervisor_name, instance_module: instance_module},
+          {Jido.Messaging.AgentSupervisor, name: agent_supervisor_name, instance_module: instance_module},
+          {Jido.Messaging.Onboarding.Supervisor, name: onboarding_supervisor_name, instance_module: instance_module},
+          {Jido.Messaging.SessionManager.Supervisor,
            name: session_manager_supervisor_name, instance_module: instance_module},
-          {JidoMessaging.DeadLetter, name: dead_letter_name, instance_module: instance_module},
-          {JidoMessaging.DeadLetter.ReplaySupervisor,
+          {Jido.Messaging.DeadLetter, name: dead_letter_name, instance_module: instance_module},
+          {Jido.Messaging.DeadLetter.ReplaySupervisor,
            name: dead_letter_replay_supervisor_name, instance_module: instance_module},
-          {JidoMessaging.OutboundGateway.Supervisor,
+          {Jido.Messaging.OutboundGateway.Supervisor,
            name: outbound_gateway_supervisor_name, instance_module: instance_module},
-          {JidoMessaging.InstanceSupervisor, name: instance_supervisor_name, instance_module: instance_module},
-          {JidoMessaging.Deduper, name: deduper_name, instance_module: instance_module},
-          {JidoMessaging.Runtime,
+          {Jido.Messaging.ConfigStore, name: config_store_name, instance_module: instance_module},
+          {Jido.Messaging.InstanceSupervisor, name: instance_supervisor_name, instance_module: instance_module},
+          {Jido.Messaging.BridgeSupervisor, name: bridge_supervisor_name, instance_module: instance_module},
+          {Jido.Messaging.Deduper, name: deduper_name, instance_module: instance_module},
+          {Jido.Messaging.Runtime,
            name: runtime_name, instance_module: instance_module, adapter: adapter, adapter_opts: adapter_opts}
         ]
 
         Supervisor.init(children, strategy: :one_for_one)
 
-      {:error, {:fatal_required_plugin_error, diagnostic}} ->
-        {:stop, {:fatal_required_plugin_error, diagnostic}}
+      {:error, {:fatal_required_bridge_error, diagnostic}} ->
+        {:stop, {:fatal_required_bridge_error, diagnostic}}
     end
   end
 

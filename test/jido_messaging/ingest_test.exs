@@ -1,15 +1,16 @@
-defmodule JidoMessaging.IngestTest do
+defmodule Jido.Messaging.IngestTest do
   use ExUnit.Case, async: true
 
-  alias JidoMessaging.{Ingest, Message}
+  alias Jido.Chat.LegacyMessage
+  alias Jido.Messaging.Ingest
 
   defmodule TestMessaging do
-    use JidoMessaging,
-      adapter: JidoMessaging.Adapters.ETS
+    use Jido.Messaging,
+      adapter: Jido.Messaging.Adapters.ETS
   end
 
   defmodule MockChannel do
-    @behaviour JidoMessaging.Channel
+    @behaviour Jido.Chat.Adapter
 
     @impl true
     def channel_type, do: :mock
@@ -21,22 +22,62 @@ defmodule JidoMessaging.IngestTest do
     def send_message(_chat_id, _text, _opts), do: {:ok, %{message_id: 999}}
   end
 
+  defmodule MockTelegramAdapter do
+    @behaviour Jido.Chat.Adapter
+    @impl true
+    def channel_type, do: :telegram
+    @impl true
+    def transform_incoming(_), do: {:error, :not_implemented}
+    @impl true
+    def send_message(_chat_id, _text, _opts), do: {:ok, %{message_id: 999}}
+  end
+
+  defmodule MockDiscordAdapter do
+    @behaviour Jido.Chat.Adapter
+    @impl true
+    def channel_type, do: :discord
+    @impl true
+    def transform_incoming(_), do: {:error, :not_implemented}
+    @impl true
+    def send_message(_chat_id, _text, _opts), do: {:ok, %{message_id: 999}}
+  end
+
+  defmodule MockSlackAdapter do
+    @behaviour Jido.Chat.Adapter
+    @impl true
+    def channel_type, do: :slack
+    @impl true
+    def transform_incoming(_), do: {:error, :not_implemented}
+    @impl true
+    def send_message(_chat_id, _text, _opts), do: {:ok, %{message_id: 999}}
+  end
+
+  defmodule MockWhatsAppAdapter do
+    @behaviour Jido.Chat.Adapter
+    @impl true
+    def channel_type, do: :whatsapp
+    @impl true
+    def transform_incoming(_), do: {:error, :not_implemented}
+    @impl true
+    def send_message(_chat_id, _text, _opts), do: {:ok, %{message_id: 999}}
+  end
+
   defmodule AllowGater do
-    @behaviour JidoMessaging.Gating
+    @behaviour Jido.Messaging.Gating
 
     @impl true
     def check(_ctx, _opts), do: :allow
   end
 
   defmodule DenyGater do
-    @behaviour JidoMessaging.Gating
+    @behaviour Jido.Messaging.Gating
 
     @impl true
     def check(_ctx, _opts), do: {:deny, :denied, "Denied by gater"}
   end
 
   defmodule TimeoutGater do
-    @behaviour JidoMessaging.Gating
+    @behaviour Jido.Messaging.Gating
 
     @impl true
     def check(_ctx, opts) do
@@ -47,7 +88,7 @@ defmodule JidoMessaging.IngestTest do
   end
 
   defmodule TrackingGater do
-    @behaviour JidoMessaging.Gating
+    @behaviour Jido.Messaging.Gating
 
     @impl true
     def check(_ctx, opts) do
@@ -60,28 +101,28 @@ defmodule JidoMessaging.IngestTest do
   end
 
   defmodule AllowModerator do
-    @behaviour JidoMessaging.Moderation
+    @behaviour Jido.Messaging.Moderation
 
     @impl true
     def moderate(_message, _opts), do: :allow
   end
 
   defmodule FlagModerator do
-    @behaviour JidoMessaging.Moderation
+    @behaviour Jido.Messaging.Moderation
 
     @impl true
     def moderate(_message, _opts), do: {:flag, :unsafe_hint, "Needs review"}
   end
 
   defmodule ModifyModerator do
-    @behaviour JidoMessaging.Moderation
+    @behaviour Jido.Messaging.Moderation
 
     @impl true
-    def moderate(%Message{} = message, _opts) do
+    def moderate(%LegacyMessage{} = message, _opts) do
       modified =
         %{
           message
-          | content: [%JidoMessaging.Content.Text{text: "[redacted]"}],
+          | content: [%Jido.Chat.Content.Text{text: "[redacted]"}],
             metadata: Map.put(message.metadata, :moderation_note, "redacted")
         }
 
@@ -90,7 +131,7 @@ defmodule JidoMessaging.IngestTest do
   end
 
   defmodule TimeoutModerator do
-    @behaviour JidoMessaging.Moderation
+    @behaviour Jido.Messaging.Moderation
 
     @impl true
     def moderate(_message, opts) do
@@ -101,7 +142,7 @@ defmodule JidoMessaging.IngestTest do
   end
 
   defmodule TrackingModerator do
-    @behaviour JidoMessaging.Moderation
+    @behaviour Jido.Messaging.Moderation
 
     @impl true
     def moderate(message, opts) do
@@ -114,7 +155,7 @@ defmodule JidoMessaging.IngestTest do
   end
 
   defmodule SlowSecurityAdapter do
-    @behaviour JidoMessaging.Security
+    @behaviour Jido.Messaging.Security
 
     @impl true
     def verify_sender(_channel_module, _incoming_message, _raw_payload, opts) do
@@ -152,14 +193,14 @@ defmodule JidoMessaging.IngestTest do
 
       assert message.role == :user
       assert message.status == :sent
-      assert [%JidoMessaging.Content.Text{text: "Hello world!"}] = message.content
+      assert [%Jido.Chat.Content.Text{text: "Hello world!"}] = message.content
       assert message.metadata.external_message_id == 789
       assert message.metadata.timestamp == 1_706_745_600
 
       assert context.room.id == message.room_id
       assert context.participant.id == message.sender_id
       assert context.channel == MockChannel
-      assert context.instance_id == "instance_1"
+      assert context.bridge_id == "instance_1"
       assert context.external_room_id == "chat_123"
       assert context.instance_module == TestMessaging
     end
@@ -207,7 +248,7 @@ defmodule JidoMessaging.IngestTest do
       incoming1 = %{
         external_room_id: "chat_1",
         external_user_id: "same_user",
-        text: "Message 1",
+        text: "LegacyMessage 1",
         external_message_id: 2001
       }
 
@@ -216,7 +257,7 @@ defmodule JidoMessaging.IngestTest do
       incoming2 = %{
         external_room_id: "chat_2",
         external_user_id: "same_user",
-        text: "Message 2",
+        text: "LegacyMessage 2",
         external_message_id: 2002
       }
 
@@ -284,11 +325,11 @@ defmodule JidoMessaging.IngestTest do
                Ingest.ingest_incoming(TestMessaging, MockChannel, "inst", incoming)
 
       assert [
-               %JidoMessaging.Content.Text{text: "Media payload"},
-               %JidoMessaging.Content.Image{url: "https://example.com/image.png", media_type: "image/png"},
-               %JidoMessaging.Content.Audio{url: "https://example.com/audio.ogg", media_type: "audio/ogg"},
-               %JidoMessaging.Content.Video{url: "https://example.com/video.mp4", media_type: "video/mp4"},
-               %JidoMessaging.Content.File{
+               %Jido.Chat.Content.Text{text: "Media payload"},
+               %Jido.Chat.Content.Image{url: "https://example.com/image.png", media_type: "image/png"},
+               %Jido.Chat.Content.Audio{url: "https://example.com/audio.ogg", media_type: "audio/ogg"},
+               %Jido.Chat.Content.Video{url: "https://example.com/video.mp4", media_type: "video/mp4"},
+               %Jido.Chat.Content.File{
                  url: "https://example.com/spec.pdf",
                  media_type: "application/pdf",
                  filename: "spec.pdf"
@@ -483,7 +524,7 @@ defmodule JidoMessaging.IngestTest do
                  moderators: [ModifyModerator, FlagModerator]
                )
 
-      assert [%JidoMessaging.Content.Text{text: "[redacted]"}] = message.content
+      assert [%Jido.Chat.Content.Text{text: "[redacted]"}] = message.content
       assert message.metadata.external_message_id == 6005
       assert message.metadata.timestamp == 1_706_745_601
       assert message.metadata.moderation_note == "redacted"
@@ -551,7 +592,7 @@ defmodule JidoMessaging.IngestTest do
       text = "@bot1 /deploy now"
 
       test_cases = [
-        {JidoMessaging.Channels.Telegram,
+        {MockTelegramAdapter,
          %{
            external_room_id: "norm_tg_room",
            external_user_id: "norm_user",
@@ -560,7 +601,7 @@ defmodule JidoMessaging.IngestTest do
            text: text,
            raw: %{"text" => text}
          }},
-        {JidoMessaging.Channels.Discord,
+        {MockDiscordAdapter,
          %{
            external_room_id: "norm_discord_room",
            external_user_id: "norm_user",
@@ -569,7 +610,7 @@ defmodule JidoMessaging.IngestTest do
            text: text,
            raw: %{"content" => text}
          }},
-        {JidoMessaging.Channels.Slack,
+        {MockSlackAdapter,
          %{
            external_room_id: "norm_slack_room",
            external_user_id: "norm_user",
@@ -578,7 +619,7 @@ defmodule JidoMessaging.IngestTest do
            text: text,
            raw: %{"text" => text}
          }},
-        {JidoMessaging.Channels.WhatsApp,
+        {MockWhatsAppAdapter,
          %{
            external_room_id: "norm_wa_room",
            external_user_id: "norm_user",

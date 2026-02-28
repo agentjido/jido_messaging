@@ -1,13 +1,14 @@
-defmodule JidoMessaging.RoomSupervisor do
+defmodule Jido.Messaging.RoomSupervisor do
   @moduledoc """
   DynamicSupervisor for spawning and managing RoomServer processes.
 
-  Each JidoMessaging instance has its own RoomSupervisor that manages
+  Each Jido.Messaging instance has its own RoomSupervisor that manages
   room servers on-demand.
   """
   use DynamicSupervisor
 
-  alias JidoMessaging.{Room, RoomServer}
+  alias Jido.Chat.Room
+  alias Jido.Messaging.RoomServer
 
   def start_link(opts) do
     name = Keyword.fetch!(opts, :name)

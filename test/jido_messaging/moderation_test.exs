@@ -1,34 +1,34 @@
-defmodule JidoMessaging.ModerationTest do
+defmodule Jido.Messaging.ModerationTest do
   use ExUnit.Case, async: true
 
-  alias JidoMessaging.Moderation
-  alias JidoMessaging.Moderators.{KeywordFilter, RateLimiter}
-  alias JidoMessaging.Message
-  alias JidoMessaging.Content.Text
+  alias Jido.Messaging.Moderation
+  alias Jido.Messaging.Moderators.{KeywordFilter, RateLimiter}
+  alias Jido.Chat.LegacyMessage
+  alias Jido.Chat.Content.Text
 
   defmodule AllowAllModerator do
-    @behaviour JidoMessaging.Moderation
+    @behaviour Jido.Messaging.Moderation
 
     @impl true
     def moderate(_message, _opts), do: :allow
   end
 
   defmodule FlagModerator do
-    @behaviour JidoMessaging.Moderation
+    @behaviour Jido.Messaging.Moderation
 
     @impl true
     def moderate(_message, _opts), do: {:flag, :test_flag, "Test flag"}
   end
 
   defmodule RejectModerator do
-    @behaviour JidoMessaging.Moderation
+    @behaviour Jido.Messaging.Moderation
 
     @impl true
     def moderate(_message, _opts), do: {:reject, :test_reject, "Test rejection"}
   end
 
   defmodule ModifyModerator do
-    @behaviour JidoMessaging.Moderation
+    @behaviour Jido.Messaging.Moderation
 
     @impl true
     def moderate(message, _opts) do
@@ -151,7 +151,7 @@ defmodule JidoMessaging.ModerationTest do
     end
 
     test "handles empty content" do
-      message = %Message{
+      message = %LegacyMessage{
         id: "msg_1",
         room_id: "room_1",
         sender_id: "user_1",
@@ -166,7 +166,7 @@ defmodule JidoMessaging.ModerationTest do
 
     test "handles string key map content" do
       message =
-        Message.new(%{
+        LegacyMessage.new(%{
           room_id: "room_1",
           sender_id: "user_1",
           role: :user,
@@ -180,7 +180,7 @@ defmodule JidoMessaging.ModerationTest do
 
     test "handles non-text content blocks" do
       message =
-        Message.new(%{
+        LegacyMessage.new(%{
           room_id: "room_1",
           sender_id: "user_1",
           role: :user,
@@ -269,7 +269,7 @@ defmodule JidoMessaging.ModerationTest do
   end
 
   defp build_message(text) do
-    Message.new(%{
+    LegacyMessage.new(%{
       room_id: "room_1",
       sender_id: "user_1",
       role: :user,
@@ -278,7 +278,7 @@ defmodule JidoMessaging.ModerationTest do
   end
 
   defp build_message_with_struct(text) do
-    Message.new(%{
+    LegacyMessage.new(%{
       room_id: "room_1",
       sender_id: "user_1",
       role: :user,

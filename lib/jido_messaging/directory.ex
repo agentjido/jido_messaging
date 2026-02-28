@@ -1,4 +1,4 @@
-defmodule JidoMessaging.Directory do
+defmodule Jido.Messaging.Directory do
   @moduledoc """
   Unified directory lookup and search APIs.
 
@@ -7,7 +7,7 @@ defmodule JidoMessaging.Directory do
   `{:ambiguous, matches}` when a query maps to multiple entities.
   """
 
-  alias JidoMessaging.Runtime
+  alias Jido.Messaging.Runtime
 
   @typedoc "Supported directory entity targets."
   @type target :: :participant | :room

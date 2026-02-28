@@ -1,10 +1,10 @@
-defmodule JidoMessaging.Onboarding.Supervisor do
+defmodule Jido.Messaging.Onboarding.Supervisor do
   @moduledoc """
   Dynamic supervisor for onboarding workers partitioned by onboarding ID.
   """
   use DynamicSupervisor
 
-  alias JidoMessaging.Onboarding.Worker
+  alias Jido.Messaging.Onboarding.Worker
 
   @spec start_link(keyword()) :: Supervisor.on_start()
   def start_link(opts) do

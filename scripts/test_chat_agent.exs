@@ -5,7 +5,7 @@
 #
 # Or set the key in your .env file
 
-alias JidoMessaging.Demo.ChatAgent
+alias Jido.Messaging.Demo.ChatAgent
 
 IO.puts("\n" <> String.duplicate("=", 60))
 IO.puts("ChatAgent Test Script (Cerebras)")

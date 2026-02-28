@@ -1,4 +1,4 @@
-defmodule JidoMessaging.Streaming do
+defmodule Jido.Messaging.Streaming do
   @moduledoc """
   Streaming response support for progressive message updates.
 
@@ -36,7 +36,7 @@ defmodule JidoMessaging.Streaming do
             __MODULE__,
             %{
               messaging_module: Zoi.any(),
-              room: Zoi.struct(JidoMessaging.Room),
+              room: Zoi.struct(Jido.Chat.Room),
               channel: Zoi.any(),
               chat_id: Zoi.any(),
               message_id: Zoi.any() |> Zoi.nullish(),

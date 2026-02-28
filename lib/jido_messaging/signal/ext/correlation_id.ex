@@ -1,6 +1,6 @@
-defmodule JidoMessaging.Signal.Ext.CorrelationId do
+defmodule Jido.Messaging.Signal.Ext.CorrelationId do
   @moduledoc """
-  Signal extension for message correlation tracking in JidoMessaging.
+  Signal extension for message correlation tracking in Jido.Messaging.
 
   This extension provides a simple `correlation_id` field for tracing related
   messages through the messaging pipeline. It's used to link:
@@ -11,10 +11,10 @@ defmodule JidoMessaging.Signal.Ext.CorrelationId do
 
   ## Usage
 
-  The correlation ID is automatically populated by `JidoMessaging.Signal` functions:
+  The correlation ID is automatically populated by `Jido.Messaging.Signal` functions:
 
       # Automatically added when emitting signals
-      JidoMessaging.Signal.emit_received(message, context)
+      Jido.Messaging.Signal.emit_received(message, context)
 
       # The signal will have:
       # signal.extensions["correlationid"] == %{"id" => "msg_abc123"}
@@ -33,7 +33,7 @@ defmodule JidoMessaging.Signal.Ext.CorrelationId do
 
   Call `ensure_registered/0` at application startup to register this extension:
 
-      JidoMessaging.Signal.Ext.CorrelationId.ensure_registered()
+      Jido.Messaging.Signal.Ext.CorrelationId.ensure_registered()
   """
 
   use Jido.Signal.Ext,

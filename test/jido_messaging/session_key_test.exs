@@ -1,11 +1,11 @@
-defmodule JidoMessaging.SessionKeyTest do
+defmodule Jido.Messaging.SessionKeyTest do
   use ExUnit.Case, async: true
 
-  alias JidoMessaging.SessionKey
-  alias JidoMessaging.MsgContext
+  alias Jido.Messaging.SessionKey
+  alias Jido.Messaging.MsgContext
 
   defmodule MockChannel do
-    @behaviour JidoMessaging.Channel
+    @behaviour Jido.Chat.Adapter
 
     @impl true
     def channel_type, do: :mock

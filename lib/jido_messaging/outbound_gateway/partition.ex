@@ -1,4 +1,4 @@
-defmodule JidoMessaging.OutboundGateway.Partition do
+defmodule Jido.Messaging.OutboundGateway.Partition do
   @moduledoc false
   use GenServer
 
@@ -8,11 +8,11 @@ defmodule JidoMessaging.OutboundGateway.Partition do
   @dialyzer {:nowarn_function, media_preflight: 1}
   @dialyzer {:nowarn_function, media_text_fallback: 3}
 
-  alias JidoMessaging.Channel
-  alias JidoMessaging.DeadLetter
-  alias JidoMessaging.MediaPolicy
-  alias JidoMessaging.OutboundGateway
-  alias JidoMessaging.Security
+  alias Jido.Messaging.AdapterBridge
+  alias Jido.Messaging.DeadLetter
+  alias Jido.Messaging.MediaPolicy
+  alias Jido.Messaging.OutboundGateway
+  alias Jido.Messaging.Security
 
   @default_call_timeout 15_000
 
@@ -281,7 +281,12 @@ defmodule JidoMessaging.OutboundGateway.Partition do
            Security.sanitize_outbound(instance_module, request.channel, request.payload, request.opts),
          {:ok, provider_result} <-
            invoke_channel(fn ->
-             request.channel.send_message(request.external_room_id, sanitized_payload, request.opts)
+             AdapterBridge.send_message(
+               request.channel,
+               request.external_room_id,
+               sanitized_payload,
+               request.opts
+             )
            end) do
       {:ok, provider_result, security_result}
     end
@@ -292,7 +297,7 @@ defmodule JidoMessaging.OutboundGateway.Partition do
            Security.sanitize_outbound(instance_module, request.channel, request.payload, request.opts),
          {:ok, provider_result} <-
            invoke_channel(fn ->
-             Channel.edit_message(
+             AdapterBridge.edit_message(
                request.channel,
                request.external_room_id,
                request.external_message_id,
@@ -311,7 +316,12 @@ defmodule JidoMessaging.OutboundGateway.Partition do
                Security.sanitize_outbound(instance_module, request.channel, payload, request.opts),
              {:ok, provider_result} <-
                invoke_channel(fn ->
-                 Channel.send_media(request.channel, request.external_room_id, sanitized_payload, request.opts)
+                 AdapterBridge.send_media(
+                   request.channel,
+                   request.external_room_id,
+                   sanitized_payload,
+                   request.opts
+                 )
                end) do
           {:ok, provider_result, security_result, %{media: media_metadata}}
         end
@@ -321,7 +331,12 @@ defmodule JidoMessaging.OutboundGateway.Partition do
                Security.sanitize_outbound(instance_module, request.channel, fallback_text, request.opts),
              {:ok, provider_result} <-
                invoke_channel(fn ->
-                 request.channel.send_message(request.external_room_id, sanitized_payload, request.opts)
+                 AdapterBridge.send_message(
+                   request.channel,
+                   request.external_room_id,
+                   sanitized_payload,
+                   request.opts
+                 )
                end) do
           {:ok, provider_result, security_result, %{media: media_metadata}}
         end
@@ -338,7 +353,7 @@ defmodule JidoMessaging.OutboundGateway.Partition do
                Security.sanitize_outbound(instance_module, request.channel, payload, request.opts),
              {:ok, provider_result} <-
                invoke_channel(fn ->
-                 Channel.edit_media(
+                 AdapterBridge.edit_media(
                    request.channel,
                    request.external_room_id,
                    request.external_message_id,
@@ -354,7 +369,7 @@ defmodule JidoMessaging.OutboundGateway.Partition do
                Security.sanitize_outbound(instance_module, request.channel, fallback_text, request.opts),
              {:ok, provider_result} <-
                invoke_channel(fn ->
-                 Channel.edit_message(
+                 AdapterBridge.edit_message(
                    request.channel,
                    request.external_room_id,
                    request.external_message_id,
@@ -383,7 +398,7 @@ defmodule JidoMessaging.OutboundGateway.Partition do
 
       {:fallback_text, fallback_text, metadata} ->
         Logger.warning(
-          "[JidoMessaging.OutboundGateway] Media fallback applied for #{inspect(request.channel)}: #{inspect(metadata.rejected)}"
+          "[Jido.Messaging.OutboundGateway] Media fallback applied for #{inspect(request.channel)}: #{inspect(metadata.rejected)}"
         )
 
         case media_text_fallback(request, fallback_text, metadata) do
@@ -396,7 +411,7 @@ defmodule JidoMessaging.OutboundGateway.Partition do
 
       {:error, reason, metadata} ->
         Logger.warning(
-          "[JidoMessaging.OutboundGateway] Media dispatch rejected for #{inspect(request.channel)}: #{inspect(reason)} metadata=#{inspect(metadata)}"
+          "[Jido.Messaging.OutboundGateway] Media dispatch rejected for #{inspect(request.channel)}: #{inspect(reason)} metadata=#{inspect(metadata)}"
         )
 
         {:error, reason}
@@ -445,14 +460,8 @@ defmodule JidoMessaging.OutboundGateway.Partition do
         {:ok, result} when is_map(result) ->
           {:ok, result}
 
-        {:ok, result} ->
-          {:ok, %{message_id: result}}
-
         {:error, reason} ->
           {:error, reason}
-
-        other ->
-          {:error, {:invalid_return, other}}
       end
     rescue
       exception ->

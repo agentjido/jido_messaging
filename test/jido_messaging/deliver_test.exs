@@ -1,15 +1,16 @@
-defmodule JidoMessaging.DeliverTest do
+defmodule Jido.Messaging.DeliverTest do
   use ExUnit.Case, async: false
 
-  alias JidoMessaging.{Deliver, Ingest, Content.Image, Content.Text}
+  alias Jido.Chat.Content.{Image, Text}
+  alias Jido.Messaging.{Deliver, Ingest}
 
   defmodule TestMessaging do
-    use JidoMessaging,
-      adapter: JidoMessaging.Adapters.ETS
+    use Jido.Messaging,
+      adapter: Jido.Messaging.Adapters.ETS
   end
 
   defmodule MockChannel do
-    @behaviour JidoMessaging.Channel
+    @behaviour Jido.Chat.Adapter
 
     @impl true
     def channel_type, do: :mock
@@ -37,7 +38,7 @@ defmodule JidoMessaging.DeliverTest do
   end
 
   defmodule MediaChannel do
-    @behaviour JidoMessaging.Channel
+    @behaviour Jido.Chat.Adapter
 
     @impl true
     def channel_type, do: :media_mock
@@ -54,16 +55,16 @@ defmodule JidoMessaging.DeliverTest do
     @impl true
     def edit_message(_chat_id, message_id, text, _opts), do: {:ok, %{message_id: "#{message_id}:#{text}"}}
 
-    @impl true
+    @impl false
     def send_media(_chat_id, payload, _opts), do: {:ok, %{message_id: "media:#{payload.kind}", payload: payload}}
 
-    @impl true
+    @impl false
     def edit_media(_chat_id, message_id, payload, _opts),
       do: {:ok, %{message_id: "#{message_id}:media_edit:#{payload.kind}", payload: payload}}
   end
 
   defmodule SlowSecurityAdapter do
-    @behaviour JidoMessaging.Security
+    @behaviour Jido.Messaging.Security
 
     @impl true
     def verify_sender(_channel_module, _incoming_message, _raw_payload, _opts), do: :ok
@@ -145,20 +146,52 @@ defmodule JidoMessaging.DeliverTest do
     end
   end
 
-  describe "send_to_room/5" do
-    test "sends proactive message without reply_to", %{context: ctx, original_message: orig} do
+  describe "send_to_room/4" do
+    test "sends proactive message through bridge-routed control plane", %{original_message: orig} do
       room_id = orig.room_id
 
+      {:ok, _bridge} = TestMessaging.put_bridge_config(%{id: "bridge_mock", adapter_module: MockChannel})
+
+      {:ok, _binding} =
+        TestMessaging.create_room_binding(room_id, :mock, "bridge_mock", "deliver_route_chat", %{direction: :both})
+
       assert {:ok, sent_message} =
-               Deliver.send_to_room(TestMessaging, room_id, "Proactive message!", ctx)
+               Deliver.send_to_room(TestMessaging, room_id, "Proactive message!")
 
       assert sent_message.role == :assistant
       assert sent_message.room_id == room_id
       assert sent_message.reply_to_id == nil
       assert sent_message.status == :sent
       assert [%Text{text: "Proactive message!"}] = sent_message.content
-      assert sent_message.metadata.outbound_gateway.operation == :send
-      assert is_integer(sent_message.metadata.outbound_gateway.partition)
+      assert sent_message.metadata.outbound_router.delivered == 1
+      assert sent_message.metadata.outbound_router.delivery_mode == :best_effort
+    end
+  end
+
+  describe "send_to_room_via_routes/4" do
+    test "routes proactive send through room bindings and bridge config", %{original_message: orig} do
+      {:ok, _bridge} = TestMessaging.put_bridge_config(%{id: "bridge_mock", adapter_module: MockChannel})
+
+      {:ok, _binding} =
+        TestMessaging.create_room_binding(orig.room_id, :mock, "bridge_mock", "route_chat", %{direction: :both})
+
+      assert {:ok, sent_message} =
+               Deliver.send_to_room_via_routes(TestMessaging, orig.room_id, "Control-plane send")
+
+      assert sent_message.status == :sent
+      assert sent_message.external_id == 12345
+      assert sent_message.metadata.outbound_router.delivered == 1
+      assert sent_message.metadata.outbound_router.delivery_mode == :best_effort
+      assert sent_message.metadata.outbound_router.failover_policy == :next_available
+
+      assert sent_message.metadata.outbound_router.routes == [
+               %{bridge_id: "bridge_mock", channel: :mock, external_room_id: "route_chat"}
+             ]
+    end
+
+    test "returns :no_routes when no control-plane routes are configured", %{original_message: orig} do
+      assert {:error, :no_routes} =
+               Deliver.send_to_room_via_routes(TestMessaging, orig.room_id, "No route send")
     end
   end
 

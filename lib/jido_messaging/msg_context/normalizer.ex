@@ -1,12 +1,12 @@
-defmodule JidoMessaging.MsgContext.Normalizer do
+defmodule Jido.Messaging.MsgContext.Normalizer do
   @moduledoc """
   Command and mention normalization for `MsgContext`.
   """
 
-  alias JidoMessaging.Adapters.Mentions
-  alias JidoMessaging.MsgContext
-  alias JidoMessaging.MsgContext.CommandParser
-  alias JidoMessaging.PluginRegistry
+  alias Jido.Chat.Mention
+  alias Jido.Messaging.MsgContext
+  alias Jido.Messaging.MsgContext.CommandParser
+  alias Jido.Messaging.BridgeRegistry
 
   @default_mentions_max_text_bytes 2048
 
@@ -30,7 +30,7 @@ defmodule JidoMessaging.MsgContext.Normalizer do
 
     mentions =
       parse_mentions(msg_context, mentions_adapter, body, raw, opts)
-      |> Mentions.normalize_mentions()
+      |> normalize_mentions()
 
     mention_targets = mention_targets(msg_context, opts)
 
@@ -68,7 +68,7 @@ defmodule JidoMessaging.MsgContext.Normalizer do
   end
 
   defp parse_mentions(msg_context, mentions_adapter, body, raw, opts) do
-    base_mentions = Mentions.normalize_mentions(msg_context.mentions || [])
+    base_mentions = normalize_mentions(msg_context.mentions || [])
 
     adapter_mentions =
       cond do
@@ -82,7 +82,7 @@ defmodule JidoMessaging.MsgContext.Normalizer do
           []
 
         true ->
-          Mentions.parse_mentions(mentions_adapter, body, raw)
+          parse_mentions_with_adapter(mentions_adapter, body, raw)
       end
 
     base_mentions ++ adapter_mentions
@@ -141,7 +141,9 @@ defmodule JidoMessaging.MsgContext.Normalizer do
       nil ->
         body
 
-      %{offset: offset, length: length} ->
+      mention ->
+        offset = mention_offset(mention)
+        length = mention_length(mention)
         max_len = byte_size(body)
 
         if offset == 0 and length > 0 and length <= max_len do
@@ -155,13 +157,13 @@ defmodule JidoMessaging.MsgContext.Normalizer do
 
   defp leading_mention(mentions) do
     mentions
-    |> Enum.sort_by(fn mention -> {mention.offset, mention.length} end)
-    |> Enum.find(fn mention -> mention.offset == 0 end)
+    |> Enum.sort_by(fn mention -> {mention_offset(mention), mention_length(mention)} end)
+    |> Enum.find(fn mention -> mention_offset(mention) == 0 end)
   end
 
   defp mention_targets(msg_context, opts) do
     opts
-    |> Keyword.get(:mention_targets, [msg_context.instance_id])
+    |> Keyword.get(:mention_targets, [msg_context.bridge_id])
     |> normalize_targets()
   end
 
@@ -195,7 +197,7 @@ defmodule JidoMessaging.MsgContext.Normalizer do
 
   defp adapter_mentions_target?(mentions_adapter, raw, mention_targets) do
     Enum.any?(mention_targets, fn mention_target ->
-      Mentions.was_mentioned?(mentions_adapter, raw, mention_target)
+      adapter_was_mentioned?(mentions_adapter, raw, mention_target)
     end)
   end
 
@@ -220,7 +222,7 @@ defmodule JidoMessaging.MsgContext.Normalizer do
   defp resolve_mentions_adapter(%MsgContext{channel_module: channel_module, channel_type: channel_type}) do
     registry_adapter =
       if is_atom(channel_type) do
-        PluginRegistry.get_adapter(channel_type, :mentions)
+        BridgeRegistry.get_adapter(channel_type, :mentions)
       else
         nil
       end
@@ -244,7 +246,130 @@ defmodule JidoMessaging.MsgContext.Normalizer do
   defp default_mentions_adapter(_), do: nil
 
   defp valid_mentions_adapter?(module) when is_atom(module) do
-    Mentions.implements?(module)
+    function_exported?(module, :parse_mentions, 3) or
+      function_exported?(module, :parse_mentions, 2) or
+      function_exported?(module, :was_mentioned?, 3) or
+      function_exported?(module, :was_mentioned?, 2)
+  end
+
+  defp parse_mentions_with_adapter(module, body, raw) when is_atom(module) do
+    cond do
+      function_exported?(module, :parse_mentions, 3) ->
+        module.parse_mentions(module, body, raw)
+
+      function_exported?(module, :parse_mentions, 2) ->
+        module.parse_mentions(body, raw)
+
+      true ->
+        detect_mentions_from_body(body)
+    end
+  rescue
+    _ -> detect_mentions_from_body(body)
+  catch
+    _kind, _reason -> detect_mentions_from_body(body)
+  end
+
+  defp detect_mentions_from_body(body) when is_binary(body) do
+    Regex.scan(~r/@([A-Za-z0-9_]+)/u, body, return: :index)
+    |> Enum.map(fn [{offset, length}, {user_offset, user_len}] ->
+      username = binary_part(body, user_offset, user_len)
+      mention_text = binary_part(body, offset, length)
+
+      Mention.new(%{
+        username: username,
+        mention_text: mention_text,
+        metadata: %{offset: offset, length: length}
+      })
+    end)
+  end
+
+  defp normalize_mentions(mentions) when is_list(mentions) do
+    mentions
+    |> Enum.flat_map(fn
+      %Mention{} = mention ->
+        [mention]
+
+      mention when is_map(mention) ->
+        [mention_to_struct(mention)]
+
+      _ ->
+        []
+    end)
+  end
+
+  defp normalize_mentions(_), do: []
+
+  defp mention_to_struct(mention) when is_map(mention) do
+    user_id = mention[:user_id] || mention["user_id"]
+    username = mention[:username] || mention["username"]
+    display_name = mention[:display_name] || mention["display_name"]
+    mention_text = mention[:mention_text] || mention["mention_text"] || mention[:text] || mention["text"]
+    offset = mention[:offset] || mention["offset"]
+    length = mention[:length] || mention["length"]
+    metadata = (mention[:metadata] || mention["metadata"] || %{}) |> normalize_mention_metadata(offset, length)
+
+    Mention.new(%{
+      user_id: user_id,
+      username: username,
+      display_name: display_name,
+      mention_text: mention_text,
+      metadata: metadata
+    })
+  rescue
+    _ -> Mention.new(%{metadata: %{}})
+  end
+
+  defp normalize_mention_metadata(metadata, offset, length) when is_map(metadata) do
+    metadata
+    |> maybe_put_offset(offset)
+    |> maybe_put_length(length)
+  end
+
+  defp normalize_mention_metadata(_metadata, offset, length) do
+    %{}
+    |> maybe_put_offset(offset)
+    |> maybe_put_length(length)
+  end
+
+  defp maybe_put_offset(metadata, offset) when is_integer(offset), do: Map.put(metadata, :offset, offset)
+  defp maybe_put_offset(metadata, _offset), do: metadata
+  defp maybe_put_length(metadata, length) when is_integer(length), do: Map.put(metadata, :length, length)
+  defp maybe_put_length(metadata, _length), do: metadata
+
+  defp mention_offset(%Mention{metadata: metadata}) when is_map(metadata) do
+    value = metadata[:offset] || metadata["offset"]
+    if is_integer(value), do: value, else: 9_999_999
+  end
+
+  defp mention_offset(_mention), do: 9_999_999
+
+  defp mention_length(%Mention{metadata: metadata, mention_text: mention_text}) when is_map(metadata) do
+    value = metadata[:length] || metadata["length"]
+
+    cond do
+      is_integer(value) and value > 0 -> value
+      is_binary(mention_text) and mention_text != "" -> byte_size(mention_text)
+      true -> 0
+    end
+  end
+
+  defp mention_length(_mention), do: 0
+
+  defp adapter_was_mentioned?(module, raw, mention_target) when is_atom(module) do
+    cond do
+      function_exported?(module, :was_mentioned?, 3) ->
+        module.was_mentioned?(module, raw, mention_target)
+
+      function_exported?(module, :was_mentioned?, 2) ->
+        module.was_mentioned?(raw, mention_target)
+
+      true ->
+        false
+    end
+  rescue
+    _ -> false
+  catch
+    _kind, _reason -> false
   end
 
   defp command_max_text_bytes(opts) do

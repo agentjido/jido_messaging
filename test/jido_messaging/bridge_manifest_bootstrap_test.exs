@@ -1,15 +1,15 @@
-defmodule JidoMessaging.PluginManifestBootstrapTest do
+defmodule Jido.Messaging.BridgeManifestBootstrapTest do
   use ExUnit.Case, async: false
 
   import ExUnit.CaptureLog
 
-  alias JidoMessaging.PluginRegistry
+  alias Jido.Messaging.BridgeRegistry
 
-  @manifest_event [:jido_messaging, :plugin_registry, :manifest, :load]
-  @bootstrap_event [:jido_messaging, :plugin_registry, :bootstrap]
+  @manifest_event [:jido_messaging, :bridge_registry, :manifest, :load]
+  @bootstrap_event [:jido_messaging, :bridge_registry, :bootstrap]
 
   defmodule TelegramChannel do
-    @behaviour JidoMessaging.Channel
+    @behaviour Jido.Chat.Adapter
 
     @impl true
     def channel_type, do: :telegram
@@ -25,7 +25,7 @@ defmodule JidoMessaging.PluginManifestBootstrapTest do
   end
 
   defmodule DiscordChannel do
-    @behaviour JidoMessaging.Channel
+    @behaviour Jido.Chat.Adapter
 
     @impl true
     def channel_type, do: :discord
@@ -41,11 +41,11 @@ defmodule JidoMessaging.PluginManifestBootstrapTest do
   end
 
   defmodule BootstrapMessaging do
-    use JidoMessaging, adapter: JidoMessaging.Adapters.ETS
+    use Jido.Messaging, adapter: Jido.Messaging.Adapters.ETS
   end
 
   setup do
-    PluginRegistry.clear()
+    BridgeRegistry.clear()
     :ok
   end
 
@@ -57,7 +57,7 @@ defmodule JidoMessaging.PluginManifestBootstrapTest do
         write_manifest(manifest_dir, "01_discord.json", %{
           "manifest_version" => 1,
           "id" => "discord",
-          "channel_module" => Atom.to_string(DiscordChannel),
+          "adapter_module" => Atom.to_string(DiscordChannel),
           "label" => "Discord"
         })
 
@@ -65,7 +65,7 @@ defmodule JidoMessaging.PluginManifestBootstrapTest do
         write_manifest(manifest_dir, "02_telegram.json", %{
           "manifest_version" => 1,
           "id" => "telegram",
-          "channel_module" => Atom.to_string(TelegramChannel),
+          "adapter_module" => Atom.to_string(TelegramChannel),
           "label" => "Telegram Base"
         })
 
@@ -73,26 +73,26 @@ defmodule JidoMessaging.PluginManifestBootstrapTest do
         write_manifest(manifest_dir, "03_telegram_override.json", %{
           "manifest_version" => 1,
           "id" => "telegram",
-          "channel_module" => Atom.to_string(TelegramChannel),
+          "adapter_module" => Atom.to_string(TelegramChannel),
           "label" => "Telegram Override"
         })
 
       assert {:ok, result} =
-               PluginRegistry.bootstrap_from_manifests(
+               BridgeRegistry.bootstrap_from_manifests(
                  manifest_paths: [discord_manifest_path, telegram_manifest_path, telegram_override_path],
                  collision_policy: :prefer_last,
                  clear_existing?: true
                )
 
-      assert result.registered_plugin_ids == [:discord, :telegram]
+      assert result.registered_bridge_ids == [:discord, :telegram]
       assert length(result.degraded_diagnostics) == 0
       assert length(result.collision_diagnostics) == 1
 
-      assert [%{plugin_id: :telegram, policy: :prefer_last, winning_path: ^telegram_override_path}] =
+      assert [%{bridge_id: :telegram, policy: :prefer_last, winning_path: ^telegram_override_path}] =
                result.collision_diagnostics
 
-      assert PluginRegistry.get_plugin(:telegram).label == "Telegram Override"
-      assert PluginRegistry.get_plugin(:discord).label == "Discord"
+      assert BridgeRegistry.get_bridge(:telegram).label == "Telegram Override"
+      assert BridgeRegistry.get_bridge(:discord).label == "Discord"
     end
 
     test "fails fast with typed diagnostics for malformed required plugin manifests" do
@@ -102,22 +102,22 @@ defmodule JidoMessaging.PluginManifestBootstrapTest do
         write_manifest(manifest_dir, "telegram_required.json", %{
           "manifest_version" => 1,
           "id" => "telegram",
-          "channel_module" => "No.Such.Channel.Module",
+          "adapter_module" => "No.Such.Adapter.Module",
           "label" => "Broken Telegram"
         })
 
-      assert {:error, {:fatal_required_plugin_error, diagnostic}} =
-               PluginRegistry.bootstrap_from_manifests(
+      assert {:error, {:fatal_required_bridge_error, diagnostic}} =
+               BridgeRegistry.bootstrap_from_manifests(
                  manifest_paths: [malformed_required_manifest],
-                 required_plugins: [:telegram],
+                 required_bridges: [:telegram],
                  clear_existing?: true
                )
 
-      assert diagnostic.policy == :fatal_required_plugin_error
-      assert diagnostic.type == :unknown_channel_module
-      assert diagnostic.plugin_id == :telegram
+      assert diagnostic.policy == :fatal_required_bridge_error
+      assert diagnostic.type == :unknown_adapter_module
+      assert diagnostic.bridge_id == :telegram
       assert diagnostic.path == malformed_required_manifest
-      assert PluginRegistry.list_plugins() == []
+      assert BridgeRegistry.list_bridges() == []
     end
 
     test "degrades optional malformed manifests with warning and telemetry" do
@@ -127,21 +127,21 @@ defmodule JidoMessaging.PluginManifestBootstrapTest do
         write_manifest(manifest_dir, "discord_valid.json", %{
           "manifest_version" => 1,
           "id" => "discord",
-          "channel_module" => Atom.to_string(DiscordChannel),
+          "adapter_module" => Atom.to_string(DiscordChannel),
           "label" => "Discord"
         })
 
       malformed_optional_manifest =
         write_invalid_manifest(manifest_dir, "optional_invalid.json", ~s({"manifest_version":1,))
 
-      handler_id = "plugin-manifest-#{System.unique_integer([:positive])}"
+      handler_id = "bridge-manifest-#{System.unique_integer([:positive])}"
 
       :ok =
         :telemetry.attach_many(
           handler_id,
           [@manifest_event, @bootstrap_event],
           fn event, measurements, metadata, pid ->
-            send(pid, {:plugin_manifest_telemetry, event, measurements, metadata})
+            send(pid, {:bridge_manifest_telemetry, event, measurements, metadata})
           end,
           self()
         )
@@ -151,24 +151,24 @@ defmodule JidoMessaging.PluginManifestBootstrapTest do
       warning_log =
         capture_log(fn ->
           assert {:ok, result} =
-                   PluginRegistry.bootstrap_from_manifests(
+                   BridgeRegistry.bootstrap_from_manifests(
                      manifest_paths: [valid_discord_manifest, malformed_optional_manifest],
                      collision_policy: :prefer_last,
                      clear_existing?: true
                    )
 
-          assert result.registered_plugin_ids == [:discord]
+          assert result.registered_bridge_ids == [:discord]
 
-          assert [%{policy: :degraded_optional_plugin_error, path: ^malformed_optional_manifest}] =
+          assert [%{policy: :degraded_optional_bridge_error, path: ^malformed_optional_manifest}] =
                    result.degraded_diagnostics
         end)
 
-      assert warning_log =~ "Optional plugin manifest degraded"
-      assert PluginRegistry.get_plugin(:discord).label == "Discord"
-      assert PluginRegistry.get_plugin(:telegram) == nil
+      assert warning_log =~ "Optional bridge manifest degraded"
+      assert BridgeRegistry.get_bridge(:discord).label == "Discord"
+      assert BridgeRegistry.get_bridge(:telegram) == nil
 
-      assert_receive {:plugin_manifest_telemetry, @manifest_event, %{count: 1},
-                      %{policy: :degraded_optional_plugin_error, path: ^malformed_optional_manifest}}
+      assert_receive {:bridge_manifest_telemetry, @manifest_event, %{count: 1},
+                      %{policy: :degraded_optional_bridge_error, path: ^malformed_optional_manifest}}
     end
 
     test "supports deterministic prefer_first collision policy" do
@@ -178,7 +178,7 @@ defmodule JidoMessaging.PluginManifestBootstrapTest do
         write_manifest(manifest_dir, "01_telegram_first.json", %{
           "manifest_version" => 1,
           "id" => "telegram",
-          "channel_module" => Atom.to_string(TelegramChannel),
+          "adapter_module" => Atom.to_string(TelegramChannel),
           "label" => "First Label"
         })
 
@@ -186,19 +186,19 @@ defmodule JidoMessaging.PluginManifestBootstrapTest do
         write_manifest(manifest_dir, "02_telegram_second.json", %{
           "manifest_version" => 1,
           "id" => "telegram",
-          "channel_module" => Atom.to_string(TelegramChannel),
+          "adapter_module" => Atom.to_string(TelegramChannel),
           "label" => "Second Label"
         })
 
       assert {:ok, result} =
-               PluginRegistry.bootstrap_from_manifests(
+               BridgeRegistry.bootstrap_from_manifests(
                  manifest_paths: [first_manifest, second_manifest],
                  collision_policy: :prefer_first,
                  clear_existing?: true
                )
 
-      assert result.registered_plugin_ids == [:telegram]
-      assert PluginRegistry.get_plugin(:telegram).label == "First Label"
+      assert result.registered_bridge_ids == [:telegram]
+      assert BridgeRegistry.get_bridge(:telegram).label == "First Label"
 
       assert [%{policy: :prefer_first, winning_path: ^first_manifest, discarded_path: ^second_manifest}] =
                result.collision_diagnostics
@@ -214,18 +214,18 @@ defmodule JidoMessaging.PluginManifestBootstrapTest do
         write_manifest(manifest_dir, "required_invalid.json", %{
           "manifest_version" => 1,
           "id" => "telegram",
-          "channel_module" => "No.Such.Channel.Module",
-          "label" => "Broken Required Plugin"
+          "adapter_module" => "No.Such.Adapter.Module",
+          "label" => "Broken Required BridgePlugin"
         })
 
       assert {:error, reason} =
                BootstrapMessaging.start_link(
-                 plugin_manifest_paths: [malformed_required_manifest],
-                 required_plugins: [:telegram],
-                 plugin_collision_policy: :prefer_last
+                 bridge_manifest_paths: [malformed_required_manifest],
+                 required_bridges: [:telegram],
+                 bridge_collision_policy: :prefer_last
                )
 
-      assert fatal_required_plugin_startup_failure?(reason)
+      assert fatal_required_bridge_startup_failure?(reason)
     end
   end
 
@@ -233,7 +233,7 @@ defmodule JidoMessaging.PluginManifestBootstrapTest do
     dir =
       Path.join(
         System.tmp_dir!(),
-        "jido-plugin-manifests-#{System.unique_integer([:positive])}"
+        "jido-bridge-manifests-#{System.unique_integer([:positive])}"
       )
 
     File.mkdir_p!(dir)
@@ -252,23 +252,23 @@ defmodule JidoMessaging.PluginManifestBootstrapTest do
     manifest_path
   end
 
-  defp fatal_required_plugin_startup_failure?(
-         {:shutdown, {:failed_to_start_child, _child, {:fatal_required_plugin_error, _diagnostic}}}
+  defp fatal_required_bridge_startup_failure?(
+         {:shutdown, {:failed_to_start_child, _child, {:fatal_required_bridge_error, _diagnostic}}}
        ),
        do: true
 
-  defp fatal_required_plugin_startup_failure?(
-         {:failed_to_start_child, _child, {:fatal_required_plugin_error, _diagnostic}}
+  defp fatal_required_bridge_startup_failure?(
+         {:failed_to_start_child, _child, {:fatal_required_bridge_error, _diagnostic}}
        ),
        do: true
 
-  defp fatal_required_plugin_startup_failure?({:bad_return, {:stop, {:fatal_required_plugin_error, _diagnostic}}}),
+  defp fatal_required_bridge_startup_failure?({:bad_return, {:stop, {:fatal_required_bridge_error, _diagnostic}}}),
     do: true
 
-  defp fatal_required_plugin_startup_failure?(
-         {:bad_return, {_module, :init, {:stop, {:fatal_required_plugin_error, _diagnostic}}}}
+  defp fatal_required_bridge_startup_failure?(
+         {:bad_return, {_module, :init, {:stop, {:fatal_required_bridge_error, _diagnostic}}}}
        ),
        do: true
 
-  defp fatal_required_plugin_startup_failure?(_reason), do: false
+  defp fatal_required_bridge_startup_failure?(_reason), do: false
 end

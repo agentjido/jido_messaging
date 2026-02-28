@@ -1,8 +1,8 @@
-defmodule JidoMessaging.SessionManager.Partition do
+defmodule Jido.Messaging.SessionManager.Partition do
   @moduledoc false
   use GenServer
 
-  alias JidoMessaging.SessionManager
+  alias Jido.Messaging.SessionManager
 
   @default_call_timeout 5_000
 
@@ -339,8 +339,8 @@ defmodule JidoMessaging.SessionManager.Partition do
     {state, pruned}
   end
 
-  defp room_scope_key({channel_type, instance_id, room_id, _thread_id}) do
-    {channel_type, instance_id, room_id, nil}
+  defp room_scope_key({channel_type, bridge_id, room_id, _thread_id}) do
+    {channel_type, bridge_id, room_id, nil}
   end
 
   defp room_scope_key(session_key), do: session_key

@@ -1,18 +1,19 @@
-defmodule JidoMessaging.IntegrationTest do
+defmodule Jido.Messaging.IntegrationTest do
   @moduledoc """
   Integration tests verifying the full ingest → deliver flow.
   """
   use ExUnit.Case, async: true
 
-  alias JidoMessaging.{Ingest, Deliver, Content.Text, RoomServer, RoomSupervisor}
+  alias Jido.Chat.Content.Text
+  alias Jido.Messaging.{Ingest, Deliver, RoomServer, RoomSupervisor}
 
   defmodule TestMessaging do
-    use JidoMessaging,
-      adapter: JidoMessaging.Adapters.ETS
+    use Jido.Messaging,
+      adapter: Jido.Messaging.Adapters.ETS
   end
 
   defmodule MockTelegramChannel do
-    @behaviour JidoMessaging.Channel
+    @behaviour Jido.Chat.Adapter
 
     @impl true
     def channel_type, do: :telegram
@@ -86,7 +87,7 @@ defmodule JidoMessaging.IntegrationTest do
         incoming = %{
           external_room_id: "persistent_chat",
           external_user_id: "user_#{i}",
-          text: "Message #{i}",
+          text: "LegacyMessage #{i}",
           external_message_id: 10_000 + i
         }
 

@@ -1,6 +1,6 @@
-defmodule JidoMessaging.TestMessagingWithPubSub do
+defmodule Jido.Messaging.TestMessagingWithPubSub do
   @moduledoc "Test messaging module with PubSub configured"
-  use JidoMessaging,
-    adapter: JidoMessaging.Adapters.ETS,
-    pubsub: JidoMessaging.TestPubSub
+  use Jido.Messaging,
+    adapter: Jido.Messaging.Adapters.ETS,
+    pubsub: Jido.Messaging.TestPubSub
 end

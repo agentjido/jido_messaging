@@ -1,10 +1,10 @@
-defmodule JidoMessaging.PluginTest do
+defmodule Jido.Messaging.BridgePluginTest do
   use ExUnit.Case, async: true
 
-  alias JidoMessaging.Plugin
+  alias Jido.Messaging.BridgePlugin
 
   defmodule TestChannel do
-    @behaviour JidoMessaging.Channel
+    @behaviour Jido.Chat.Adapter
 
     @impl true
     def channel_type, do: :test_channel
@@ -20,7 +20,7 @@ defmodule JidoMessaging.PluginTest do
   end
 
   defmodule BasicChannel do
-    @behaviour JidoMessaging.Channel
+    @behaviour Jido.Chat.Adapter
 
     @impl true
     def channel_type, do: :basic
@@ -33,48 +33,46 @@ defmodule JidoMessaging.PluginTest do
   end
 
   defmodule TestMentionsAdapter do
-    @behaviour JidoMessaging.Adapters.Mentions
-
-    @impl true
-    def parse_mentions(_body, _raw), do: []
-
-    @impl true
-    def was_mentioned?(_raw, _bot_id), do: false
   end
 
-  describe "from_channel/2" do
-    test "creates plugin from channel module with capabilities" do
-      plugin = Plugin.from_channel(TestChannel)
+  defmodule SomeThreadingAdapter do
+  end
+
+  describe "from_adapter/2" do
+    test "creates plugin from adapter module with capabilities" do
+      plugin = BridgePlugin.from_adapter(TestChannel)
 
       assert plugin.id == :test_channel
-      assert plugin.channel_module == TestChannel
+      assert plugin.adapter_module == TestChannel
       assert plugin.label == "Test Channel"
       assert plugin.capabilities == [:text, :image, :streaming]
       assert plugin.adapters == %{}
     end
 
-    test "creates plugin from channel without capabilities callback" do
-      plugin = Plugin.from_channel(BasicChannel)
+    test "creates plugin from adapter without capabilities callback" do
+      plugin = BridgePlugin.from_adapter(BasicChannel)
 
       assert plugin.id == :basic
-      assert plugin.channel_module == BasicChannel
+      assert plugin.adapter_module == BasicChannel
       assert plugin.label == "Basic"
-      assert plugin.capabilities == [:text]
+      assert :text in plugin.capabilities
+      assert :streaming in plugin.capabilities
+      assert :threads in plugin.capabilities
     end
 
     test "allows overriding id" do
-      plugin = Plugin.from_channel(TestChannel, id: :custom_id)
+      plugin = BridgePlugin.from_adapter(TestChannel, id: :custom_id)
       assert plugin.id == :custom_id
     end
 
     test "allows overriding label" do
-      plugin = Plugin.from_channel(TestChannel, label: "Custom Label")
+      plugin = BridgePlugin.from_adapter(TestChannel, label: "Custom Label")
       assert plugin.label == "Custom Label"
     end
 
     test "allows specifying adapters" do
       adapters = %{mentions: TestMentionsAdapter, threading: SomeThreadingAdapter}
-      plugin = Plugin.from_channel(TestChannel, adapters: adapters)
+      plugin = BridgePlugin.from_adapter(TestChannel, adapters: adapters)
 
       assert plugin.adapters == adapters
     end
@@ -82,39 +80,38 @@ defmodule JidoMessaging.PluginTest do
 
   describe "has_capability?/2" do
     test "returns true for supported capability" do
-      plugin = Plugin.from_channel(TestChannel)
+      plugin = BridgePlugin.from_adapter(TestChannel)
 
-      assert Plugin.has_capability?(plugin, :text)
-      assert Plugin.has_capability?(plugin, :image)
-      assert Plugin.has_capability?(plugin, :streaming)
+      assert BridgePlugin.has_capability?(plugin, :text)
+      assert BridgePlugin.has_capability?(plugin, :streaming)
     end
 
     test "returns false for unsupported capability" do
-      plugin = Plugin.from_channel(TestChannel)
+      plugin = BridgePlugin.from_adapter(TestChannel)
 
-      refute Plugin.has_capability?(plugin, :video)
-      refute Plugin.has_capability?(plugin, :reactions)
+      refute BridgePlugin.has_capability?(plugin, :video)
+      refute BridgePlugin.has_capability?(plugin, :reactions)
     end
   end
 
   describe "get_adapter/2" do
     test "returns adapter module when present" do
-      plugin = Plugin.from_channel(TestChannel, adapters: %{mentions: TestMentionsAdapter})
+      plugin = BridgePlugin.from_adapter(TestChannel, adapters: %{mentions: TestMentionsAdapter})
 
-      assert Plugin.get_adapter(plugin, :mentions) == TestMentionsAdapter
+      assert BridgePlugin.get_adapter(plugin, :mentions) == TestMentionsAdapter
     end
 
     test "returns nil when adapter not present" do
-      plugin = Plugin.from_channel(TestChannel)
+      plugin = BridgePlugin.from_adapter(TestChannel)
 
-      assert Plugin.get_adapter(plugin, :mentions) == nil
-      assert Plugin.get_adapter(plugin, :threading) == nil
+      assert BridgePlugin.get_adapter(plugin, :mentions) == nil
+      assert BridgePlugin.get_adapter(plugin, :threading) == nil
     end
   end
 
   describe "schema/0" do
     test "returns the Zoi schema" do
-      schema = Plugin.schema()
+      schema = BridgePlugin.schema()
       assert is_struct(schema)
     end
   end

@@ -1,4 +1,4 @@
-defmodule JidoMessaging.Instance do
+defmodule Jido.Messaging.Instance do
   @moduledoc """
   Represents a channel instance (e.g., a Telegram bot, Discord connection).
 

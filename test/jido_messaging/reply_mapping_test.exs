@@ -1,15 +1,15 @@
-defmodule JidoMessaging.ReplyMappingTest do
+defmodule Jido.Messaging.ReplyMappingTest do
   use ExUnit.Case, async: true
 
-  alias JidoMessaging.{Ingest, Deliver}
+  alias Jido.Messaging.{Ingest, Deliver}
 
   defmodule TestMessaging do
-    use JidoMessaging,
-      adapter: JidoMessaging.Adapters.ETS
+    use Jido.Messaging,
+      adapter: Jido.Messaging.Adapters.ETS
   end
 
   defmodule MockChannel do
-    @behaviour JidoMessaging.Channel
+    @behaviour Jido.Chat.Adapter
 
     @impl true
     def channel_type, do: :mock
@@ -38,7 +38,7 @@ defmodule JidoMessaging.ReplyMappingTest do
         role: :user,
         content: [],
         external_id: "ext_123",
-        metadata: %{channel: :mock, instance_id: "inst_1"}
+        metadata: %{channel: :mock, bridge_id: "inst_1"}
       }
 
       {:ok, message} = TestMessaging.save_message(message_attrs)
@@ -75,7 +75,7 @@ defmodule JidoMessaging.ReplyMappingTest do
           role: :user,
           content: [],
           external_id: "ext_456",
-          metadata: %{channel: :mock, instance_id: "inst_1"}
+          metadata: %{channel: :mock, bridge_id: "inst_1"}
         })
 
       {:ok, found} = TestMessaging.get_message_by_external_id(:mock, "inst_1", "ext_456")
@@ -86,7 +86,7 @@ defmodule JidoMessaging.ReplyMappingTest do
       assert {:error, :not_found} = TestMessaging.get_message_by_external_id(:mock, "inst_1", "nonexistent")
     end
 
-    test "external_id lookup is scoped by channel and instance_id" do
+    test "external_id lookup is scoped by channel and bridge_id" do
       {:ok, room} = TestMessaging.create_room(%{type: :direct})
 
       {:ok, _} =
@@ -96,7 +96,7 @@ defmodule JidoMessaging.ReplyMappingTest do
           role: :user,
           content: [],
           external_id: "ext_scoped",
-          metadata: %{channel: :mock, instance_id: "inst_a"}
+          metadata: %{channel: :mock, bridge_id: "inst_a"}
         })
 
       {:ok, found} = TestMessaging.get_message_by_external_id(:mock, "inst_a", "ext_scoped")
@@ -117,7 +117,7 @@ defmodule JidoMessaging.ReplyMappingTest do
           sender_id: "user_1",
           role: :user,
           content: [],
-          metadata: %{channel: :mock, instance_id: "inst_1"}
+          metadata: %{channel: :mock, bridge_id: "inst_1"}
         })
 
       assert message.external_id == nil
@@ -214,7 +214,7 @@ defmodule JidoMessaging.ReplyMappingTest do
       incoming = %{
         external_room_id: "chat_ext_reply",
         external_user_id: "user_1",
-        text: "Message to reply to",
+        text: "LegacyMessage to reply to",
         external_message_id: "msg_to_reply_ext"
       }
 
@@ -229,7 +229,7 @@ defmodule JidoMessaging.ReplyMappingTest do
   end
 
   describe "message metadata includes channel info" do
-    test "ingest stores channel and instance_id in metadata" do
+    test "ingest stores channel and bridge_id in metadata" do
       incoming = %{
         external_room_id: "chat_meta",
         external_user_id: "user_meta",
@@ -240,7 +240,7 @@ defmodule JidoMessaging.ReplyMappingTest do
       {:ok, message, _ctx} = Ingest.ingest_incoming(TestMessaging, MockChannel, "inst_meta", incoming)
 
       assert message.metadata[:channel] == :mock
-      assert message.metadata[:instance_id] == "inst_meta"
+      assert message.metadata[:bridge_id] == "inst_meta"
     end
   end
 end

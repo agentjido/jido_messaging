@@ -1,11 +1,11 @@
-defmodule JidoMessaging.SessionManager.Supervisor do
+defmodule Jido.Messaging.SessionManager.Supervisor do
   @moduledoc """
   Supervisor for partitioned session-routing workers.
   """
   use Supervisor
 
-  alias JidoMessaging.SessionManager
-  alias JidoMessaging.SessionManager.Partition
+  alias Jido.Messaging.SessionManager
+  alias Jido.Messaging.SessionManager.Partition
 
   @doc false
   def start_link(opts) do

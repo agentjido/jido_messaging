@@ -1,13 +1,13 @@
-defmodule JidoMessaging.AgentSupervisor do
+defmodule Jido.Messaging.AgentSupervisor do
   @moduledoc """
   DynamicSupervisor for spawning and managing AgentRunner processes.
 
-  Each JidoMessaging instance has its own AgentSupervisor that manages
+  Each Jido.Messaging instance has its own AgentSupervisor that manages
   agent runners on-demand.
   """
   use DynamicSupervisor
 
-  alias JidoMessaging.AgentRunner
+  alias Jido.Messaging.AgentRunner
 
   def start_link(opts) do
     name = Keyword.fetch!(opts, :name)

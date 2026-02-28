@@ -1,4 +1,4 @@
-defmodule JidoMessaging.SessionManager do
+defmodule Jido.Messaging.SessionManager do
   @moduledoc """
   Partitioned route-state manager for deterministic session routing.
 
@@ -6,18 +6,18 @@ defmodule JidoMessaging.SessionManager do
   singleton bottleneck. Each partition enforces TTL and bounded capacity.
   """
 
-  alias JidoMessaging.SessionManager.Partition
+  alias Jido.Messaging.SessionManager.Partition
 
   @default_partition_count max(2, System.schedulers_online() * 2)
   @default_ttl_ms :timer.minutes(30)
   @default_max_entries_per_partition 10_000
   @default_prune_interval_ms :timer.seconds(30)
 
-  @type session_key :: JidoMessaging.SessionKey.t()
+  @type session_key :: Jido.Messaging.SessionKey.t()
   @type route :: %{
           required(:external_room_id) => term(),
           optional(:channel_type) => atom(),
-          optional(:instance_id) => String.t(),
+          optional(:bridge_id) => String.t(),
           optional(:room_id) => String.t() | nil,
           optional(:thread_id) => String.t() | nil,
           optional(atom()) => term()
@@ -182,8 +182,8 @@ defmodule JidoMessaging.SessionManager do
 
   defp sanitize_positive_integer(_value, default), do: default
 
-  defp validate_session_key({channel_type, instance_id, room_id, thread_id})
-       when is_atom(channel_type) and is_binary(instance_id) and is_binary(room_id) and
+  defp validate_session_key({channel_type, bridge_id, room_id, thread_id})
+       when is_atom(channel_type) and is_binary(bridge_id) and is_binary(room_id) and
               (is_binary(thread_id) or is_nil(thread_id)),
        do: :ok
 

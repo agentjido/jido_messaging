@@ -1,4 +1,4 @@
-defmodule JidoMessaging.MixProject do
+defmodule Jido.Messaging.MixProject do
   use Mix.Project
 
   @version "0.1.0"
@@ -61,25 +61,12 @@ defmodule JidoMessaging.MixProject do
   defp deps do
     [
       # Runtime dependencies
+      {:jido_chat, path: "../jido_chat"},
       {:jason, "~> 1.4"},
       {:zoi, "~> 0.14"},
       {:jido, github: "agentjido/jido", override: true},
       {:jido_signal, github: "agentjido/jido_signal", override: true},
       {:jido_ai, github: "agentjido/jido_ai"},
-
-      # Telegram integration
-      {:telegex, "~> 1.8"},
-      {:finch, "~> 0.18"},
-      {:multipart, "~> 0.4", override: true},
-
-      # Discord integration (runtime: false to prevent auto-start in tests)
-      {:nostrum, "~> 0.10", runtime: false},
-
-      # Slack integration
-      {:slack_elixir, "~> 1.2"},
-
-      # WhatsApp integration
-      {:whatsapp_elixir, "~> 0.1.8"},
 
       # PubSub support (required by jido_signal, also used for integration tests)
       {:phoenix_pubsub, "~> 2.1"},

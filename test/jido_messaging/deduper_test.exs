@@ -1,11 +1,11 @@
-defmodule JidoMessaging.DeduperTest do
+defmodule Jido.Messaging.DeduperTest do
   use ExUnit.Case, async: true
 
-  alias JidoMessaging.Deduper
+  alias Jido.Messaging.Deduper
 
   defmodule TestMessaging do
-    use JidoMessaging,
-      adapter: JidoMessaging.Adapters.ETS
+    use Jido.Messaging,
+      adapter: Jido.Messaging.Adapters.ETS
   end
 
   setup do

@@ -1,19 +1,21 @@
-defmodule JidoMessaging.StructsTest do
+defmodule Jido.Messaging.StructsTest do
   use ExUnit.Case, async: true
 
-  alias JidoMessaging.{Message, Room, Participant, Instance}
-  alias JidoMessaging.Content.{Text, ToolUse, ToolResult, Image, File, Audio, Video}
+  alias Jido.Chat.{LegacyMessage, Participant, Room}
+  alias Jido.Messaging.Instance
+  alias Jido.Chat.Content.{Text, ToolUse, ToolResult, Image, File, Audio, Video}
 
-  describe "Message" do
+  describe "LegacyMessage" do
     test "new/1 creates message with defaults" do
       message =
-        Message.new(%{
+        LegacyMessage.new(%{
           room_id: "room_1",
           sender_id: "user_1",
           role: :user
         })
 
-      assert Jido.Signal.ID.valid?(message.id)
+      assert is_binary(message.id)
+      assert String.starts_with?(message.id, "jch_")
       assert message.room_id == "room_1"
       assert message.role == :user
       assert message.content == []
@@ -25,7 +27,7 @@ defmodule JidoMessaging.StructsTest do
 
     test "new/1 creates message with threading fields" do
       message =
-        Message.new(%{
+        LegacyMessage.new(%{
           room_id: "room_1",
           sender_id: "user_1",
           role: :user,
@@ -42,7 +44,7 @@ defmodule JidoMessaging.StructsTest do
     end
 
     test "schema/0 returns Zoi schema" do
-      schema = Message.schema()
+      schema = LegacyMessage.schema()
       assert is_map(schema)
     end
   end
@@ -51,7 +53,8 @@ defmodule JidoMessaging.StructsTest do
     test "new/1 creates room with defaults" do
       room = Room.new(%{type: :direct})
 
-      assert Jido.Signal.ID.valid?(room.id)
+      assert is_binary(room.id)
+      assert String.starts_with?(room.id, "jch_")
       assert room.type == :direct
       assert room.name == nil
       assert room.external_bindings == %{}
@@ -69,7 +72,8 @@ defmodule JidoMessaging.StructsTest do
     test "new/1 creates participant with defaults" do
       participant = Participant.new(%{type: :human})
 
-      assert Jido.Signal.ID.valid?(participant.id)
+      assert is_binary(participant.id)
+      assert String.starts_with?(participant.id, "jch_")
       assert participant.type == :human
       assert participant.identity == %{}
       assert participant.external_ids == %{}

@@ -1,4 +1,4 @@
-defmodule JidoMessaging.Security.DefaultAdapter do
+defmodule Jido.Messaging.Security.DefaultAdapter do
   @moduledoc """
   Default security adapter.
 
@@ -10,15 +10,15 @@ defmodule JidoMessaging.Security.DefaultAdapter do
     optional channel-specific sanitize hooks.
   """
 
-  @behaviour JidoMessaging.Security
+  @behaviour Jido.Messaging.Security
 
-  alias JidoMessaging.Channel
+  alias Jido.Messaging.AdapterBridge
 
   @doc false
   @impl true
   def verify_sender(channel_module, incoming_message, raw_payload, _opts) do
     with :ok <- verify_sender_claim(incoming_message, raw_payload),
-         result <- Channel.verify_sender(channel_module, incoming_message, raw_payload) do
+         result <- AdapterBridge.verify_sender(channel_module, incoming_message, raw_payload) do
       case result do
         :ok ->
           :ok
@@ -41,10 +41,10 @@ defmodule JidoMessaging.Security.DefaultAdapter do
   @doc false
   @impl true
   def sanitize_outbound(channel_module, outbound, opts) do
-    channel_type = channel_module.channel_type()
+    channel_type = AdapterBridge.channel_type(channel_module)
     baseline = normalize_outbound(channel_type, outbound)
 
-    case Channel.sanitize_outbound(channel_module, baseline, opts) do
+    case AdapterBridge.sanitize_outbound(channel_module, baseline, opts) do
       {:ok, sanitized} ->
         {:ok, sanitized,
          %{

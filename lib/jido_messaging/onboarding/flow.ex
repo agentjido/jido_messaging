@@ -1,4 +1,4 @@
-defmodule JidoMessaging.Onboarding.Flow do
+defmodule Jido.Messaging.Onboarding.Flow do
   @moduledoc """
   Persisted onboarding flow state.
 

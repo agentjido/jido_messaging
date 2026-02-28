@@ -1,11 +1,11 @@
-defmodule JidoMessaging.DeadLetter.ReplaySupervisor do
+defmodule Jido.Messaging.DeadLetter.ReplaySupervisor do
   @moduledoc """
   Supervisor for partitioned dead-letter replay workers.
   """
   use Supervisor
 
-  alias JidoMessaging.DeadLetter
-  alias JidoMessaging.DeadLetter.ReplayWorker
+  alias Jido.Messaging.DeadLetter
+  alias Jido.Messaging.DeadLetter.ReplayWorker
 
   @doc false
   @spec start_link(keyword()) :: GenServer.on_start()

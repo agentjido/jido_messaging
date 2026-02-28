@@ -1,4 +1,4 @@
-defmodule JidoMessaging.Deduper do
+defmodule Jido.Messaging.Deduper do
   @moduledoc """
   Central message deduplication using ETS with TTL.
 

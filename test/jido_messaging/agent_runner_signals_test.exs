@@ -1,22 +1,17 @@
-defmodule JidoMessaging.AgentRunnerSignalsTest do
+defmodule Jido.Messaging.AgentRunnerSignalsTest do
   @moduledoc """
   Tests for AgentRunner's Signal Bus subscription and lifecycle signal emission.
   Phase 4 of the Bridge Refactor.
   """
   use ExUnit.Case, async: false
 
-  import JidoMessaging.TestHelpers
+  import Jido.Messaging.TestHelpers
 
-  alias JidoMessaging.{
-    Room,
-    Message,
-    RoomServer,
-    RoomSupervisor,
-    AgentSupervisor
-  }
+  alias Jido.Chat.{LegacyMessage, Room}
+  alias Jido.Messaging.{RoomServer, RoomSupervisor, AgentSupervisor}
 
   defmodule TestMessaging do
-    use JidoMessaging, adapter: JidoMessaging.Adapters.ETS
+    use Jido.Messaging, adapter: Jido.Messaging.Adapters.ETS
   end
 
   setup do
@@ -70,7 +65,7 @@ defmodule JidoMessaging.AgentRunnerSignalsTest do
       end)
 
       message =
-        Message.new(%{
+        LegacyMessage.new(%{
           room_id: room.id,
           sender_id: "user_1",
           role: :user,
@@ -108,26 +103,26 @@ defmodule JidoMessaging.AgentRunnerSignalsTest do
         state.subscribed == true
       end)
 
-      # Message to room2 should NOT trigger the agent in room1
+      # LegacyMessage to room2 should NOT trigger the agent in room1
       message_room2 =
-        Message.new(%{
+        LegacyMessage.new(%{
           room_id: room2.id,
           sender_id: "user_1",
           role: :user,
-          content: [%{type: :text, text: "Message to room 2"}]
+          content: [%{type: :text, text: "LegacyMessage to room 2"}]
         })
 
       RoomServer.add_message(room2_pid, message_room2)
 
       refute_receive {:processed, _}, 200
 
-      # Message to room1 SHOULD trigger the agent
+      # LegacyMessage to room1 SHOULD trigger the agent
       message_room1 =
-        Message.new(%{
+        LegacyMessage.new(%{
           room_id: room1.id,
           sender_id: "user_1",
           role: :user,
-          content: [%{type: :text, text: "Message to room 1"}]
+          content: [%{type: :text, text: "LegacyMessage to room 1"}]
         })
 
       RoomServer.add_message(room1_pid, message_room1)
@@ -189,7 +184,7 @@ defmodule JidoMessaging.AgentRunnerSignalsTest do
       end)
 
       message =
-        Message.new(%{
+        LegacyMessage.new(%{
           room_id: room.id,
           sender_id: "user_1",
           role: :user,
@@ -259,7 +254,7 @@ defmodule JidoMessaging.AgentRunnerSignalsTest do
       end)
 
       message =
-        Message.new(%{
+        LegacyMessage.new(%{
           room_id: room.id,
           sender_id: "user_1",
           role: :user,
@@ -312,7 +307,7 @@ defmodule JidoMessaging.AgentRunnerSignalsTest do
       end)
 
       message =
-        Message.new(%{
+        LegacyMessage.new(%{
           room_id: room.id,
           sender_id: "user_1",
           role: :user,

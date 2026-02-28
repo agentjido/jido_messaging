@@ -1,10 +1,11 @@
-defmodule JidoMessaging.MessagingTargetTest do
+defmodule Jido.Chat.MessagingTargetTest do
   use ExUnit.Case, async: true
 
-  alias JidoMessaging.{MessagingTarget, MsgContext}
+  alias Jido.Chat.MessagingTarget
+  alias Jido.Messaging.MsgContext
 
   defmodule MockChannel do
-    @behaviour JidoMessaging.Channel
+    @behaviour Jido.Chat.Adapter
 
     @impl true
     def channel_type, do: :mock

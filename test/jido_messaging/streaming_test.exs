@@ -1,9 +1,9 @@
-defmodule JidoMessaging.StreamingTest do
+defmodule Jido.Messaging.StreamingTest do
   use ExUnit.Case, async: true
 
-  import JidoMessaging.TestHelpers
+  import Jido.Messaging.TestHelpers
 
-  alias JidoMessaging.Streaming
+  alias Jido.Messaging.Streaming
 
   defmodule MockChannel do
     @moduledoc false

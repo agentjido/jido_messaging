@@ -1,8 +1,9 @@
 Code.require_file("test/test_helper.exs")
 
-# Keep Telegram handler tests offline by using HTTPoison for Telegex calls.
-Application.put_env(:telegex, :caller_adapter, {HTTPoison, []})
-Application.put_env(:telegex, :token, "123:abc")
+# Keep adapter tests offline by configuring dummy platform tokens.
+Application.put_env(:jido_chat_telegram, :telegram_bot_token, "123:abc")
+Application.put_env(:jido_chat_discord, :discord_public_key, "dummy-public-key")
+Application.put_env(:nostrum, :token, "dummy-discord-token")
 
 {:ok, _} = Application.ensure_all_started(:jido_messaging)
 

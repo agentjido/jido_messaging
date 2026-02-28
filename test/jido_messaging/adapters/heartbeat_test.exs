@@ -1,11 +1,11 @@
-defmodule JidoMessaging.Adapters.HeartbeatTest do
+defmodule Jido.Messaging.Adapters.HeartbeatTest do
   use ExUnit.Case, async: true
 
-  alias JidoMessaging.Adapters.Heartbeat
-  alias JidoMessaging.Instance
+  alias Jido.Messaging.Adapters.Heartbeat
+  alias Jido.Messaging.Instance
 
   defmodule HealthyChannel do
-    @behaviour JidoMessaging.Adapters.Heartbeat
+    @behaviour Jido.Messaging.Adapters.Heartbeat
 
     @impl true
     def check_health(_instance), do: :ok
@@ -15,7 +15,7 @@ defmodule JidoMessaging.Adapters.HeartbeatTest do
   end
 
   defmodule UnhealthyChannel do
-    @behaviour JidoMessaging.Adapters.Heartbeat
+    @behaviour Jido.Messaging.Adapters.Heartbeat
 
     @impl true
     def check_health(_instance), do: {:error, :connection_lost}
@@ -25,7 +25,7 @@ defmodule JidoMessaging.Adapters.HeartbeatTest do
   end
 
   defmodule PartialChannel do
-    @behaviour JidoMessaging.Adapters.Heartbeat
+    @behaviour Jido.Messaging.Adapters.Heartbeat
 
     @impl true
     def check_health(_instance), do: :ok

@@ -1,15 +1,15 @@
-defmodule JidoMessaging.OutboundGatewayTest do
+defmodule Jido.Messaging.OutboundGatewayTest do
   use ExUnit.Case, async: false
 
-  alias JidoMessaging.OutboundGateway
+  alias Jido.Messaging.OutboundGateway
 
   defmodule TestMessaging do
-    use JidoMessaging,
-      adapter: JidoMessaging.Adapters.ETS
+    use Jido.Messaging,
+      adapter: Jido.Messaging.Adapters.ETS
   end
 
   defmodule PartitionChannel do
-    @behaviour JidoMessaging.Channel
+    @behaviour Jido.Chat.Adapter
 
     @impl true
     def channel_type, do: :partition_channel
@@ -25,7 +25,7 @@ defmodule JidoMessaging.OutboundGatewayTest do
   end
 
   defmodule SlowChannel do
-    @behaviour JidoMessaging.Channel
+    @behaviour Jido.Chat.Adapter
 
     @impl true
     def channel_type, do: :slow_channel
@@ -42,7 +42,7 @@ defmodule JidoMessaging.OutboundGatewayTest do
 
   defmodule RetryChannel do
     use Agent
-    @behaviour JidoMessaging.Channel
+    @behaviour Jido.Chat.Adapter
 
     def start_link(_opts) do
       Agent.start_link(fn -> %{} end, name: __MODULE__)
@@ -76,7 +76,7 @@ defmodule JidoMessaging.OutboundGatewayTest do
   end
 
   defmodule SlackSanitizeChannel do
-    @behaviour JidoMessaging.Channel
+    @behaviour Jido.Chat.Adapter
 
     @impl true
     def channel_type, do: :slack
@@ -89,7 +89,7 @@ defmodule JidoMessaging.OutboundGatewayTest do
   end
 
   defmodule MediaChannel do
-    @behaviour JidoMessaging.Channel
+    @behaviour Jido.Chat.Adapter
 
     @impl true
     def channel_type, do: :media_channel
@@ -106,17 +106,17 @@ defmodule JidoMessaging.OutboundGatewayTest do
     @impl true
     def edit_message(room_id, message_id, text, _opts), do: {:ok, %{message_id: "#{room_id}:#{message_id}:#{text}"}}
 
-    @impl true
+    @impl false
     def send_media(room_id, payload, _opts),
       do: {:ok, %{message_id: "#{room_id}:media:#{payload.kind}", payload: payload}}
 
-    @impl true
+    @impl false
     def edit_media(room_id, message_id, payload, _opts),
       do: {:ok, %{message_id: "#{room_id}:#{message_id}:media_edit:#{payload.kind}", payload: payload}}
   end
 
   defmodule SlowSecurityAdapter do
-    @behaviour JidoMessaging.Security
+    @behaviour Jido.Messaging.Security
 
     @impl true
     def verify_sender(_channel_module, _incoming_message, _raw_payload, _opts), do: :ok
@@ -147,7 +147,7 @@ defmodule JidoMessaging.OutboundGatewayTest do
 
     base_context = %{
       channel: PartitionChannel,
-      instance_id: "partition_inst"
+      bridge_id: "partition_inst"
     }
 
     room_ids = Enum.map(1..24, &"room-#{&1}")
@@ -158,7 +158,7 @@ defmodule JidoMessaging.OutboundGatewayTest do
         {:ok, result} = OutboundGateway.send_message(TestMessaging, context, "hello")
 
         assert result.partition ==
-                 OutboundGateway.route_partition(TestMessaging, base_context.instance_id, room_id)
+                 OutboundGateway.route_partition(TestMessaging, base_context.bridge_id, room_id)
 
         assert result.operation == :send
         result.partition
@@ -193,7 +193,7 @@ defmodule JidoMessaging.OutboundGatewayTest do
 
     context = %{
       channel: SlowChannel,
-      instance_id: "pressure_inst",
+      bridge_id: "pressure_inst",
       external_room_id: "pressure_room"
     }
 
@@ -234,7 +234,7 @@ defmodule JidoMessaging.OutboundGatewayTest do
 
     context = %{
       channel: RetryChannel,
-      instance_id: "retry_inst",
+      bridge_id: "retry_inst",
       external_room_id: "retry_room"
     }
 
@@ -255,7 +255,7 @@ defmodule JidoMessaging.OutboundGatewayTest do
 
     context = %{
       channel: PartitionChannel,
-      instance_id: "edit_inst",
+      bridge_id: "edit_inst",
       external_room_id: "edit_room"
     }
 
@@ -278,7 +278,7 @@ defmodule JidoMessaging.OutboundGatewayTest do
 
     context = %{
       channel: MediaChannel,
-      instance_id: "media_inst",
+      bridge_id: "media_inst",
       external_room_id: "media_room"
     }
 
@@ -303,7 +303,7 @@ defmodule JidoMessaging.OutboundGatewayTest do
 
     context = %{
       channel: PartitionChannel,
-      instance_id: "media_fallback_inst",
+      bridge_id: "media_fallback_inst",
       external_room_id: "media_fallback_room"
     }
 
@@ -333,7 +333,7 @@ defmodule JidoMessaging.OutboundGatewayTest do
 
     context = %{
       channel: PartitionChannel,
-      instance_id: "media_reject_inst",
+      bridge_id: "media_reject_inst",
       external_room_id: "media_reject_room"
     }
 
@@ -351,7 +351,7 @@ defmodule JidoMessaging.OutboundGatewayTest do
 
     context = %{
       channel: MediaChannel,
-      instance_id: "media_limit_inst",
+      bridge_id: "media_limit_inst",
       external_room_id: "media_limit_room"
     }
 
@@ -374,7 +374,7 @@ defmodule JidoMessaging.OutboundGatewayTest do
 
     context = %{
       channel: SlackSanitizeChannel,
-      instance_id: "sanitize_inst",
+      bridge_id: "sanitize_inst",
       external_room_id: "sanitize_room"
     }
 
@@ -392,7 +392,7 @@ defmodule JidoMessaging.OutboundGatewayTest do
 
     context = %{
       channel: PartitionChannel,
-      instance_id: "sanitize_timeout_deny_inst",
+      bridge_id: "sanitize_timeout_deny_inst",
       external_room_id: "sanitize_timeout_deny_room"
     }
 
@@ -425,7 +425,7 @@ defmodule JidoMessaging.OutboundGatewayTest do
 
     context = %{
       channel: PartitionChannel,
-      instance_id: "sanitize_timeout_allow_inst",
+      bridge_id: "sanitize_timeout_allow_inst",
       external_room_id: "sanitize_timeout_allow_room"
     }
 

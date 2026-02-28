@@ -1,4 +1,4 @@
-defmodule JidoMessaging.Security do
+defmodule Jido.Messaging.Security do
   @moduledoc """
   Centralized security boundary for inbound verification and outbound sanitization.
 
@@ -6,8 +6,8 @@ defmodule JidoMessaging.Security do
   explicit policy determines whether failures deny or degrade.
   """
 
-  alias JidoMessaging.Channel
-  alias JidoMessaging.Security.DefaultAdapter
+  alias Jido.Messaging.AdapterBridge
+  alias Jido.Messaging.Security.DefaultAdapter
 
   @default_mode :permissive
   @default_verify_timeout_ms 50
@@ -464,7 +464,7 @@ defmodule JidoMessaging.Security do
         :deny
 
       true ->
-        case Channel.classify_failure(reason) do
+        case AdapterBridge.classify_failure(reason) do
           :recoverable -> :retry
           :fatal -> :degrade
           :degraded -> :degrade

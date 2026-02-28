@@ -1,13 +1,13 @@
-defmodule JidoMessaging.InstanceSupervisorTest do
+defmodule Jido.Messaging.InstanceSupervisorTest do
   use ExUnit.Case, async: true
 
-  import JidoMessaging.TestHelpers
+  import Jido.Messaging.TestHelpers
 
-  alias JidoMessaging.{InstanceSupervisor, InstanceServer}
+  alias Jido.Messaging.{InstanceSupervisor, InstanceServer}
 
   defmodule TestMessaging do
-    use JidoMessaging,
-      adapter: JidoMessaging.Adapters.ETS
+    use Jido.Messaging,
+      adapter: Jido.Messaging.Adapters.ETS
   end
 
   setup do

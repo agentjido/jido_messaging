@@ -1,4 +1,4 @@
-defmodule Mix.Tasks.JidoMessaging.Demo do
+defmodule Mix.Tasks.Jido.Messaging.Demo do
   @shortdoc "Runs a demo messaging service (echo, bridge, or agent mode)"
   @moduledoc """
   Starts a demo messaging service.
@@ -73,12 +73,13 @@ defmodule Mix.Tasks.JidoMessaging.Demo do
       end
 
     validate_config!(mode)
-    configure_adapters!(mode)
+    adapter_modules = resolve_adapter_modules(mode)
+    configure_adapters!(adapter_modules)
 
-    Logger.info("[Demo] Starting JidoMessaging Demo (#{mode} mode)")
+    Logger.info("[Demo] Starting Jido.Messaging Demo (#{mode} mode)")
     Logger.info("[Demo] Press Ctrl+C twice to stop")
 
-    start_applications!(mode)
+    start_applications!(mode, adapter_modules)
 
     supervisor_opts =
       case mode do
@@ -88,31 +89,37 @@ defmodule Mix.Tasks.JidoMessaging.Demo do
         :bridge ->
           telegram_chat_id = opts[:telegram_chat] || get_telegram_chat_id()
           discord_channel_id = opts[:discord_channel] || get_discord_channel_id()
+          [telegram_adapter, discord_adapter] = adapter_modules
 
           [
             mode: :bridge,
             telegram_chat_id: telegram_chat_id,
-            discord_channel_id: discord_channel_id
+            discord_channel_id: discord_channel_id,
+            telegram_adapter: telegram_adapter,
+            discord_adapter: discord_adapter
           ]
 
         :agent ->
           telegram_chat_id = opts[:telegram_chat] || get_telegram_chat_id()
           discord_channel_id = opts[:discord_channel] || get_discord_channel_id()
+          [telegram_adapter, discord_adapter] = adapter_modules
 
           [
             mode: :agent,
             telegram_chat_id: telegram_chat_id,
-            discord_channel_id: discord_channel_id
+            discord_channel_id: discord_channel_id,
+            telegram_adapter: telegram_adapter,
+            discord_adapter: discord_adapter
           ]
       end
 
     # Start Jido runtime for agent mode
     if mode == :agent do
-      {:ok, _jido} = Jido.start_link(name: JidoMessaging.Demo.Jido)
+      {:ok, _jido} = Jido.start_link(name: Jido.Messaging.Demo.Jido)
       Logger.info("[Demo] Started Jido runtime for ChatAgent")
     end
 
-    {:ok, _pid} = JidoMessaging.Demo.Supervisor.start_link(supervisor_opts)
+    {:ok, _pid} = Jido.Messaging.Demo.Supervisor.start_link(supervisor_opts)
 
     Process.sleep(:infinity)
   end
@@ -146,7 +153,7 @@ defmodule Mix.Tasks.JidoMessaging.Demo do
   defp validate_telegram_token! do
     token =
       Dotenvy.env!("TELEGRAM_BOT_TOKEN", :string, default: nil) ||
-        Application.get_env(:telegex, :token)
+        Application.get_env(:jido_chat_telegram, :telegram_bot_token)
 
     unless token do
       Mix.raise("""
@@ -160,7 +167,7 @@ defmodule Mix.Tasks.JidoMessaging.Demo do
       """)
     end
 
-    Application.put_env(:telegex, :token, token)
+    Application.put_env(:jido_chat_telegram, :telegram_bot_token, token)
   end
 
   defp validate_discord_token! do
@@ -181,6 +188,7 @@ defmodule Mix.Tasks.JidoMessaging.Demo do
     end
 
     Application.put_env(:nostrum, :token, token)
+    Application.put_env(:jido_chat_discord, :discord_bot_token, token)
   end
 
   defp validate_cerebras_key! do
@@ -199,44 +207,94 @@ defmodule Mix.Tasks.JidoMessaging.Demo do
     end
   end
 
-  defp configure_adapters!(:echo) do
-    Application.put_env(:telegex, :caller_adapter, {Finch, []})
+  defp resolve_adapter_modules(:echo), do: []
+
+  defp resolve_adapter_modules(mode) when mode in [:bridge, :agent] do
+    telegram_adapter =
+      resolve_adapter_module(
+        :demo_telegram_adapter,
+        "JIDO_MESSAGING_DEMO_TELEGRAM_ADAPTER",
+        "Elixir.Jido.Chat.Telegram.Adapter"
+      )
+
+    discord_adapter =
+      resolve_adapter_module(
+        :demo_discord_adapter,
+        "JIDO_MESSAGING_DEMO_DISCORD_ADAPTER",
+        "Elixir.Jido.Chat.Discord.Adapter"
+      )
+
+    [telegram_adapter, discord_adapter]
   end
 
-  defp configure_adapters!(:bridge) do
-    Application.put_env(:telegex, :caller_adapter, {Finch, []})
+  defp resolve_adapter_module(config_key, env_key, default_module_name) do
+    configured =
+      Application.get_env(:jido_messaging, config_key) ||
+        Dotenvy.env!(env_key, :string, default: default_module_name)
 
-    Application.put_env(:nostrum, :gateway_intents, [
-      :guilds,
-      :guild_messages,
-      :message_content,
-      :direct_messages
-    ])
+    case configured do
+      module when is_atom(module) ->
+        module
+
+      module_name when is_binary(module_name) and module_name != "" ->
+        module_name
+        |> String.split(".")
+        |> Module.concat()
+
+      other ->
+        Mix.raise("Invalid adapter module configuration for #{config_key}: #{inspect(other)}")
+    end
   end
 
-  defp configure_adapters!(:agent) do
-    configure_adapters!(:bridge)
+  defp configure_adapters!([]), do: :ok
+
+  defp configure_adapters!(adapter_modules) when is_list(adapter_modules) do
+    if Enum.any?(adapter_modules, &(to_string(&1) =~ "Discord")) do
+      Application.put_env(:nostrum, :gateway_intents, [
+        :guilds,
+        :guild_messages,
+        :message_content,
+        :direct_messages
+      ])
+    end
+
+    :ok
   end
 
-  defp start_applications!(:echo) do
+  defp start_applications!(:echo, _adapter_modules) do
     Application.ensure_all_started(:logger)
     Application.ensure_all_started(:jido_signal)
-    Application.ensure_all_started(:finch)
-    Application.ensure_all_started(:telegex)
   end
 
-  defp start_applications!(:bridge) do
+  defp start_applications!(:bridge, adapter_modules) do
     Application.ensure_all_started(:logger)
     Application.ensure_all_started(:jido_signal)
-    Application.ensure_all_started(:finch)
-    Application.ensure_all_started(:telegex)
-    Application.ensure_all_started(:nostrum)
+    Enum.each(adapter_modules, &ensure_adapter_application_started!/1)
   end
 
-  defp start_applications!(:agent) do
-    start_applications!(:bridge)
+  defp start_applications!(:agent, adapter_modules) do
+    start_applications!(:bridge, adapter_modules)
     Application.ensure_all_started(:jido)
     Application.ensure_all_started(:jido_ai)
+  end
+
+  defp ensure_adapter_application_started!(adapter_module) do
+    if Code.ensure_loaded?(adapter_module) do
+      case Application.get_application(adapter_module) do
+        nil ->
+          :ok
+
+        app ->
+          Application.ensure_all_started(app)
+      end
+    else
+      Mix.raise("""
+      Adapter module not available: #{inspect(adapter_module)}
+
+      Ensure the adapter package is added to your host application's deps,
+      then run `mix deps.get`.
+      """)
+    end
   end
 
   defp get_telegram_chat_id do

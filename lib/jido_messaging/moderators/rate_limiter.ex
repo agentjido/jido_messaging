@@ -1,4 +1,4 @@
-defmodule JidoMessaging.Moderators.RateLimiter do
+defmodule Jido.Messaging.Moderators.RateLimiter do
   @moduledoc """
   Rate limiting moderator to prevent message flooding.
 
@@ -15,7 +15,7 @@ defmodule JidoMessaging.Moderators.RateLimiter do
       RateLimiter.moderate(message, max_messages: 5, window_ms: 30_000)
   """
 
-  @behaviour JidoMessaging.Moderation
+  @behaviour Jido.Messaging.Moderation
 
   @default_table :jido_messaging_rate_limits
   @default_max_messages 10

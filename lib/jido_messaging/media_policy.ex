@@ -1,4 +1,4 @@
-defmodule JidoMessaging.MediaPolicy do
+defmodule Jido.Messaging.MediaPolicy do
   @moduledoc """
   Deterministic media normalization and bounded policy checks.
 
@@ -9,8 +9,8 @@ defmodule JidoMessaging.MediaPolicy do
   - apply deterministic unsupported-media fallback/reject behavior
   """
 
-  alias JidoMessaging.Capabilities
-  alias JidoMessaging.Content.{Audio, File, Image, Video}
+  alias Jido.Chat.Capabilities
+  alias Jido.Chat.Content.{Audio, File, Image, Video}
 
   @dialyzer {:nowarn_function, prepare_outbound: 3}
   @dialyzer {:nowarn_function, prepare_outbound: 4}

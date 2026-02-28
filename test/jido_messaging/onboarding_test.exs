@@ -1,11 +1,11 @@
-defmodule JidoMessaging.OnboardingTest do
+defmodule Jido.Messaging.OnboardingTest do
   use ExUnit.Case, async: false
 
-  import JidoMessaging.TestHelpers
+  import Jido.Messaging.TestHelpers
 
   defmodule TestMessaging do
-    use JidoMessaging,
-      adapter: JidoMessaging.Adapters.ETS
+    use Jido.Messaging,
+      adapter: Jido.Messaging.Adapters.ETS
   end
 
   setup do

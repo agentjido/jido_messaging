@@ -1,24 +1,24 @@
-defmodule JidoMessaging.GatingTest do
+defmodule Jido.Messaging.GatingTest do
   use ExUnit.Case, async: true
 
-  alias JidoMessaging.{Gating, MsgContext}
+  alias Jido.Messaging.{Gating, MsgContext}
 
   defmodule AllowAllGater do
-    @behaviour JidoMessaging.Gating
+    @behaviour Jido.Messaging.Gating
 
     @impl true
     def check(_ctx, _opts), do: :allow
   end
 
   defmodule DenyAllGater do
-    @behaviour JidoMessaging.Gating
+    @behaviour Jido.Messaging.Gating
 
     @impl true
     def check(_ctx, _opts), do: {:deny, :denied, "Always denied"}
   end
 
   defmodule RequireMentionGater do
-    @behaviour JidoMessaging.Gating
+    @behaviour Jido.Messaging.Gating
 
     @impl true
     def check(%MsgContext{was_mentioned: true}, _opts), do: :allow
@@ -27,7 +27,7 @@ defmodule JidoMessaging.GatingTest do
   end
 
   defmodule RequireGroupGater do
-    @behaviour JidoMessaging.Gating
+    @behaviour Jido.Messaging.Gating
 
     @impl true
     def check(%MsgContext{chat_type: :group}, _opts), do: :allow
@@ -35,7 +35,7 @@ defmodule JidoMessaging.GatingTest do
   end
 
   defmodule OptsCheckingGater do
-    @behaviour JidoMessaging.Gating
+    @behaviour Jido.Messaging.Gating
 
     @impl true
     def check(_ctx, opts) do
@@ -50,7 +50,7 @@ defmodule JidoMessaging.GatingTest do
   defp build_context(attrs \\ %{}) do
     base = %{
       channel_type: :telegram,
-      instance_id: "bot_123",
+      bridge_id: "bot_123",
       external_room_id: "room_456",
       external_user_id: "user_789"
     }
