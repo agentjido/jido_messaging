@@ -67,7 +67,7 @@ defmodule Jido.Messaging.MixProject do
   defp deps do
     [
       # Runtime dependencies
-      jido_dep_git(:jido_chat, "../jido_chat", "agentjido/jido_chat", "main"),
+      {:jido_chat, github: "agentjido/jido_chat", branch: "main", override: true},
       {:jason, "~> 1.4"},
       {:zoi, "~> 0.14"},
       {:jido, github: "agentjido/jido", override: true},
@@ -113,16 +113,6 @@ defmodule Jido.Messaging.MixProject do
         "dialyzer"
       ]
     ]
-  end
-
-  defp jido_dep_git(app, rel_path, github_repo, branch) do
-    path = Path.expand(rel_path, __DIR__)
-
-    if File.dir?(path) and File.exists?(Path.join(path, "mix.exs")) do
-      {app, path: rel_path, override: true}
-    else
-      {app, github: github_repo, branch: branch, override: true}
-    end
   end
 
   defp package do
