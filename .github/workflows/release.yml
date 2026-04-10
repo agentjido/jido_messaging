@@ -1,38 +1,35 @@
-name: Publish to Hex.pm
+name: Release
 
 on:
-  push:
-    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Dry run (no git push, no tag, no GitHub release, no Hex publish)"
+        required: false
+        type: boolean
+        default: false
+      hex_dry_run:
+        description: "Hex dry run only (run all git/release steps, but skip actual Hex publish)"
+        required: false
+        type: boolean
+        default: false
+      skip_tests:
+        description: "Skip tests before release"
+        required: false
+        type: boolean
+        default: false
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  publish:
-    runs-on: ubuntu-latest
-    name: Publish Package
-
-    strategy:
-      matrix:
-        otp: ["27.3"]
-        elixir: ["1.18.4"]
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Elixir
-        uses: erlef/setup-elixir@v1
-        with:
-          otp-version: ${{ matrix.otp }}
-          elixir-version: ${{ matrix.elixir }}
-
-      - name: Install dependencies
-        run: mix deps.get
-
-      - name: Build package
-        run: mix hex.build
-
-      - name: Publish to Hex.pm
-        run: mix hex.publish --yes
-        env:
-          HEX_API_KEY: ${{ secrets.HEX_API_KEY }}
+  release:
+    name: Release
+    uses: agentjido/github-actions/.github/workflows/elixir-release.yml@main
+    with:
+      otp_version: "27.3"
+      elixir_version: "1.18.4"
+      dry_run: ${{ inputs.dry_run }}
+      hex_dry_run: ${{ inputs.hex_dry_run }}
+      skip_tests: ${{ inputs.skip_tests }}
+    secrets: inherit
