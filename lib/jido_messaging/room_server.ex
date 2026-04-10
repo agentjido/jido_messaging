@@ -193,7 +193,8 @@ defmodule Jido.Messaging.RoomServer do
       [{pid, _}] when is_pid(pid) ->
         if Process.alive?(pid), do: pid, else: nil
 
-      [] -> nil
+      [] ->
+        nil
     end
   end
 
