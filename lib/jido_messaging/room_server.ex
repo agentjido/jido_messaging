@@ -190,8 +190,11 @@ defmodule Jido.Messaging.RoomServer do
     registry = Module.concat(instance_module, Registry.Rooms)
 
     case Registry.lookup(registry, room_id) do
-      [{pid, _}] -> pid
-      [] -> nil
+      [{pid, _}] when is_pid(pid) ->
+        if Process.alive?(pid), do: pid, else: nil
+
+      [] ->
+        nil
     end
   end
 
