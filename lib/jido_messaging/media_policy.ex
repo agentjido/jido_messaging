@@ -522,10 +522,10 @@ defmodule Jido.Messaging.MediaPolicy do
     callback_cause =
       case operation do
         :send_media ->
-          if function_exported?(channel_module, :send_media, 3), do: nil, else: :missing_send_media_callback
+          if media_send_available?(channel_module), do: nil, else: :missing_media_dispatch_support
 
         :edit_media ->
-          if function_exported?(channel_module, :edit_media, 4), do: nil, else: :missing_edit_media_callback
+          if media_edit_available?(channel_module), do: nil, else: :missing_media_edit_support
       end
 
     causes =
@@ -547,5 +547,20 @@ defmodule Jido.Messaging.MediaPolicy do
       :max_total_bytes_exceeded,
       :max_items_exceeded
     ]
+  end
+
+  defp media_send_available?(channel_module) do
+    callback_exported?(channel_module, :send_media, 3) or
+      callback_exported?(channel_module, :send_file, 3) or
+      callback_exported?(channel_module, :post_message, 3)
+  end
+
+  defp media_edit_available?(channel_module) do
+    callback_exported?(channel_module, :edit_media, 4) or
+      (media_send_available?(channel_module) and callback_exported?(channel_module, :delete_message, 3))
+  end
+
+  defp callback_exported?(channel_module, callback, arity) do
+    Code.ensure_loaded?(channel_module) and function_exported?(channel_module, callback, arity)
   end
 end

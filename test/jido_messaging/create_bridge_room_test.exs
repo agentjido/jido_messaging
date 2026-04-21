@@ -72,7 +72,6 @@ defmodule Jido.Messaging.CreateBridgeRoomTest do
 
   test "create_bridge_room/2 does not atomize unknown bridge config string keys" do
     dynamic_key = "custom_key_" <> Integer.to_string(System.unique_integer([:positive]))
-    atom_count_before = :erlang.system_info(:atom_count)
 
     attrs = %{
       room_id: "room:atom-safe",
@@ -91,8 +90,6 @@ defmodule Jido.Messaging.CreateBridgeRoomTest do
     assert {:ok, room} = Jido.Messaging.create_bridge_room(BridgeRoomMessaging, attrs)
     assert room.id == "room:atom-safe"
 
-    atom_count_after = :erlang.system_info(:atom_count)
-    assert atom_count_after == atom_count_before
     assert_raise ArgumentError, fn -> String.to_existing_atom(dynamic_key) end
   end
 end

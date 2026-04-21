@@ -12,6 +12,12 @@ cd jido_messaging
 mix setup
 ```
 
+Install local git hooks explicitly from the primary checkout when needed:
+
+```bash
+mix install_hooks
+```
+
 ## Running Tests
 
 ```bash
@@ -50,6 +56,7 @@ mix format --check-formatted
 mix compile --warnings-as-errors
 mix credo --min-priority higher
 mix dialyzer
+mix doctor --raise
 ```
 
 ## Commit Message Format

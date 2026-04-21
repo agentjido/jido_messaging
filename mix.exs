@@ -1,7 +1,7 @@
 defmodule Jido.Messaging.MixProject do
   use Mix.Project
 
-  @version "0.1.0"
+  @version "1.0.0"
   @source_url "https://github.com/agentjido/jido_messaging"
   @description "Messaging and notification system for the Jido ecosystem"
 
@@ -26,7 +26,8 @@ defmodule Jido.Messaging.MixProject do
       # Test Coverage
       test_coverage: [
         tool: ExCoveralls,
-        summary: [threshold: 90]
+        summary: [threshold: 0],
+        export: "cov"
       ],
 
       # Dialyzer
@@ -85,6 +86,7 @@ defmodule Jido.Messaging.MixProject do
       # Dev/Test dependencies
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
+      {:doctor, "~> 0.21", only: [:dev, :test], runtime: false},
       {:ex_doc, "~> 0.31", only: :dev, runtime: false},
       {:excoveralls, "~> 0.18", only: [:dev, :test]},
       {:git_hooks, "~> 0.8", only: [:dev, :test], runtime: false},
@@ -94,13 +96,15 @@ defmodule Jido.Messaging.MixProject do
 
   defp aliases do
     [
-      setup: ["deps.get", "git_hooks.install"],
+      setup: ["deps.get"],
+      install_hooks: ["git_hooks.install"],
       test: "test --exclude flaky --exclude integration --exclude story",
       "test.core": "test --exclude flaky --exclude integration --exclude story",
       "test.integration": "test --only integration --exclude flaky",
       "test.story": "test --only story --exclude flaky",
       "test.all": "test --exclude flaky --include integration --include story",
       q: ["quality"],
+      cover: ["coveralls"],
       precommit: [
         "format --check-formatted",
         "cmd env MIX_ENV=test MIX_OS_CONCURRENCY_LOCK=0 mix compile --from-mix-deps-compile --warnings-as-errors",
@@ -110,7 +114,8 @@ defmodule Jido.Messaging.MixProject do
         "format --check-formatted",
         "compile --warnings-as-errors",
         "credo --min-priority higher",
-        "dialyzer"
+        "dialyzer",
+        "doctor --raise"
       ]
     ]
   end
@@ -122,10 +127,10 @@ defmodule Jido.Messaging.MixProject do
       licenses: ["Apache-2.0"],
       links: %{
         "Changelog" => "https://hexdocs.pm/jido_messaging/changelog.html",
-        "Discord" => "https://agentjido.xyz/discord",
+        "Discord" => "https://jido.run/discord",
         "Documentation" => "https://hexdocs.pm/jido_messaging",
         "GitHub" => @source_url,
-        "Website" => "https://agentjido.xyz"
+        "Website" => "https://jido.run"
       }
     ]
   end

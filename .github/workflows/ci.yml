@@ -56,7 +56,7 @@ jobs:
         run: mix deps.get
 
       - name: Run coverage
-        run: mix test --cover
+        run: mix coveralls
 
       - name: Upload coverage
         uses: codecov/codecov-action@v5

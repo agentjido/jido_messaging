@@ -12,7 +12,7 @@ Jido Messaging is a messaging and notification system for the Jido ecosystem. It
 - `mix format` - Format Elixir code
 
 ### Quality & Testing
-- `mix quality` - Run all quality checks (format, compile, credo, dialyzer)
+- `mix quality` - Run all quality checks (format, compile, credo, dialyzer, doctor)
 - `mix test` - Run tests with coverage checks
 - `mix coveralls` - Generate coverage report
 - `mix coveralls.html` - Generate HTML coverage report
@@ -99,6 +99,10 @@ Before publishing to Hex:
 6. Use GitHub Actions release workflow to publish
 
 ## Common Issues
+
+### Hook Installation
+- `git_hooks` auto-install is disabled by default for worktree safety
+- Run `mix install_hooks` explicitly from the primary checkout when hooks are needed
 
 ### Coverage Below Threshold
 - Write tests for all public functions

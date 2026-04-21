@@ -2,9 +2,9 @@
 
 Messaging and notification system for the Jido ecosystem. Provides a unified interface for building conversational AI agents across multiple channels (Telegram, Discord, Slack, etc.).
 
-## Experimental Status
+## Release Status
 
-This package is experimental and pre-1.0. APIs and behavior will change.
+This package is being prepared for the Jido 1.x messaging release line.
 `jido_messaging` is built around `Jido.Chat` and the Elixir implementation
 aligned to the Vercel Chat SDK ([chat-sdk.dev/docs](https://www.chat-sdk.dev/docs)).
 

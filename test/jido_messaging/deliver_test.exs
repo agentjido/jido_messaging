@@ -54,12 +54,11 @@ defmodule Jido.Messaging.DeliverTest do
     @impl true
     def edit_message(_chat_id, message_id, text, _opts), do: {:ok, %{message_id: "#{message_id}:#{text}"}}
 
-    @impl false
-    def send_media(_chat_id, payload, _opts), do: {:ok, %{message_id: "media:#{payload.kind}", payload: payload}}
+    @impl true
+    def send_file(_chat_id, file, opts), do: {:ok, %{message_id: "media:#{file.kind}", payload: file, opts: opts}}
 
-    @impl false
-    def edit_media(_chat_id, message_id, payload, _opts),
-      do: {:ok, %{message_id: "#{message_id}:media_edit:#{payload.kind}", payload: payload}}
+    @impl true
+    def delete_message(_chat_id, _message_id, _opts), do: :ok
   end
 
   defmodule SlowSecurityAdapter do

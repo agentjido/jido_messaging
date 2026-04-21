@@ -1,5 +1,10 @@
 defmodule Jido.Messaging.Onboarding.Worker do
-  @moduledoc false
+  @moduledoc """
+  Runtime process for a single onboarding flow.
+
+  The worker restores persisted flow state, applies state-machine transitions,
+  and persists changes when the flow advances.
+  """
   use GenServer
 
   alias Jido.Messaging.Onboarding.Flow
@@ -15,6 +20,9 @@ defmodule Jido.Messaging.Onboarding.Worker do
         }
 
   @spec start_link(keyword()) :: GenServer.on_start()
+  @doc """
+  Starts an onboarding worker registered by onboarding ID.
+  """
   def start_link(opts) do
     instance_module = Keyword.fetch!(opts, :instance_module)
     onboarding_id = Keyword.fetch!(opts, :onboarding_id)
@@ -24,6 +32,9 @@ defmodule Jido.Messaging.Onboarding.Worker do
   end
 
   @spec whereis(module(), String.t()) :: pid() | nil
+  @doc """
+  Returns the worker process for `onboarding_id`, if it is running.
+  """
   def whereis(instance_module, onboarding_id) when is_atom(instance_module) and is_binary(onboarding_id) do
     registry = registry_name(instance_module)
 
@@ -37,6 +48,9 @@ defmodule Jido.Messaging.Onboarding.Worker do
   end
 
   @spec get_flow(pid(), timeout()) :: {:ok, Flow.t()} | {:error, term()}
+  @doc """
+  Returns the current onboarding flow state from a worker.
+  """
   def get_flow(pid, timeout \\ @default_call_timeout) when is_pid(pid) do
     safe_call(pid, :get_flow, timeout)
   end
@@ -44,6 +58,9 @@ defmodule Jido.Messaging.Onboarding.Worker do
   @spec transition(pid(), StateMachine.transition(), map(), keyword(), timeout()) ::
           {:ok, %{required(:flow) => Flow.t(), required(:transition) => StateMachine.transition_result()}}
           | {:error, term()}
+  @doc """
+  Applies an onboarding transition and persists the updated flow.
+  """
   def transition(pid, transition, metadata, opts \\ [], timeout \\ @default_call_timeout)
       when is_pid(pid) and is_atom(transition) and is_map(metadata) and is_list(opts) do
     safe_call(pid, {:transition, transition, metadata, opts}, timeout)

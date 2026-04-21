@@ -18,6 +18,9 @@ defmodule Jido.Messaging.Demo.Topology do
         }
 
   @spec load(String.t()) :: {:ok, t()} | {:error, term()}
+  @doc """
+  Loads a YAML topology file and resolves environment placeholders.
+  """
   def load(path) when is_binary(path) do
     if File.exists?(path) do
       case YamlElixir.read_from_file(path) do
@@ -33,6 +36,9 @@ defmodule Jido.Messaging.Demo.Topology do
   @env_placeholder ~r/^\$\{(?<name>[A-Z0-9_]+)(?::-(?<default>.*))?\}$/
 
   @spec mode(t()) :: :echo | :bridge | :agent | nil
+  @doc """
+  Returns the configured demo runtime mode.
+  """
   def mode(topology) when is_map(topology) do
     topology
     |> get_value("mode")
@@ -40,12 +46,18 @@ defmodule Jido.Messaging.Demo.Topology do
   end
 
   @spec bridge_value(t(), String.t()) :: term()
+  @doc """
+  Reads a value from the topology's `bridge` section.
+  """
   def bridge_value(topology, key) when is_map(topology) and is_binary(key) do
     bridge = get_value(topology, "bridge", %{})
     get_value(bridge, key)
   end
 
   @spec adapter_module(t(), String.t()) :: module() | nil
+  @doc """
+  Resolves an adapter module configured in the topology's `bridge` section.
+  """
   def adapter_module(topology, key) when is_map(topology) and is_binary(key) do
     topology
     |> bridge_value(key)
@@ -53,6 +65,9 @@ defmodule Jido.Messaging.Demo.Topology do
   end
 
   @spec apply(module(), t()) :: {:ok, summary()} | {:error, term()}
+  @doc """
+  Applies bridge configs, rooms, bindings, and routing policies to an instance.
+  """
   def apply(instance_module, topology)
       when is_atom(instance_module) and is_map(topology) do
     bridge_rooms = list_value(topology, "bridge_rooms")
