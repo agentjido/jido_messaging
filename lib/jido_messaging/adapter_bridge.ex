@@ -6,7 +6,7 @@ defmodule Jido.Messaging.AdapterBridge do
   operations and adapter capability/failure normalization.
   """
 
-  alias Jido.Chat.{Adapter, Response}
+  alias Jido.Chat.{Adapter, Capabilities, FileUpload, PostPayload, Response}
 
   @type failure_class :: :recoverable | :degraded | :fatal
   @type failure_disposition :: :retry | :degrade | :crash
@@ -14,7 +14,7 @@ defmodule Jido.Messaging.AdapterBridge do
   @doc "Returns adapter channel type, falling back to module name inference."
   @spec channel_type(module()) :: atom()
   def channel_type(adapter_module) when is_atom(adapter_module) do
-    if function_exported?(adapter_module, :channel_type, 0) do
+    if callback_exported?(adapter_module, :channel_type, 0) do
       adapter_module.channel_type()
     else
       adapter_module
@@ -36,21 +36,18 @@ defmodule Jido.Messaging.AdapterBridge do
   @spec capabilities(module()) :: [atom()]
   def capabilities(adapter_module) when is_atom(adapter_module) do
     cond do
-      function_exported?(adapter_module, :content_capabilities, 0) ->
+      callback_exported?(adapter_module, :content_capabilities, 0) ->
         adapter_module.content_capabilities()
         |> normalize_capability_list()
 
-      function_exported?(adapter_module, :capabilities, 0) ->
+      callback_exported?(adapter_module, :capabilities, 0) ->
         case adapter_module.capabilities() do
           caps when is_list(caps) -> normalize_capability_list(caps)
-          caps when is_map(caps) -> infer_content_capabilities(caps)
-          _ -> [:text]
+          _ -> Capabilities.channel_capabilities(adapter_module)
         end
 
       true ->
-        adapter_module
-        |> Adapter.capabilities()
-        |> infer_content_capabilities()
+        Capabilities.channel_capabilities(adapter_module)
     end
   end
 
@@ -82,25 +79,39 @@ defmodule Jido.Messaging.AdapterBridge do
   end
 
   @doc """
-  Sends media payload when adapter provides a native callback.
+  Sends media payload through the canonical adapter boundary.
 
-  Returns `{:error, :unsupported}` when native media send is not implemented.
+  Preference order:
+
+  1. adapter-native `send_media/3`
+  2. canonical `post_message/4` or `send_file/4` fallback through `Jido.Chat.Adapter`
   """
   @spec send_media(module(), String.t() | integer(), map(), keyword()) ::
           {:ok, map()} | {:error, term()}
   def send_media(adapter_module, external_room_id, payload, opts \\ [])
       when is_atom(adapter_module) and is_map(payload) and is_list(opts) do
-    if function_exported?(adapter_module, :send_media, 3) do
-      normalize_legacy_send_result(adapter_module.send_media(external_room_id, payload, opts))
-    else
-      {:error, :unsupported}
+    cond do
+      callback_exported?(adapter_module, :send_media, 3) ->
+        normalize_send_result(adapter_module.send_media(external_room_id, payload, opts))
+
+      canonical_media_send_available?(adapter_module) ->
+        payload
+        |> media_payload_to_post_payload()
+        |> then(&Adapter.post_message(adapter_module, external_room_id, &1, opts))
+        |> normalize_send_result()
+
+      true ->
+        {:error, :unsupported}
     end
   end
 
   @doc """
-  Edits media payload when adapter provides a native callback.
+  Edits media payload through adapter-native or replacement behavior.
 
-  Returns `{:error, :unsupported}` when native media edit is not implemented.
+  Preference order:
+
+  1. adapter-native `edit_media/4`
+  2. replacement edit: send the new media and delete the old message
   """
   @spec edit_media(
           module(),
@@ -111,10 +122,22 @@ defmodule Jido.Messaging.AdapterBridge do
         ) :: {:ok, map()} | {:error, term()}
   def edit_media(adapter_module, external_room_id, external_message_id, payload, opts \\ [])
       when is_atom(adapter_module) and is_map(payload) and is_list(opts) do
-    if function_exported?(adapter_module, :edit_media, 4) do
-      normalize_legacy_send_result(adapter_module.edit_media(external_room_id, external_message_id, payload, opts))
-    else
-      {:error, :unsupported}
+    cond do
+      callback_exported?(adapter_module, :edit_media, 4) ->
+        normalize_send_result(adapter_module.edit_media(external_room_id, external_message_id, payload, opts))
+
+      canonical_media_edit_available?(adapter_module) ->
+        replacement_opts = Keyword.put_new(opts, :replacement_for, external_message_id)
+
+        with {:ok, replacement} <- send_media(adapter_module, external_room_id, payload, replacement_opts) do
+          delete_result =
+            Adapter.delete_message(adapter_module, external_room_id, external_message_id, opts)
+
+          {:ok, attach_replacement_metadata(replacement, external_message_id, delete_result)}
+        end
+
+      true ->
+        {:error, :unsupported}
     end
   end
 
@@ -133,7 +156,7 @@ defmodule Jido.Messaging.AdapterBridge do
           {:ok, [Supervisor.child_spec()]} | {:error, map()}
   def listener_child_specs(adapter_module, bridge_id, opts \\ [])
       when is_atom(adapter_module) and is_binary(bridge_id) and is_list(opts) do
-    if function_exported?(adapter_module, :listener_child_specs, 2) do
+    if callback_exported?(adapter_module, :listener_child_specs, 2) do
       try do
         case adapter_module.listener_child_specs(bridge_id, opts) do
           {:ok, specs} when is_list(specs) ->
@@ -166,7 +189,7 @@ defmodule Jido.Messaging.AdapterBridge do
           :ok | {:ok, map()} | {:error, term()}
   def verify_sender(adapter_module, incoming_message, raw_payload)
       when is_atom(adapter_module) and is_map(incoming_message) and is_map(raw_payload) do
-    if function_exported?(adapter_module, :verify_sender, 2) do
+    if callback_exported?(adapter_module, :verify_sender, 2) do
       adapter_module.verify_sender(incoming_message, raw_payload)
     else
       :ok
@@ -182,7 +205,7 @@ defmodule Jido.Messaging.AdapterBridge do
           {:ok, term()} | {:ok, term(), map()} | {:error, term()}
   def sanitize_outbound(adapter_module, outbound, opts \\ [])
       when is_atom(adapter_module) and is_list(opts) do
-    if function_exported?(adapter_module, :sanitize_outbound, 2) do
+    if callback_exported?(adapter_module, :sanitize_outbound, 2) do
       adapter_module.sanitize_outbound(outbound, opts)
     else
       {:ok, outbound}
@@ -232,11 +255,26 @@ defmodule Jido.Messaging.AdapterBridge do
     end
   end
 
-  defp normalize_legacy_send_result({:ok, %Response{} = response}), do: {:ok, response_to_map(response)}
-  defp normalize_legacy_send_result({:ok, result}) when is_map(result), do: {:ok, result}
-  defp normalize_legacy_send_result({:ok, result}), do: {:ok, %{message_id: result}}
-  defp normalize_legacy_send_result({:error, _reason} = error), do: error
-  defp normalize_legacy_send_result(other), do: {:error, {:invalid_return, other}}
+  defp normalize_send_result({:ok, %Response{} = response}), do: {:ok, response_to_map(response)}
+  defp normalize_send_result({:ok, result}) when is_map(result), do: {:ok, result}
+  defp normalize_send_result({:ok, result}), do: {:ok, %{message_id: result}}
+  defp normalize_send_result({:error, _reason} = error), do: error
+  defp normalize_send_result(other), do: {:error, {:invalid_return, other}}
+
+  defp callback_exported?(adapter_module, callback, arity) do
+    Code.ensure_loaded?(adapter_module) and function_exported?(adapter_module, callback, arity)
+  end
+
+  defp canonical_media_send_available?(adapter_module) do
+    callback_exported?(adapter_module, :send_file, 3) or
+      callback_exported?(adapter_module, :post_message, 3)
+  end
+
+  defp canonical_media_edit_available?(adapter_module) do
+    callback_exported?(adapter_module, :delete_message, 3) and
+      (callback_exported?(adapter_module, :send_media, 3) or
+         canonical_media_send_available?(adapter_module))
+  end
 
   defp normalize_capability_list(caps) when is_list(caps) do
     caps
@@ -245,50 +283,6 @@ defmodule Jido.Messaging.AdapterBridge do
     |> then(fn caps ->
       if :text in caps, do: caps, else: [:text | caps]
     end)
-  end
-
-  defp infer_content_capabilities(matrix) when is_map(matrix) do
-    caps = [:text]
-
-    caps =
-      if capability_enabled?(matrix, :stream) do
-        [:streaming | caps]
-      else
-        caps
-      end
-
-    caps =
-      if capability_enabled?(matrix, :add_reaction) or capability_enabled?(matrix, :remove_reaction) do
-        [:reactions | caps]
-      else
-        caps
-      end
-
-    caps =
-      if capability_enabled?(matrix, :list_threads) or capability_enabled?(matrix, :fetch_thread) do
-        [:threads | caps]
-      else
-        caps
-      end
-
-    caps =
-      if capability_enabled?(matrix, :start_typing) do
-        [:typing | caps]
-      else
-        caps
-      end
-
-    caps
-    |> Enum.uniq()
-    |> Enum.reverse()
-  end
-
-  defp capability_enabled?(matrix, key) do
-    case Map.get(matrix, key) do
-      :native -> true
-      :fallback -> true
-      _ -> false
-    end
   end
 
   defp callback_failure(adapter_module, callback, reason) do
@@ -318,4 +312,79 @@ defmodule Jido.Messaging.AdapterBridge do
     |> Enum.reject(fn {_k, v} -> is_nil(v) end)
     |> Map.new()
   end
+
+  defp media_payload_to_post_payload(payload) when is_map(payload) do
+    metadata = media_payload_metadata(payload)
+
+    file =
+      FileUpload.new(%{
+        kind: payload[:kind] || payload["kind"],
+        url: payload[:url] || payload["url"],
+        path: payload[:path] || payload["path"],
+        data: payload[:data] || payload["data"],
+        media_type: payload[:media_type] || payload["media_type"],
+        filename: payload[:filename] || payload["filename"],
+        size_bytes: payload[:size_bytes] || payload["size_bytes"],
+        width: payload[:width] || payload["width"],
+        height: payload[:height] || payload["height"],
+        duration: payload[:duration] || payload["duration"],
+        metadata: metadata
+      })
+
+    attrs =
+      %{
+        files: [file],
+        metadata: metadata
+      }
+      |> maybe_put_post_text(media_payload_caption(payload))
+
+    PostPayload.new(attrs)
+  end
+
+  defp media_payload_metadata(payload) when is_map(payload) do
+    (payload[:metadata] || payload["metadata"] || %{})
+    |> maybe_put_map_value(:thumbnail_url, payload[:thumbnail_url] || payload["thumbnail_url"])
+    |> maybe_put_map_value(:alt_text, payload[:alt_text] || payload["alt_text"])
+    |> maybe_put_map_value(:transcript, payload[:transcript] || payload["transcript"])
+  end
+
+  defp media_payload_caption(payload) when is_map(payload) do
+    payload[:alt_text] || payload["alt_text"] || payload[:transcript] || payload["transcript"]
+  end
+
+  defp maybe_put_post_text(attrs, nil), do: attrs
+  defp maybe_put_post_text(attrs, ""), do: attrs
+
+  defp maybe_put_post_text(attrs, text) when is_binary(text) do
+    Map.merge(attrs, %{text: text, formatted: text, fallback_text: text})
+  end
+
+  defp attach_replacement_metadata(result, replaced_message_id, delete_result) when is_map(result) do
+    metadata =
+      result
+      |> Map.get(:metadata, %{})
+      |> Map.put(:replacement, replacement_metadata(replaced_message_id, delete_result))
+
+    result
+    |> Map.put(:metadata, metadata)
+    |> Map.put(:status, :edited)
+  end
+
+  defp replacement_metadata(replaced_message_id, :ok) do
+    %{
+      replaced_message_id: replaced_message_id,
+      delete_status: :deleted
+    }
+  end
+
+  defp replacement_metadata(replaced_message_id, {:error, reason}) do
+    %{
+      replaced_message_id: replaced_message_id,
+      delete_status: :delete_failed,
+      delete_reason: reason
+    }
+  end
+
+  defp maybe_put_map_value(map, _key, nil), do: map
+  defp maybe_put_map_value(map, key, value), do: Map.put(map, key, value)
 end

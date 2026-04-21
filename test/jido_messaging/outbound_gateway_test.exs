@@ -105,13 +105,12 @@ defmodule Jido.Messaging.OutboundGatewayTest do
     @impl true
     def edit_message(room_id, message_id, text, _opts), do: {:ok, %{message_id: "#{room_id}:#{message_id}:#{text}"}}
 
-    @impl false
-    def send_media(room_id, payload, _opts),
-      do: {:ok, %{message_id: "#{room_id}:media:#{payload.kind}", payload: payload}}
+    @impl true
+    def send_file(room_id, file, opts),
+      do: {:ok, %{message_id: "#{room_id}:media:#{file.kind}", payload: file, opts: opts}}
 
-    @impl false
-    def edit_media(room_id, message_id, payload, _opts),
-      do: {:ok, %{message_id: "#{room_id}:#{message_id}:media_edit:#{payload.kind}", payload: payload}}
+    @impl true
+    def delete_message(_room_id, _message_id, _opts), do: :ok
   end
 
   defmodule SlowSecurityAdapter do
@@ -293,8 +292,10 @@ defmodule Jido.Messaging.OutboundGatewayTest do
              OutboundGateway.edit_media(TestMessaging, context, "msg-1", media_payload)
 
     assert edit_result.operation == :edit_media
-    assert edit_result.message_id == "media_room:msg-1:media_edit:image"
+    assert edit_result.message_id == "media_room:media:image"
     assert edit_result.media.count == 1
+    assert edit_result.result.metadata.replacement.replaced_message_id == "msg-1"
+    assert edit_result.result.metadata.replacement.delete_status == :deleted
   end
 
   test "applies deterministic media text fallback for unsupported channels when configured" do
@@ -342,7 +343,7 @@ defmodule Jido.Messaging.OutboundGatewayTest do
     assert outbound_error.category == :terminal
     assert {:unsupported_media, :image, causes} = outbound_error.reason
     assert :missing_capability in causes
-    assert :missing_send_media_callback in causes
+    assert :missing_media_dispatch_support in causes
   end
 
   test "enforces outbound media size limits via policy preflight" do

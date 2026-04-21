@@ -113,31 +113,31 @@ defmodule Jido.Messaging.MsgContext do
 
       # Conversation scope
       external_room_id: to_string(incoming.external_room_id),
-      chat_type: map_chat_type(incoming[:chat_type]),
+      chat_type: map_chat_type(Map.get(incoming, :chat_type)),
 
       # Sender identity
       external_user_id: to_string(incoming.external_user_id),
-      sender_name: incoming[:display_name],
-      sender_username: incoming[:username],
+      sender_name: Map.get(incoming, :display_name),
+      sender_username: Map.get(incoming, :username),
 
       # Message identification
-      external_message_id: stringify_if_present(incoming[:external_message_id]),
-      body: incoming[:text],
+      external_message_id: stringify_if_present(Map.get(incoming, :external_message_id)),
+      body: Map.get(incoming, :text),
 
       # Threading
-      external_reply_to_id: stringify_if_present(incoming[:external_reply_to_id]),
-      external_thread_id: stringify_if_present(incoming[:external_thread_id]),
+      external_reply_to_id: stringify_if_present(Map.get(incoming, :external_reply_to_id)),
+      external_thread_id: stringify_if_present(Map.get(incoming, :external_thread_id)),
       delivery_external_room_id:
-        stringify_if_present(incoming[:delivery_external_room_id] || incoming[:external_room_id]),
+        stringify_if_present(Map.get(incoming, :delivery_external_room_id) || Map.get(incoming, :external_room_id)),
 
       # Mention tracking
-      was_mentioned: incoming[:was_mentioned] || false,
-      mentions: incoming[:mentions] || [],
+      was_mentioned: Map.get(incoming, :was_mentioned) || false,
+      mentions: Map.get(incoming, :mentions) || [],
 
       # Metadata
-      channel_meta: incoming[:channel_meta] || %{},
-      timestamp: incoming[:timestamp],
-      raw: incoming[:raw]
+      channel_meta: Map.get(incoming, :channel_meta) || %{},
+      timestamp: Map.get(incoming, :timestamp),
+      raw: Map.get(incoming, :raw)
     }
 
     struct!(__MODULE__, attrs)

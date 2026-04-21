@@ -7,6 +7,9 @@ defmodule Jido.Messaging.Onboarding.Supervisor do
   alias Jido.Messaging.Onboarding.Worker
 
   @spec start_link(keyword()) :: Supervisor.on_start()
+  @doc """
+  Starts the dynamic supervisor for onboarding workers.
+  """
   def start_link(opts) do
     name = Keyword.fetch!(opts, :name)
     DynamicSupervisor.start_link(__MODULE__, opts, name: name)
@@ -18,6 +21,9 @@ defmodule Jido.Messaging.Onboarding.Supervisor do
   end
 
   @spec start_worker(module(), String.t(), keyword()) :: {:ok, pid()} | {:error, term()}
+  @doc """
+  Starts or returns the worker for an onboarding flow.
+  """
   def start_worker(instance_module, onboarding_id, opts \\ [])
       when is_atom(instance_module) and is_binary(onboarding_id) and is_list(opts) do
     supervisor = supervisor_name(instance_module)
@@ -49,6 +55,9 @@ defmodule Jido.Messaging.Onboarding.Supervisor do
   end
 
   @spec get_or_start_worker(module(), String.t(), keyword()) :: {:ok, pid()} | {:error, term()}
+  @doc """
+  Returns the worker for an onboarding flow, starting it when necessary.
+  """
   def get_or_start_worker(instance_module, onboarding_id, opts \\ [])
       when is_atom(instance_module) and is_binary(onboarding_id) and is_list(opts) do
     case Worker.whereis(instance_module, onboarding_id) do
@@ -58,6 +67,9 @@ defmodule Jido.Messaging.Onboarding.Supervisor do
   end
 
   @spec count_workers(module()) :: non_neg_integer()
+  @doc """
+  Returns the number of active onboarding workers for an instance.
+  """
   def count_workers(instance_module) when is_atom(instance_module) do
     instance_module
     |> supervisor_name()
@@ -66,5 +78,8 @@ defmodule Jido.Messaging.Onboarding.Supervisor do
   end
 
   @spec supervisor_name(module()) :: atom()
+  @doc """
+  Resolves the registered supervisor name for an instance module.
+  """
   def supervisor_name(instance_module), do: Module.concat(instance_module, OnboardingSupervisor)
 end

@@ -9,6 +9,9 @@ defmodule Jido.Messaging.TopologyValidator do
 
   @spec validate_bridge_room_spec(module(), BridgeRoomSpec.t()) ::
           :ok | {:error, {:invalid_topology, [validation_error()]}}
+  @doc """
+  Validates bridge-room topology references before applying them.
+  """
   def validate_bridge_room_spec(instance_module, %BridgeRoomSpec{} = spec) when is_atom(instance_module) do
     existing_bridge_ids =
       ConfigStore.list_bridge_configs(instance_module)

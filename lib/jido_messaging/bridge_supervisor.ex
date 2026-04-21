@@ -10,6 +10,9 @@ defmodule Jido.Messaging.BridgeSupervisor do
   alias Jido.Messaging.{BridgeServer, ConfigStore}
 
   @spec start_link(keyword()) :: Supervisor.on_start()
+  @doc """
+  Starts the dynamic supervisor that owns bridge runtime workers.
+  """
   def start_link(opts) do
     name = Keyword.fetch!(opts, :name)
     DynamicSupervisor.start_link(__MODULE__, opts, name: name)
@@ -21,6 +24,9 @@ defmodule Jido.Messaging.BridgeSupervisor do
   end
 
   @spec reconcile(module()) :: :ok | {:error, term()}
+  @doc """
+  Reconciles running bridge workers against enabled bridge configs.
+  """
   def reconcile(instance_module) when is_atom(instance_module) do
     desired =
       ConfigStore.list_bridge_configs(instance_module, enabled: true)
@@ -52,6 +58,9 @@ defmodule Jido.Messaging.BridgeSupervisor do
   end
 
   @spec start_bridge(module(), Jido.Messaging.BridgeConfig.t()) :: {:ok, pid()} | {:error, term()}
+  @doc """
+  Starts a bridge worker for a resolved bridge config.
+  """
   def start_bridge(instance_module, config) do
     child_spec = %{
       id: {:bridge, config.id},
@@ -64,6 +73,9 @@ defmodule Jido.Messaging.BridgeSupervisor do
   end
 
   @spec stop_bridge(module(), String.t()) :: :ok | {:error, :not_found | term()}
+  @doc """
+  Stops the running bridge worker for `bridge_id`.
+  """
   def stop_bridge(instance_module, bridge_id) when is_binary(bridge_id) do
     case BridgeServer.whereis(instance_module, bridge_id) do
       nil ->
@@ -75,6 +87,9 @@ defmodule Jido.Messaging.BridgeSupervisor do
   end
 
   @spec list_bridges(module()) :: [Jido.Messaging.BridgeStatus.t()]
+  @doc """
+  Lists status snapshots for all running bridges.
+  """
   def list_bridges(instance_module) when is_atom(instance_module) do
     list_running(instance_module)
     |> Enum.map(fn {_bridge_id, pid} ->

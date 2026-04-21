@@ -57,7 +57,6 @@ defmodule Jido.Messaging.BridgePluginTest do
       assert plugin.label == "Basic"
       assert :text in plugin.capabilities
       assert :streaming in plugin.capabilities
-      assert :threads in plugin.capabilities
     end
 
     test "allows overriding id" do

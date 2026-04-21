@@ -1,5 +1,11 @@
 defmodule Jido.Messaging.SessionManager.Partition do
-  @moduledoc false
+  @moduledoc """
+  Partition process for session route state.
+
+  Each partition owns an ETS table with TTL and capacity pruning so session
+  lookups can resolve exact routes, room-scoped fallbacks, or supplied fallback
+  routes without centralizing all traffic in one process.
+  """
   use GenServer
 
   alias Jido.Messaging.SessionManager
@@ -18,6 +24,9 @@ defmodule Jido.Messaging.SessionManager.Partition do
         }
 
   @spec start_link(keyword()) :: GenServer.on_start()
+  @doc """
+  Starts a session manager partition process.
+  """
   def start_link(opts) do
     instance_module = Keyword.fetch!(opts, :instance_module)
     partition = Keyword.fetch!(opts, :partition)
@@ -27,6 +36,9 @@ defmodule Jido.Messaging.SessionManager.Partition do
   end
 
   @spec whereis(module(), non_neg_integer()) :: pid() | nil
+  @doc """
+  Returns the registered process for a partition, if it is running.
+  """
   def whereis(instance_module, partition) do
     registry = registry_name(instance_module)
 
@@ -38,6 +50,9 @@ defmodule Jido.Messaging.SessionManager.Partition do
 
   @spec set(module(), non_neg_integer(), SessionManager.session_key(), SessionManager.route(), keyword(), timeout()) ::
           :ok | {:error, :partition_unavailable}
+  @doc """
+  Stores a route for a session key in the selected partition.
+  """
   def set(instance_module, partition, session_key, route, opts \\ [], timeout \\ @default_call_timeout) do
     with_pid(instance_module, partition, fn pid ->
       GenServer.call(pid, {:set, session_key, route, opts}, timeout)
@@ -46,6 +61,9 @@ defmodule Jido.Messaging.SessionManager.Partition do
 
   @spec get(module(), non_neg_integer(), SessionManager.session_key(), timeout()) ::
           {:ok, SessionManager.route_record()} | {:error, :not_found | :expired | :partition_unavailable}
+  @doc """
+  Fetches a stored route record for a session key.
+  """
   def get(instance_module, partition, session_key, timeout \\ @default_call_timeout) do
     with_pid(instance_module, partition, fn pid ->
       GenServer.call(pid, {:get, session_key}, timeout)
@@ -54,6 +72,9 @@ defmodule Jido.Messaging.SessionManager.Partition do
 
   @spec resolve(module(), non_neg_integer(), SessionManager.session_key(), [SessionManager.route()], timeout()) ::
           {:ok, SessionManager.resolution()} | {:error, :no_route | :partition_unavailable}
+  @doc """
+  Resolves a session route from exact, room-scoped, or provided fallback routes.
+  """
   def resolve(instance_module, partition, session_key, fallback_routes, timeout \\ @default_call_timeout) do
     with_pid(instance_module, partition, fn pid ->
       GenServer.call(pid, {:resolve, session_key, fallback_routes}, timeout)
@@ -62,6 +83,9 @@ defmodule Jido.Messaging.SessionManager.Partition do
 
   @spec prune(module(), non_neg_integer(), timeout()) ::
           {:ok, %{required(:pruned) => non_neg_integer()}} | {:error, :partition_unavailable}
+  @doc """
+  Removes expired entries from a partition immediately.
+  """
   def prune(instance_module, partition, timeout \\ @default_call_timeout) do
     with_pid(instance_module, partition, fn pid ->
       GenServer.call(pid, :prune, timeout)

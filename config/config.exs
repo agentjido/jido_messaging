@@ -1,8 +1,10 @@
 import Config
 
+config :git_hooks, auto_install: false
+
 if config_env() == :dev do
   config :git_hooks,
-    auto_install: true,
+    auto_install: false,
     verbose: true,
     hooks: [
       commit_msg: [
@@ -30,4 +32,6 @@ if config_env() == :dev do
     ]
 end
 
-import_config "#{Mix.env()}.exs"
+if File.exists?(Path.expand("#{config_env()}.exs", __DIR__)) do
+  import_config "#{config_env()}.exs"
+end

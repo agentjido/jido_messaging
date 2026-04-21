@@ -20,6 +20,9 @@ defmodule Jido.Messaging.BridgeServer do
         }
 
   @spec start_link(keyword()) :: GenServer.on_start()
+  @doc """
+  Starts a bridge runtime process for a configured bridge.
+  """
   def start_link(opts) do
     instance_module = Keyword.fetch!(opts, :instance_module)
     bridge_id = Keyword.fetch!(opts, :bridge_id)
@@ -29,6 +32,9 @@ defmodule Jido.Messaging.BridgeServer do
   end
 
   @spec whereis(module(), String.t()) :: pid() | nil
+  @doc """
+  Returns the running bridge process for `bridge_id`, if one is registered.
+  """
   def whereis(instance_module, bridge_id) do
     registry = Module.concat(instance_module, Registry.Bridges)
 
@@ -39,9 +45,15 @@ defmodule Jido.Messaging.BridgeServer do
   end
 
   @spec status(pid()) :: {:ok, BridgeStatus.t()}
+  @doc """
+  Returns a status snapshot for the bridge process.
+  """
   def status(pid) when is_pid(pid), do: GenServer.call(pid, :status)
 
   @spec mark_ingress(module(), String.t()) :: :ok
+  @doc """
+  Records successful inbound activity for a running bridge.
+  """
   def mark_ingress(instance_module, bridge_id) when is_atom(instance_module) and is_binary(bridge_id) do
     case whereis(instance_module, bridge_id) do
       nil -> :ok
@@ -50,6 +62,9 @@ defmodule Jido.Messaging.BridgeServer do
   end
 
   @spec mark_outbound(module(), String.t()) :: :ok
+  @doc """
+  Records successful outbound activity for a running bridge.
+  """
   def mark_outbound(instance_module, bridge_id) when is_atom(instance_module) and is_binary(bridge_id) do
     case whereis(instance_module, bridge_id) do
       nil -> :ok
@@ -58,6 +73,9 @@ defmodule Jido.Messaging.BridgeServer do
   end
 
   @spec mark_error(module(), String.t(), term()) :: :ok
+  @doc """
+  Records the latest bridge error without crashing the caller.
+  """
   def mark_error(instance_module, bridge_id, reason) when is_atom(instance_module) and is_binary(bridge_id) do
     case whereis(instance_module, bridge_id) do
       nil -> :ok

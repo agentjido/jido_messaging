@@ -259,8 +259,8 @@ defmodule Jido.Messaging.Ingest do
   end
 
   defp build_dedupe_key(channel_type, bridge_id, incoming) do
-    external_message_id = incoming[:external_message_id]
-    external_room_id = incoming.external_room_id
+    external_message_id = Map.get(incoming, :external_message_id)
+    external_room_id = Map.get(incoming, :external_room_id)
 
     {channel_type, bridge_id, external_room_id, external_message_id}
   end
@@ -271,8 +271,8 @@ defmodule Jido.Messaging.Ingest do
     external_id = to_string(incoming.external_room_id)
 
     room_attrs = %{
-      type: map_chat_type(incoming[:chat_type]),
-      name: incoming[:chat_title]
+      type: map_chat_type(Map.get(incoming, :chat_type)),
+      name: Map.get(incoming, :chat_title)
     }
 
     messaging_module.get_or_create_room_by_external_binding(
@@ -289,8 +289,8 @@ defmodule Jido.Messaging.Ingest do
     participant_attrs = %{
       type: :human,
       identity: %{
-        username: incoming[:username],
-        display_name: incoming[:display_name]
+        username: Map.get(incoming, :username),
+        display_name: Map.get(incoming, :display_name)
       }
     }
 
@@ -311,11 +311,12 @@ defmodule Jido.Messaging.Ingest do
         role: :user,
         content: content,
         reply_to_id: reply_to_id,
-        external_id: incoming[:external_message_id],
-        external_reply_to_id: stringify_if_present(incoming[:external_reply_to_id]),
+        external_id: Map.get(incoming, :external_message_id),
+        external_reply_to_id: stringify_if_present(Map.get(incoming, :external_reply_to_id)),
         thread_id: thread && thread.id,
-        external_thread_id: incoming[:external_thread_id] || (thread && thread.external_thread_id),
-        delivery_external_room_id: incoming[:delivery_external_room_id] || (thread && thread.delivery_external_room_id),
+        external_thread_id: Map.get(incoming, :external_thread_id) || (thread && thread.external_thread_id),
+        delivery_external_room_id:
+          Map.get(incoming, :delivery_external_room_id) || (thread && thread.delivery_external_room_id),
         status: :sent,
         metadata: build_metadata(incoming, channel_type, bridge_id, media_metadata)
       }
@@ -342,7 +343,7 @@ defmodule Jido.Messaging.Ingest do
          %MsgContext{} = msg_context,
          opts
        ) do
-    case incoming[:external_thread_id] do
+    case Map.get(incoming, :external_thread_id) do
       external_thread_id when is_binary(external_thread_id) ->
         get_or_create_thread(
           messaging_module,
@@ -350,8 +351,10 @@ defmodule Jido.Messaging.Ingest do
           %{
             external_thread_id: external_thread_id,
             delivery_external_room_id:
-              stringify_if_present(incoming[:delivery_external_room_id] || incoming[:external_room_id]),
-            root_external_message_id: stringify_if_present(incoming[:external_reply_to_id]),
+              stringify_if_present(
+                Map.get(incoming, :delivery_external_room_id) || Map.get(incoming, :external_room_id)
+              ),
+            root_external_message_id: stringify_if_present(Map.get(incoming, :external_reply_to_id)),
             metadata: %{source: :incoming_thread}
           }
         )
@@ -381,7 +384,7 @@ defmodule Jido.Messaging.Ingest do
        ) do
     case resolve_target_agent(room_server, msg_context.agent_mentions) do
       {:ok, agent_id} ->
-        if incoming[:external_message_id] do
+        if Map.get(incoming, :external_message_id) do
           with {:ok, result} <-
                  open_thread(
                    channel_module,
@@ -391,14 +394,12 @@ defmodule Jido.Messaging.Ingest do
                  ),
                {:ok, thread} <-
                  get_or_create_thread(messaging_module, room.id, %{
-                   external_thread_id:
-                     stringify_if_present(result[:external_thread_id] || result["external_thread_id"]),
+                   external_thread_id: stringify_if_present(result_value(result, :external_thread_id)),
                    delivery_external_room_id:
                      stringify_if_present(
-                       result[:delivery_external_room_id] || result["delivery_external_room_id"] ||
-                         incoming[:external_room_id]
+                       result_value(result, :delivery_external_room_id) || Map.get(incoming, :external_room_id)
                      ),
-                   root_external_message_id: stringify_if_present(incoming[:external_message_id]),
+                   root_external_message_id: stringify_if_present(Map.get(incoming, :external_message_id)),
                    metadata: %{source: :opened_from_root}
                  }),
                {:ok, assigned_thread} <-
@@ -515,7 +516,7 @@ defmodule Jido.Messaging.Ingest do
     [
       topic_name: build_topic_name(msg_context, incoming),
       agent_mentions: msg_context.agent_mentions,
-      external_thread_id: incoming[:external_thread_id]
+      external_thread_id: Map.get(incoming, :external_thread_id)
     ]
   end
 
@@ -526,8 +527,19 @@ defmodule Jido.Messaging.Ingest do
   end
 
   defp build_topic_name(_msg_context, incoming) do
-    "thread-" <> stringify_if_present(incoming[:external_message_id] || Jido.Chat.ID.generate!())
+    "thread-" <> stringify_if_present(Map.get(incoming, :external_message_id) || Jido.Chat.ID.generate!())
   end
+
+  defp result_value(result, key) when is_struct(result) do
+    Map.get(result, key) ||
+      case Map.get(result, :metadata) do
+        metadata when is_map(metadata) -> Map.get(metadata, key)
+        _ -> nil
+      end
+  end
+
+  defp result_value(result, key) when is_map(result), do: Map.get(result, key) || Map.get(result, Atom.to_string(key))
+  defp result_value(_result, _key), do: nil
 
   defp maybe_backfill_thread_root(_messaging_module, nil, _message), do: nil
 
@@ -581,7 +593,7 @@ defmodule Jido.Messaging.Ingest do
   defp ensure_thread_runner(_messaging_module, _room, _room_server, _thread), do: :ok
 
   defp resolve_reply_to_id(messaging_module, channel_type, bridge_id, incoming) do
-    external_reply_to_id = incoming[:external_reply_to_id]
+    external_reply_to_id = Map.get(incoming, :external_reply_to_id)
 
     if external_reply_to_id do
       case messaging_module.get_message_by_external_id(channel_type, bridge_id, external_reply_to_id) do
@@ -636,12 +648,12 @@ defmodule Jido.Messaging.Ingest do
 
   defp build_metadata(incoming, channel_type, bridge_id, media_metadata) do
     %{
-      external_message_id: incoming[:external_message_id],
-      timestamp: incoming[:timestamp],
+      external_message_id: Map.get(incoming, :external_message_id),
+      timestamp: Map.get(incoming, :timestamp),
       channel: channel_type,
       bridge_id: bridge_id,
-      username: incoming[:username],
-      display_name: incoming[:display_name]
+      username: Map.get(incoming, :username),
+      display_name: Map.get(incoming, :display_name)
     }
     |> Enum.reject(fn {_, v} -> is_nil(v) end)
     |> Map.new()

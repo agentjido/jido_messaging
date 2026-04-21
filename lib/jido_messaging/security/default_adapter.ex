@@ -58,7 +58,7 @@ defmodule Jido.Messaging.Security.DefaultAdapter do
   end
 
   defp verify_sender_claim(incoming_message, raw_payload) do
-    expected_sender = normalize_identity(incoming_message[:external_user_id])
+    expected_sender = normalize_identity(Map.get(incoming_message, :external_user_id))
     claimed_sender = extract_claimed_sender(raw_payload)
 
     cond do
