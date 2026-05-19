@@ -108,7 +108,7 @@ defmodule Jido.Messaging.IngressSubscriptions do
   end
 
   defp subscription_opts(instance_module, bridge_id, %BridgeConfig{} = config, opts) do
-    settings = config.opts || %{}
+    settings = config.opts
     ingress = ingress_settings(settings)
     target_url = target_url(opts, ingress)
 
@@ -116,7 +116,7 @@ defmodule Jido.Messaging.IngressSubscriptions do
     |> Keyword.put_new(:instance_module, instance_module)
     |> Keyword.put_new(:bridge_id, bridge_id)
     |> Keyword.put_new(:bridge_config, config)
-    |> Keyword.put_new(:credentials, config.credentials || %{})
+    |> Keyword.put_new(:credentials, config.credentials)
     |> Keyword.put_new(:settings, settings)
     |> Keyword.put_new(:ingress, ingress)
     |> Keyword.put_new(:adapter_name, AdapterBridge.channel_type(config.adapter_module))
