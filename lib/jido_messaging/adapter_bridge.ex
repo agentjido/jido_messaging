@@ -181,6 +181,37 @@ defmodule Jido.Messaging.AdapterBridge do
   end
 
   @doc """
+  Ensures an adapter-scoped provider ingress subscription.
+
+  The callback is intentionally optional and lives outside the core
+  `Jido.Chat.Adapter` behaviour. Adapter packages can implement
+  `ensure_ingress_subscription/2` when the provider supports control-plane
+  webhook/event subscription provisioning.
+  """
+  @spec ensure_ingress_subscription(module(), String.t(), keyword()) ::
+          {:ok, term()} | {:error, term()}
+  def ensure_ingress_subscription(adapter_module, bridge_id, opts \\ [])
+      when is_atom(adapter_module) and is_binary(bridge_id) and is_list(opts) do
+    call_subscription_callback(adapter_module, :ensure_ingress_subscription, [bridge_id, opts])
+  end
+
+  @doc "Lists adapter-scoped provider ingress subscriptions."
+  @spec list_ingress_subscriptions(module(), String.t(), keyword()) ::
+          {:ok, term()} | {:error, term()}
+  def list_ingress_subscriptions(adapter_module, bridge_id, opts \\ [])
+      when is_atom(adapter_module) and is_binary(bridge_id) and is_list(opts) do
+    call_subscription_callback(adapter_module, :list_ingress_subscriptions, [bridge_id, opts])
+  end
+
+  @doc "Deletes an adapter-scoped provider ingress subscription."
+  @spec delete_ingress_subscription(module(), String.t(), String.t(), keyword()) ::
+          {:ok, term()} | {:error, term()}
+  def delete_ingress_subscription(adapter_module, bridge_id, subscription_id, opts \\ [])
+      when is_atom(adapter_module) and is_binary(bridge_id) and is_binary(subscription_id) and is_list(opts) do
+    call_subscription_callback(adapter_module, :delete_ingress_subscription, [bridge_id, subscription_id, opts])
+  end
+
+  @doc """
   Verifies inbound sender when adapter supports verification.
 
   Default is permissive `:ok`.
@@ -260,6 +291,42 @@ defmodule Jido.Messaging.AdapterBridge do
   defp normalize_send_result({:ok, result}), do: {:ok, %{message_id: result}}
   defp normalize_send_result({:error, _reason} = error), do: error
   defp normalize_send_result(other), do: {:error, {:invalid_return, other}}
+
+  defp call_subscription_callback(adapter_module, callback, args) do
+    arity = length(args)
+
+    if callback_exported?(adapter_module, callback, arity) do
+      try do
+        case apply(adapter_module, callback, args) do
+          {:ok, result} ->
+            {:ok, result}
+
+          :ok ->
+            {:ok, %{}}
+
+          {:error, :unsupported} ->
+            {:error, :unsupported}
+
+          {:error, {:unsupported, _reason} = reason} ->
+            {:error, reason}
+
+          {:error, reason} ->
+            {:error, callback_failure(adapter_module, callback, reason)}
+
+          other ->
+            {:error, callback_failure(adapter_module, callback, {:invalid_return, other})}
+        end
+      rescue
+        exception ->
+          {:error, callback_failure(adapter_module, callback, {:exception, exception})}
+      catch
+        kind, reason ->
+          {:error, callback_failure(adapter_module, callback, {kind, reason})}
+      end
+    else
+      {:error, :unsupported}
+    end
+  end
 
   defp callback_exported?(adapter_module, callback, arity) do
     Code.ensure_loaded?(adapter_module) and function_exported?(adapter_module, callback, arity)

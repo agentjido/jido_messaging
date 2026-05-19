@@ -37,6 +37,7 @@ defmodule Jido.Messaging do
     AgentRunner,
     AgentSupervisor,
     ConfigStore,
+    IngressSubscriptions,
     Message,
     Onboarding,
     RoomServer,
@@ -476,6 +477,21 @@ defmodule Jido.Messaging do
         Jido.Messaging.delete_bridge_config(__MODULE__, bridge_id)
       end
 
+      @doc "Ensure adapter-scoped provider ingress subscription for a bridge."
+      def ensure_ingress_subscription(bridge_id, opts \\ []) do
+        Jido.Messaging.ensure_ingress_subscription(__MODULE__, bridge_id, opts)
+      end
+
+      @doc "List adapter-scoped provider ingress subscriptions for a bridge."
+      def list_ingress_subscriptions(bridge_id, opts \\ []) do
+        Jido.Messaging.list_ingress_subscriptions(__MODULE__, bridge_id, opts)
+      end
+
+      @doc "Delete adapter-scoped provider ingress subscription for a bridge."
+      def delete_ingress_subscription(bridge_id, subscription_id, opts \\ []) do
+        Jido.Messaging.delete_ingress_subscription(__MODULE__, bridge_id, subscription_id, opts)
+      end
+
       @doc "Create or update per-room routing policy."
       def put_routing_policy(room_id, attrs) do
         Jido.Messaging.put_routing_policy(__MODULE__, room_id, attrs)
@@ -858,6 +874,24 @@ defmodule Jido.Messaging do
   def delete_bridge_config(instance_module, bridge_id)
       when is_atom(instance_module) and is_binary(bridge_id) do
     ConfigStore.delete_bridge_config(instance_module, bridge_id)
+  end
+
+  @doc "Ensure adapter-scoped provider ingress subscription for a bridge."
+  def ensure_ingress_subscription(instance_module, bridge_id, opts \\ [])
+      when is_atom(instance_module) and is_binary(bridge_id) and is_list(opts) do
+    IngressSubscriptions.ensure(instance_module, bridge_id, opts)
+  end
+
+  @doc "List adapter-scoped provider ingress subscriptions for a bridge."
+  def list_ingress_subscriptions(instance_module, bridge_id, opts \\ [])
+      when is_atom(instance_module) and is_binary(bridge_id) and is_list(opts) do
+    IngressSubscriptions.list(instance_module, bridge_id, opts)
+  end
+
+  @doc "Delete adapter-scoped provider ingress subscription for a bridge."
+  def delete_ingress_subscription(instance_module, bridge_id, subscription_id, opts \\ [])
+      when is_atom(instance_module) and is_binary(bridge_id) and is_binary(subscription_id) and is_list(opts) do
+    IngressSubscriptions.delete(instance_module, bridge_id, subscription_id, opts)
   end
 
   @doc "Create or update room routing policy."
