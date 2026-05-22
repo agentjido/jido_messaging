@@ -23,6 +23,7 @@ defmodule Jido.Messaging.Persistence.ETS do
   - `:room_bindings` - External binding to room_id mapping
   - `:participant_bindings` - External ID to participant_id mapping
   - `:onboarding_flows` - Onboarding flow records keyed by onboarding_id
+  - `:ingress_subscriptions` - Bridge/provider subscription metadata
   """
 
   @behaviour Jido.Messaging.Persistence
@@ -47,6 +48,7 @@ defmodule Jido.Messaging.Persistence.ETS do
               message_external_ids: Zoi.any(),
               onboarding_flows: Zoi.any(),
               bridge_configs: Zoi.any(),
+              ingress_subscriptions: Zoi.any(),
               routing_policies: Zoi.any()
             },
             coerce: false
@@ -61,7 +63,7 @@ defmodule Jido.Messaging.Persistence.ETS do
   def schema, do: @schema
 
   alias Jido.Chat.{Participant, Room}
-  alias Jido.Messaging.{Message, RoomBinding, Thread}
+  alias Jido.Messaging.{IngressSubscription, Message, RoomBinding, Thread}
 
   @impl true
   def init(_opts) do
@@ -83,6 +85,7 @@ defmodule Jido.Messaging.Persistence.ETS do
         message_external_ids: :ets.new(:message_external_ids, [:set, :public]),
         onboarding_flows: :ets.new(:onboarding_flows, [:set, :public]),
         bridge_configs: :ets.new(:bridge_configs, [:set, :public]),
+        ingress_subscriptions: :ets.new(:ingress_subscriptions, [:set, :public]),
         routing_policies: :ets.new(:routing_policies, [:set, :public])
       })
 
@@ -561,6 +564,39 @@ defmodule Jido.Messaging.Persistence.ETS do
   end
 
   @impl true
+  def save_ingress_subscription(state, %IngressSubscription{} = subscription) do
+    key = ingress_subscription_key(subscription.bridge_id, subscription.subscription_id)
+    true = :ets.insert(state.ingress_subscriptions, {key, subscription})
+    {:ok, subscription}
+  end
+
+  @impl true
+  def list_ingress_subscriptions(state, bridge_id, opts \\ []) when is_binary(bridge_id) and is_list(opts) do
+    status_filter = Keyword.get(opts, :status)
+
+    subscriptions =
+      state.ingress_subscriptions
+      |> :ets.tab2list()
+      |> Enum.flat_map(fn
+        {{^bridge_id, _subscription_id}, %IngressSubscription{} = subscription} -> [subscription]
+        _other -> []
+      end)
+      |> maybe_filter_subscription_status(status_filter)
+      |> Enum.sort_by(& &1.subscription_id)
+
+    {:ok, subscriptions}
+  end
+
+  @impl true
+  def delete_ingress_subscription(state, bridge_id, subscription_id)
+      when is_binary(bridge_id) and is_binary(subscription_id) do
+    case :ets.take(state.ingress_subscriptions, ingress_subscription_key(bridge_id, subscription_id)) do
+      [] -> {:error, :not_found}
+      _ -> :ok
+    end
+  end
+
+  @impl true
   def save_routing_policy(state, routing_policy) do
     true = :ets.insert(state.routing_policies, {routing_policy.room_id, routing_policy})
     {:ok, routing_policy}
@@ -590,6 +626,12 @@ defmodule Jido.Messaging.Persistence.ETS do
 
   defp maybe_filter_enabled(configs, nil), do: configs
   defp maybe_filter_enabled(configs, value), do: Enum.filter(configs, &(&1.enabled == value))
+
+  defp maybe_filter_subscription_status(subscriptions, nil), do: subscriptions
+
+  defp maybe_filter_subscription_status(subscriptions, value) do
+    Enum.filter(subscriptions, &(&1.status == value))
+  end
 
   defp room_matches?(room, state, query) do
     id_matches?(room.id, query) and
@@ -675,6 +717,10 @@ defmodule Jido.Messaging.Persistence.ETS do
 
   defp binding_key(channel, bridge_id, external_id) do
     {channel, to_string(bridge_id), normalize_term(external_id)}
+  end
+
+  defp ingress_subscription_key(bridge_id, subscription_id) do
+    {to_string(bridge_id), to_string(subscription_id)}
   end
 
   defp maybe_index_thread_message(_state, %Message{thread_id: nil}), do: :ok

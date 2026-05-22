@@ -22,7 +22,7 @@ defmodule Jido.Messaging.Persistence do
   """
 
   alias Jido.Chat.{Participant, Room}
-  alias Jido.Messaging.{BridgeConfig, Message, RoutingPolicy, Thread}
+  alias Jido.Messaging.{BridgeConfig, IngressSubscription, Message, RoutingPolicy, Thread}
 
   @type state :: term()
   @type room_id :: String.t()
@@ -206,6 +206,20 @@ defmodule Jido.Messaging.Persistence do
 
   @doc "Delete bridge config."
   @callback delete_bridge_config(state, String.t()) :: :ok | {:error, :not_found}
+
+  @doc "Persist normalized ingress subscription metadata."
+  @callback save_ingress_subscription(state, IngressSubscription.t()) ::
+              {:ok, IngressSubscription.t()} | {:error, term()}
+
+  @doc "List stored ingress subscription metadata for a bridge."
+  @callback list_ingress_subscriptions(state, bridge_id(), keyword()) :: {:ok, [IngressSubscription.t()]}
+
+  @doc "Delete stored ingress subscription metadata."
+  @callback delete_ingress_subscription(state, bridge_id(), String.t()) :: :ok | {:error, :not_found}
+
+  @optional_callbacks save_ingress_subscription: 2,
+                      list_ingress_subscriptions: 3,
+                      delete_ingress_subscription: 3
 
   @doc "Persist routing policy."
   @callback save_routing_policy(state, RoutingPolicy.t()) :: {:ok, RoutingPolicy.t()} | {:error, term()}

@@ -8,7 +8,7 @@ defmodule Jido.Messaging.ConfigStore do
 
   use GenServer
 
-  alias Jido.Messaging.{BridgeConfig, RoutingPolicy, Runtime}
+  alias Jido.Messaging.{BridgeConfig, IngressSubscription, RoutingPolicy, Runtime}
 
   @type revision_conflict ::
           {:revision_conflict, expected_revision :: non_neg_integer(), actual_revision :: non_neg_integer() | nil}
@@ -68,6 +68,43 @@ defmodule Jido.Messaging.ConfigStore do
 
   def delete_bridge_config(pid, bridge_id) when is_pid(pid) and is_binary(bridge_id) do
     GenServer.call(pid, {:delete_bridge_config, bridge_id})
+  end
+
+  @doc "Persist normalized ingress subscription metadata."
+  @spec save_ingress_subscription(module() | pid(), IngressSubscription.t()) ::
+          {:ok, IngressSubscription.t()} | {:error, term()}
+  def save_ingress_subscription(instance_module, %IngressSubscription{} = subscription) when is_atom(instance_module) do
+    GenServer.call(name(instance_module), {:save_ingress_subscription, subscription})
+  end
+
+  def save_ingress_subscription(pid, %IngressSubscription{} = subscription) when is_pid(pid) do
+    GenServer.call(pid, {:save_ingress_subscription, subscription})
+  end
+
+  @doc "List stored ingress subscription metadata for a bridge."
+  @spec list_ingress_subscriptions(module() | pid(), String.t(), keyword()) ::
+          {:ok, [IngressSubscription.t()]} | {:error, term()}
+  def list_ingress_subscriptions(instance_or_pid, bridge_id, opts \\ [])
+
+  def list_ingress_subscriptions(instance_module, bridge_id, opts)
+      when is_atom(instance_module) and is_binary(bridge_id) and is_list(opts) do
+    GenServer.call(name(instance_module), {:list_ingress_subscriptions, bridge_id, opts})
+  end
+
+  def list_ingress_subscriptions(pid, bridge_id, opts) when is_pid(pid) and is_binary(bridge_id) and is_list(opts) do
+    GenServer.call(pid, {:list_ingress_subscriptions, bridge_id, opts})
+  end
+
+  @doc "Delete stored ingress subscription metadata for a bridge."
+  @spec delete_ingress_subscription(module() | pid(), String.t(), String.t()) :: :ok | {:error, :not_found}
+  def delete_ingress_subscription(instance_module, bridge_id, subscription_id)
+      when is_atom(instance_module) and is_binary(bridge_id) and is_binary(subscription_id) do
+    GenServer.call(name(instance_module), {:delete_ingress_subscription, bridge_id, subscription_id})
+  end
+
+  def delete_ingress_subscription(pid, bridge_id, subscription_id)
+      when is_pid(pid) and is_binary(bridge_id) and is_binary(subscription_id) do
+    GenServer.call(pid, {:delete_ingress_subscription, bridge_id, subscription_id})
   end
 
   @doc "Create or update room routing policy with optimistic revision checks."
@@ -159,6 +196,21 @@ defmodule Jido.Messaging.ConfigStore do
       end
 
     {:reply, reply, state}
+  end
+
+  def handle_call({:save_ingress_subscription, %IngressSubscription{} = subscription}, _from, state) do
+    {persistence, persistence_state} = runtime_persistence(state.instance_module)
+    {:reply, persistence_save_ingress_subscription(persistence, persistence_state, subscription), state}
+  end
+
+  def handle_call({:list_ingress_subscriptions, bridge_id, opts}, _from, state) do
+    {persistence, persistence_state} = runtime_persistence(state.instance_module)
+    {:reply, persistence_list_ingress_subscriptions(persistence, persistence_state, bridge_id, opts), state}
+  end
+
+  def handle_call({:delete_ingress_subscription, bridge_id, subscription_id}, _from, state) do
+    {persistence, persistence_state} = runtime_persistence(state.instance_module)
+    {:reply, persistence_delete_ingress_subscription(persistence, persistence_state, bridge_id, subscription_id), state}
   end
 
   def handle_call({:put_routing_policy, room_id, attrs}, _from, state) do
@@ -273,6 +325,30 @@ defmodule Jido.Messaging.ConfigStore do
   defp runtime_persistence(instance_module) do
     runtime = Module.concat(instance_module, :Runtime)
     Runtime.get_persistence(runtime)
+  end
+
+  defp persistence_save_ingress_subscription(persistence, persistence_state, %IngressSubscription{} = subscription) do
+    if function_exported?(persistence, :save_ingress_subscription, 2) do
+      persistence.save_ingress_subscription(persistence_state, subscription)
+    else
+      {:ok, subscription}
+    end
+  end
+
+  defp persistence_list_ingress_subscriptions(persistence, persistence_state, bridge_id, opts) do
+    if function_exported?(persistence, :list_ingress_subscriptions, 3) do
+      persistence.list_ingress_subscriptions(persistence_state, bridge_id, opts)
+    else
+      {:ok, []}
+    end
+  end
+
+  defp persistence_delete_ingress_subscription(persistence, persistence_state, bridge_id, subscription_id) do
+    if function_exported?(persistence, :delete_ingress_subscription, 3) do
+      persistence.delete_ingress_subscription(persistence_state, bridge_id, subscription_id)
+    else
+      {:error, :not_found}
+    end
   end
 
   defp get_existing_bridge(_persistence, _state, nil), do: nil
