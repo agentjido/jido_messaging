@@ -98,6 +98,18 @@ defmodule Jido.Messaging.IngressSubscriptionsTest do
     :ok
   end
 
+  test "ingress subscription normalization does not atomize arbitrary provider status values" do
+    subscription =
+      IngressSubscription.new(%{
+        bridge_id: "bridge_status",
+        adapter_name: :telegram,
+        subscription_id: "provider-status",
+        status: "provider-specific-status"
+      })
+
+    assert subscription.status == :unknown
+  end
+
   test "ensure_ingress_subscription/2 calls adapter, normalizes result, and stores metadata" do
     {:ok, _bridge} =
       SubscriptionMessaging.put_bridge_config(%{

@@ -217,6 +217,10 @@ defmodule Jido.Messaging.Persistence do
   @doc "Delete stored ingress subscription metadata."
   @callback delete_ingress_subscription(state, bridge_id(), String.t()) :: :ok | {:error, :not_found}
 
+  @optional_callbacks save_ingress_subscription: 2,
+                      list_ingress_subscriptions: 3,
+                      delete_ingress_subscription: 3
+
   @doc "Persist routing policy."
   @callback save_routing_policy(state, RoutingPolicy.t()) :: {:ok, RoutingPolicy.t()} | {:error, term()}
 

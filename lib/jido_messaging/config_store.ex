@@ -200,17 +200,17 @@ defmodule Jido.Messaging.ConfigStore do
 
   def handle_call({:save_ingress_subscription, %IngressSubscription{} = subscription}, _from, state) do
     {persistence, persistence_state} = runtime_persistence(state.instance_module)
-    {:reply, persistence.save_ingress_subscription(persistence_state, subscription), state}
+    {:reply, persistence_save_ingress_subscription(persistence, persistence_state, subscription), state}
   end
 
   def handle_call({:list_ingress_subscriptions, bridge_id, opts}, _from, state) do
     {persistence, persistence_state} = runtime_persistence(state.instance_module)
-    {:reply, persistence.list_ingress_subscriptions(persistence_state, bridge_id, opts), state}
+    {:reply, persistence_list_ingress_subscriptions(persistence, persistence_state, bridge_id, opts), state}
   end
 
   def handle_call({:delete_ingress_subscription, bridge_id, subscription_id}, _from, state) do
     {persistence, persistence_state} = runtime_persistence(state.instance_module)
-    {:reply, persistence.delete_ingress_subscription(persistence_state, bridge_id, subscription_id), state}
+    {:reply, persistence_delete_ingress_subscription(persistence, persistence_state, bridge_id, subscription_id), state}
   end
 
   def handle_call({:put_routing_policy, room_id, attrs}, _from, state) do
@@ -325,6 +325,30 @@ defmodule Jido.Messaging.ConfigStore do
   defp runtime_persistence(instance_module) do
     runtime = Module.concat(instance_module, :Runtime)
     Runtime.get_persistence(runtime)
+  end
+
+  defp persistence_save_ingress_subscription(persistence, persistence_state, %IngressSubscription{} = subscription) do
+    if function_exported?(persistence, :save_ingress_subscription, 2) do
+      persistence.save_ingress_subscription(persistence_state, subscription)
+    else
+      {:ok, subscription}
+    end
+  end
+
+  defp persistence_list_ingress_subscriptions(persistence, persistence_state, bridge_id, opts) do
+    if function_exported?(persistence, :list_ingress_subscriptions, 3) do
+      persistence.list_ingress_subscriptions(persistence_state, bridge_id, opts)
+    else
+      {:ok, []}
+    end
+  end
+
+  defp persistence_delete_ingress_subscription(persistence, persistence_state, bridge_id, subscription_id) do
+    if function_exported?(persistence, :delete_ingress_subscription, 3) do
+      persistence.delete_ingress_subscription(persistence_state, bridge_id, subscription_id)
+    else
+      {:error, :not_found}
+    end
   end
 
   defp get_existing_bridge(_persistence, _state, nil), do: nil

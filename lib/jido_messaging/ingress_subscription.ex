@@ -104,10 +104,26 @@ defmodule Jido.Messaging.IngressSubscription do
     end
   end
 
-  defp normalize_adapter_name(adapter_name) when is_binary(adapter_name), do: String.to_atom(adapter_name)
+  defp normalize_adapter_name(adapter_name) when is_binary(adapter_name) do
+    String.to_existing_atom(adapter_name)
+  rescue
+    ArgumentError -> :unknown
+  end
 
   defp normalize_status(status) when is_atom(status), do: status
-  defp normalize_status(status) when is_binary(status), do: String.to_atom(status)
+
+  defp normalize_status(status) when is_binary(status) do
+    case String.downcase(status) do
+      "active" -> :active
+      "deleted" -> :deleted
+      "disabled" -> :disabled
+      "expired" -> :expired
+      "manual_action_required" -> :manual_action_required
+      "pending" -> :pending
+      _unknown -> :unknown
+    end
+  end
+
   defp normalize_status(_status), do: :unknown
 
   defp normalize_optional_string(nil), do: nil
