@@ -68,12 +68,12 @@ defmodule Jido.Messaging.MixProject do
   defp deps do
     [
       # Runtime dependencies
-      {:jido_chat, github: "agentjido/jido_chat", branch: "main"},
+      {:jido_chat, "~> 1.0"},
       {:jason, "~> 1.4"},
       {:zoi, "~> 0.14"},
-      {:jido, "~> 2.1"},
-      {:jido_signal, "~> 2.0"},
-      {:jido_ai, "~> 2.0"},
+      {:jido, "~> 2.3"},
+      {:jido_signal, "~> 2.2"},
+      {:jido_ai, "~> 2.2"},
       {:yaml_elixir, "~> 2.12"},
       {:plug, "~> 1.16"},
 
@@ -123,7 +123,7 @@ defmodule Jido.Messaging.MixProject do
   defp package do
     [
       files: ["lib", "mix.exs", "README.md", "LICENSE", "CHANGELOG.md", "usage-rules.md"],
-      maintainers: ["Epic Creative"],
+      maintainers: ["Mike Hostetler"],
       licenses: ["Apache-2.0"],
       links: %{
         "Changelog" => "https://hexdocs.pm/jido_messaging/changelog.html",
