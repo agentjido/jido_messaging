@@ -21,7 +21,7 @@ defmodule Jido.Messaging.Demo.HeartbeatSensor do
 
   ## How It Works
 
-  1. On init, the sensor schedules an immediate tick (`{:schedule, 0}`)
+  1. On init, the sensor schedules the first tick almost immediately (`{:schedule, 1}`)
   2. On each `:tick` event, it sends a message to the chat room
   3. After sending, it schedules the next tick (`{:schedule, interval}`)
 
@@ -55,8 +55,8 @@ defmodule Jido.Messaging.Demo.HeartbeatSensor do
 
     Logger.info("[HeartbeatSensor] Initialized - interval: #{config.interval}ms, room: #{config.room_id}")
 
-    # Schedule first tick immediately
-    {:ok, state, [{:schedule, 0}]}
+    # Schedule first tick almost immediately.
+    {:ok, state, [{:schedule, 1}]}
   end
 
   @impl Jido.Sensor
