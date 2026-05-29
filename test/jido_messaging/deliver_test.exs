@@ -99,7 +99,7 @@ defmodule Jido.Messaging.DeliverTest do
       assert sent_message.reply_to_id == orig.id
       assert sent_message.status == :sent
       assert [%Text{text: "Hello back!"}] = sent_message.content
-      assert sent_message.metadata.external_message_id == 12345
+      assert sent_message.metadata.external_message_id == "12345"
       assert sent_message.metadata.outbound_gateway.operation == :send
       assert is_integer(sent_message.metadata.outbound_gateway.partition)
     end
@@ -177,7 +177,7 @@ defmodule Jido.Messaging.DeliverTest do
                Deliver.send_to_room_via_routes(TestMessaging, orig.room_id, "Control-plane send")
 
       assert sent_message.status == :sent
-      assert sent_message.external_id == 12345
+      assert sent_message.external_id == "12345"
       assert sent_message.metadata.outbound_router.delivered == 1
       assert sent_message.metadata.outbound_router.delivery_mode == :best_effort
       assert sent_message.metadata.outbound_router.failover_policy == :next_available
