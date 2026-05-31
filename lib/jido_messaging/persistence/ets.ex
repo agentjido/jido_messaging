@@ -403,8 +403,8 @@ defmodule Jido.Messaging.Persistence.ETS do
         Map.merge(attrs, %{
           room_id: room_id,
           channel: channel,
-          bridge_id: to_string(bridge_id),
-          external_room_id: external_id
+          bridge_id: normalize_term(bridge_id),
+          external_room_id: normalize_term(external_id)
         })
       )
 
@@ -702,7 +702,7 @@ defmodule Jido.Messaging.Persistence.ETS do
   end
 
   defp contains_ci?(value, expected) when is_binary(value) do
-    String.contains?(String.downcase(value), String.downcase(to_string(expected)))
+    String.contains?(String.downcase(value), String.downcase(normalize_term(expected)))
   end
 
   defp contains_ci?(_value, _expected), do: false
@@ -716,7 +716,7 @@ defmodule Jido.Messaging.Persistence.ETS do
   end
 
   defp binding_key(channel, bridge_id, external_id) do
-    {channel, to_string(bridge_id), normalize_term(external_id)}
+    {channel, normalize_term(bridge_id), normalize_term(external_id)}
   end
 
   defp ingress_subscription_key(bridge_id, subscription_id) do
@@ -809,7 +809,7 @@ defmodule Jido.Messaging.Persistence.ETS do
   defp normalize_term(value) when is_binary(value), do: value
   defp normalize_term(value) when is_atom(value), do: Atom.to_string(value)
   defp normalize_term(value) when is_integer(value), do: Integer.to_string(value)
-  defp normalize_term(value), do: to_string(value)
+  defp normalize_term(value), do: inspect(value)
 
   defp build_bound_room(channel, bridge_id, external_id, attrs) do
     Room.new(
