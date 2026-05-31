@@ -27,6 +27,22 @@ defmodule Jido.Messaging do
         content: [%{type: :text, text: "Hello!"}]
       })
       {:ok, messages} = MyApp.Messaging.list_messages(room.id)
+
+  For app-level chat commands that should notify realtime consumers, use the
+  eventful command APIs:
+
+      {:ok, result} = MyApp.Messaging.post_message(%{
+        room_id: room.id,
+        sender_id: "user_123",
+        role: :user,
+        content: [%{type: :text, text: "Hello!"}]
+      })
+
+      [%Jido.Signal{type: "jido.messaging.room.message_added"}] = result.signals
+
+  `save_message/1` remains the low-level persistence primitive. `post_message/2`
+  persists and emits committed `jido.messaging.*` CloudEvents through the
+  instance Signal Bus.
   """
 
   alias Jido.Chat.{Participant, Room}
@@ -155,6 +171,11 @@ defmodule Jido.Messaging do
         Jido.Messaging.save_message(__jido_messaging__(:runtime), attrs)
       end
 
+      @doc "Persist a message and emit a committed `jido.messaging.room.message_added` signal"
+      def post_message(attrs, opts \\ []) do
+        Jido.Messaging.post_message(__MODULE__, __jido_messaging__(:runtime), attrs, opts)
+      end
+
       @doc "Get a message by ID"
       def get_message(message_id) do
         Jido.Messaging.get_message(__jido_messaging__(:runtime), message_id)
@@ -163,6 +184,11 @@ defmodule Jido.Messaging do
       @doc "List messages for a room"
       def list_messages(room_id, opts \\ []) do
         Jido.Messaging.list_messages(__jido_messaging__(:runtime), room_id, opts)
+      end
+
+      @doc "Return raw timeline/thread grouping for a room"
+      def room_timeline(room_id, opts \\ []) do
+        Jido.Messaging.room_timeline(__jido_messaging__(:runtime), room_id, opts)
       end
 
       @doc "Delete a message"
@@ -246,6 +272,30 @@ defmodule Jido.Messaging do
       @doc "Save an already-constructed message struct (for updates)"
       def save_message_struct(message) do
         Jido.Messaging.save_message_struct(__jido_messaging__(:runtime), message)
+      end
+
+      @doc "Add a reaction to a message and emit a committed reaction signal"
+      def add_reaction(message_id, participant_id, reaction, opts \\ []) do
+        Jido.Messaging.add_reaction(
+          __MODULE__,
+          __jido_messaging__(:runtime),
+          message_id,
+          participant_id,
+          reaction,
+          opts
+        )
+      end
+
+      @doc "Remove a reaction from a message and emit a committed reaction signal"
+      def remove_reaction(message_id, participant_id, reaction, opts \\ []) do
+        Jido.Messaging.remove_reaction(
+          __MODULE__,
+          __jido_messaging__(:runtime),
+          message_id,
+          participant_id,
+          reaction,
+          opts
+        )
       end
 
       @doc "Save an already-constructed thread struct (for updates)"
@@ -609,6 +659,46 @@ defmodule Jido.Messaging do
       def unsubscribe(room_id) do
         Jido.Messaging.PubSub.unsubscribe(__MODULE__, room_id)
       end
+
+      @doc "Subscribe to Jido Signal events emitted by this messaging instance"
+      def subscribe_signals(path \\ "jido.messaging.**", opts \\ []) do
+        Jido.Messaging.subscribe_signals(__MODULE__, path, opts)
+      end
+
+      @doc "Unsubscribe from a Jido Signal Bus subscription"
+      def unsubscribe_signals(subscription_id, opts \\ []) do
+        Jido.Messaging.unsubscribe_signals(__MODULE__, subscription_id, opts)
+      end
+
+      @doc "Emit a custom room-scoped Jido Signal event"
+      def dispatch_room_event(event_type, room_id, data \\ %{}, opts \\ []) do
+        Jido.Messaging.dispatch_room_event(__MODULE__, event_type, room_id, data, opts)
+      end
+
+      @doc "Emit a room-scoped participant joined signal"
+      def participant_joined(room_id, participant_id, opts \\ []) do
+        Jido.Messaging.participant_joined(__MODULE__, room_id, participant_id, opts)
+      end
+
+      @doc "Emit a room-scoped participant left signal"
+      def participant_left(room_id, participant_id, opts \\ []) do
+        Jido.Messaging.participant_left(__MODULE__, room_id, participant_id, opts)
+      end
+
+      @doc "Emit a participant presence changed signal"
+      def participant_presence_changed(room_id, participant_id, from, to, opts \\ []) do
+        Jido.Messaging.participant_presence_changed(__MODULE__, room_id, participant_id, from, to, opts)
+      end
+
+      @doc "Emit a participant typing signal"
+      def participant_typing(room_id, participant_id, is_typing, opts \\ []) do
+        Jido.Messaging.participant_typing(__MODULE__, room_id, participant_id, is_typing, opts)
+      end
+
+      @doc "Return the instance Signal Bus name"
+      def signal_bus_name do
+        Jido.Messaging.Supervisor.signal_bus_name(__MODULE__)
+      end
     end
   end
 
@@ -665,6 +755,33 @@ defmodule Jido.Messaging do
     persistence.save_message(persistence_state, message)
   end
 
+  @doc """
+  Persist a message and emit the committed `jido.messaging.room.message_added` signal.
+
+  This is the eventful command API for chat apps. `save_message/2` remains the
+  low-level persistence primitive for migrations, imports, and tests that need
+  no side effects.
+  """
+  def post_message(instance_module, runtime, attrs, opts \\ [])
+      when is_atom(instance_module) and is_map(attrs) and is_list(opts) do
+    with {:ok, message} <- save_message(runtime, attrs),
+         {:ok, signal} <- Jido.Messaging.Events.message_added(instance_module, message, signal_opts(message, opts)),
+         {:ok, signal} <-
+           Jido.Messaging.Dispatch.emit(instance_module, signal,
+             telemetry_event: Jido.Messaging.Events.telemetry_event_for(:message_added),
+             telemetry_metadata:
+               telemetry_metadata(instance_module, :message_added, message.room_id, %{
+                 message: message,
+                 sender_id: message.sender_id,
+                 thread_id: message.thread_id
+               }),
+             room_id: message.room_id,
+             legacy_event: {:message_added, message}
+           ) do
+      {:ok, Jido.Messaging.CommandResult.new(message, [signal])}
+    end
+  end
+
   @doc "Get a message by ID"
   def get_message(runtime, message_id) do
     {persistence, persistence_state} = Runtime.get_persistence(runtime)
@@ -675,6 +792,19 @@ defmodule Jido.Messaging do
   def list_messages(runtime, room_id, opts \\ []) do
     {persistence, persistence_state} = Runtime.get_persistence(runtime)
     persistence.get_messages(persistence_state, room_id, opts)
+  end
+
+  @doc """
+  Return raw timeline and thread grouping for a room.
+
+  This helper returns canonical message structs grouped into top-level
+  timeline messages, thread replies, and reply counts. Apps still own their
+  user-facing chat context and UI projections.
+  """
+  def room_timeline(runtime, room_id, opts \\ []) do
+    with {:ok, messages} <- list_messages(runtime, room_id, opts) do
+      {:ok, Jido.Messaging.Query.room_timeline(messages)}
+    end
   end
 
   @doc "Delete a message"
@@ -718,6 +848,122 @@ defmodule Jido.Messaging do
   def save_message_struct(runtime, %Message{} = message) do
     {persistence, persistence_state} = Runtime.get_persistence(runtime)
     persistence.save_message(persistence_state, message)
+  end
+
+  @doc "Add a participant reaction to a message and emit a committed reaction signal."
+  def add_reaction(instance_module, runtime, message_id, participant_id, reaction, opts \\ [])
+      when is_atom(instance_module) and is_binary(message_id) and is_binary(participant_id) and
+             is_binary(reaction) and is_list(opts) do
+    update_reaction(
+      instance_module,
+      runtime,
+      message_id,
+      participant_id,
+      reaction,
+      :reaction_added,
+      opts
+    )
+  end
+
+  @doc "Remove a participant reaction from a message and emit a committed reaction signal."
+  def remove_reaction(instance_module, runtime, message_id, participant_id, reaction, opts \\ [])
+      when is_atom(instance_module) and is_binary(message_id) and is_binary(participant_id) and
+             is_binary(reaction) and is_list(opts) do
+    update_reaction(
+      instance_module,
+      runtime,
+      message_id,
+      participant_id,
+      reaction,
+      :reaction_removed,
+      opts
+    )
+  end
+
+  @doc "Dispatch a custom room-scoped Jido Signal event."
+  def dispatch_room_event(instance_module, event_type, room_id, data \\ %{}, opts \\ [])
+      when is_atom(instance_module) and is_atom(event_type) and is_binary(room_id) and is_map(data) and
+             is_list(opts) do
+    with {:ok, signal} <- Jido.Messaging.Events.room_event(instance_module, event_type, room_id, data, opts),
+         {:ok, signal} <-
+           Jido.Messaging.Dispatch.emit(instance_module, signal,
+             telemetry_event: Jido.Messaging.Events.telemetry_event_for(event_type),
+             telemetry_metadata: telemetry_metadata(instance_module, event_type, room_id, data),
+             room_id: room_id,
+             legacy_event: Keyword.get(opts, :legacy_event)
+           ) do
+      {:ok, signal}
+    end
+  end
+
+  @doc """
+  Emit a canonical participant joined signal for a room.
+
+  This is a transport-agnostic helper for apps that receive participant lifecycle
+  information from Phoenix Presence, adapters, polling, or any other source.
+  """
+  def participant_joined(instance_module, room_id, participant_id, opts \\ [])
+      when is_atom(instance_module) and is_binary(room_id) and is_binary(participant_id) and is_list(opts) do
+    dispatch_room_event(
+      instance_module,
+      :participant_joined,
+      room_id,
+      participant_event_data(participant_id, opts),
+      opts
+    )
+  end
+
+  @doc """
+  Emit a canonical participant left signal for a room.
+  """
+  def participant_left(instance_module, room_id, participant_id, opts \\ [])
+      when is_atom(instance_module) and is_binary(room_id) and is_binary(participant_id) and is_list(opts) do
+    dispatch_room_event(
+      instance_module,
+      :participant_left,
+      room_id,
+      participant_event_data(participant_id, opts),
+      opts
+    )
+  end
+
+  @doc """
+  Emit a canonical participant presence changed signal.
+  """
+  def participant_presence_changed(instance_module, room_id, participant_id, from, to, opts \\ [])
+      when is_atom(instance_module) and is_binary(room_id) and is_binary(participant_id) and is_list(opts) do
+    data =
+      participant_event_data(participant_id, opts)
+      |> Map.put(:from, from)
+      |> Map.put(:to, to)
+
+    dispatch_room_event(instance_module, :presence_changed, room_id, data, opts)
+  end
+
+  @doc """
+  Emit a canonical participant typing signal.
+  """
+  def participant_typing(instance_module, room_id, participant_id, is_typing, opts \\ [])
+      when is_atom(instance_module) and is_binary(room_id) and is_binary(participant_id) and
+             is_boolean(is_typing) and is_list(opts) do
+    data =
+      participant_event_data(participant_id, opts)
+      |> Map.put(:is_typing, is_typing)
+      |> maybe_put_data(:thread_id, Keyword.get(opts, :thread_id))
+
+    dispatch_room_event(instance_module, :typing, room_id, data, opts)
+  end
+
+  @doc "Subscribe to Jido Signal events for an instance module."
+  def subscribe_signals(instance_module, path \\ "jido.messaging.**", opts \\ [])
+      when is_atom(instance_module) and is_binary(path) and is_list(opts) do
+    Jido.Messaging.Dispatch.subscribe(instance_module, path, opts)
+  end
+
+  @doc "Unsubscribe from a Jido Signal Bus subscription."
+  def unsubscribe_signals(instance_module, subscription_id, opts \\ [])
+      when is_atom(instance_module) and is_list(opts) do
+    Jido.Messaging.Dispatch.unsubscribe(instance_module, subscription_id, opts)
   end
 
   @doc "Save a thread"
@@ -1179,6 +1425,105 @@ defmodule Jido.Messaging do
       {:ok, room}
     end
   end
+
+  defp update_reaction(instance_module, runtime, message_id, participant_id, reaction, event_type, opts) do
+    with {:ok, message} <- get_message(runtime, message_id) do
+      reactions = message.reactions || %{}
+      participants = reactions |> Map.get(reaction, []) |> List.wrap() |> Enum.map(&to_string/1)
+
+      participants =
+        case event_type do
+          :reaction_added -> [participant_id | participants] |> Enum.uniq() |> Enum.sort()
+          :reaction_removed -> Enum.reject(participants, &(&1 == participant_id))
+        end
+
+      reactions =
+        if participants == [] do
+          Map.delete(reactions, reaction)
+        else
+          Map.put(reactions, reaction, participants)
+        end
+
+      updated_message = %{message | reactions: reactions, updated_at: DateTime.utc_now()}
+
+      with {:ok, updated_message} <- save_message_struct(runtime, updated_message),
+           {:ok, signal} <-
+             reaction_signal(event_type, instance_module, updated_message, participant_id, reaction, opts),
+           {:ok, signal} <-
+             Jido.Messaging.Dispatch.emit(instance_module, signal,
+               telemetry_event: Jido.Messaging.Events.telemetry_event_for(event_type),
+               telemetry_metadata:
+                 telemetry_metadata(instance_module, event_type, updated_message.room_id, %{
+                   message_id: updated_message.id,
+                   participant_id: participant_id,
+                   reaction: reaction,
+                   message: updated_message
+                 }),
+               room_id: updated_message.room_id,
+               legacy_event:
+                 {event_type,
+                  %{
+                    message_id: updated_message.id,
+                    participant_id: participant_id,
+                    reaction: reaction,
+                    message: updated_message
+                  }}
+             ) do
+        {:ok, Jido.Messaging.CommandResult.new(updated_message, [signal])}
+      end
+    end
+  end
+
+  defp reaction_signal(:reaction_added, instance_module, message, participant_id, reaction, opts) do
+    Jido.Messaging.Events.reaction_added(instance_module, message, participant_id, reaction, signal_opts(message, opts))
+  end
+
+  defp reaction_signal(:reaction_removed, instance_module, message, participant_id, reaction, opts) do
+    Jido.Messaging.Events.reaction_removed(
+      instance_module,
+      message,
+      participant_id,
+      reaction,
+      signal_opts(message, opts)
+    )
+  end
+
+  defp signal_opts(%Message{} = message, opts) do
+    opts
+    |> Keyword.put_new(:message_id, message.id)
+    |> Keyword.put_new(:correlation_id, message.id)
+    |> Keyword.put_new(:external_message_id, message.external_id)
+    |> Keyword.put_new(:external_thread_id, message.external_thread_id)
+    |> Keyword.put_new(:delivery_external_room_id, message.delivery_external_room_id)
+  end
+
+  defp telemetry_metadata(instance_module, event_type, room_id, data) do
+    data
+    |> Map.merge(%{
+      room_id: room_id,
+      instance_module: instance_module,
+      timestamp: DateTime.utc_now(),
+      correlation_id:
+        data[:message_id] || data["message_id"] || data[:participant_id] || data["participant_id"] ||
+          "corr_" <> Base.encode16(:crypto.strong_rand_bytes(8), case: :lower)
+    })
+    |> Map.put_new(:event_type, event_type)
+  end
+
+  defp participant_event_data(participant_id, opts) do
+    %{
+      participant_id: participant_id,
+      session_id: Keyword.get(opts, :session_id),
+      presence: Keyword.get(opts, :presence),
+      source: Keyword.get(opts, :source)
+    }
+    |> maybe_put_data(:metadata, Keyword.get(opts, :metadata))
+    |> maybe_put_data(:reason, Keyword.get(opts, :reason))
+    |> Map.reject(fn {_key, value} -> is_nil(value) end)
+  end
+
+  defp maybe_put_data(data, _key, nil), do: data
+  defp maybe_put_data(data, key, value), do: Map.put(data, key, value)
 
   defp ensure_bridge_configs(_instance_module, []), do: :ok
 

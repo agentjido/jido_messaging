@@ -46,8 +46,6 @@ defmodule Jido.Messaging.Signal do
 
   require Logger
 
-  alias Jido.Messaging.Supervisor, as: MessagingSupervisor
-
   @metadata_keys [
     :instance_module,
     :room_id,
@@ -336,54 +334,24 @@ defmodule Jido.Messaging.Signal do
   end
 
   defp emit_jido_signal(type, data, instance_module, subject, opts) do
-    bus_name = MessagingSupervisor.signal_bus_name(instance_module)
+    case Jido.Messaging.Events.new(type, instance_module, subject, data, opts) do
+      {:ok, signal} ->
+        corr_id = get_in(signal.extensions, ["correlationid", :id])
+        Logger.debug("[signal] type=#{type} correlation_id=#{corr_id || "none"}")
 
-    # Note: Signal Bus doesn't register with Process.whereis - just try to publish
-    if instance_module do
-      source = build_source(instance_module, opts[:bridge_id] || opts[:instance_id])
+        case Jido.Messaging.Dispatch.emit(instance_module, signal) do
+          {:ok, _signal} ->
+            :ok
 
-      signal_opts =
-        %{
-          source: source,
-          subject: subject
-        }
-        |> maybe_put_correlationid(opts[:correlation_id])
-        |> maybe_put_extension(:causation_id, opts[:causation_id])
+          {:error, reason} ->
+            Logger.debug("[Jido.Messaging.Signal] Failed to publish signal #{type}: #{inspect(reason)}")
+        end
 
-      case Jido.Signal.new(type, data, signal_opts) do
-        {:ok, signal} ->
-          # Log correlation info for debugging
-          corr_id = get_in(signal.extensions, ["correlationid", :id])
-          Logger.debug("[signal] type=#{type} correlation_id=#{corr_id || "none"}")
-
-          case Jido.Signal.Bus.publish(bus_name, [signal]) do
-            {:ok, _} ->
-              :ok
-
-            {:error, reason} ->
-              Logger.debug("[Jido.Messaging.Signal] Failed to publish signal #{type}: #{inspect(reason)}")
-          end
-
-        {:error, reason} ->
-          Logger.warning("[Jido.Messaging.Signal] Failed to create signal #{type}: #{inspect(reason)}")
-      end
+      {:error, reason} ->
+        Logger.warning("[Jido.Messaging.Signal] Failed to create signal #{type}: #{inspect(reason)}")
     end
 
     :ok
-  end
-
-  defp build_source(instance_module, instance_id) do
-    base = "jido_messaging/#{inspect(instance_module)}"
-    if instance_id, do: "#{base}/#{instance_id}", else: base
-  end
-
-  defp maybe_put_extension(opts, _key, nil), do: opts
-  defp maybe_put_extension(opts, key, value), do: Map.put(opts, key, value)
-
-  defp maybe_put_correlationid(opts, nil), do: opts
-
-  defp maybe_put_correlationid(opts, correlation_id) do
-    Map.put(opts, :correlationid, %{id: correlation_id})
   end
 
   defp message_to_data(message, metadata) do
