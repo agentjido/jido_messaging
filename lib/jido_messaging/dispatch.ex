@@ -87,7 +87,6 @@ defmodule Jido.Messaging.Dispatch do
       case Jido.Messaging.PubSub.broadcast(instance_module, room_id, legacy_event) do
         :ok -> :ok
         {:error, :not_configured} -> :ok
-        {:error, reason} -> Logger.debug("[Jido.Messaging.Dispatch] Legacy PubSub skipped: #{inspect(reason)}")
       end
     else
       _other -> :ok

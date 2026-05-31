@@ -105,6 +105,64 @@ defmodule Jido.Messaging.Persistence.SQLiteTest do
     :ok = Sqlite3.close(state.db)
   end
 
+  test "normalizes non-string external binding values without crashing" do
+    path = tmp_path("sqlite-normalized-bindings")
+    {:ok, state} = SQLite.init(path: path)
+
+    bridge_id = {:workspace, 1}
+    external_id = {:channel, 2}
+
+    assert {:ok, room} =
+             SQLite.get_or_create_room_by_external_binding(
+               state,
+               :slack,
+               bridge_id,
+               external_id,
+               %{id: "room:normalized", type: :channel, name: "normalized"}
+             )
+
+    assert {:ok, ^room} = SQLite.get_room_by_external_binding(state, :slack, bridge_id, external_id)
+
+    assert {:ok, [^room]} =
+             SQLite.directory_search(
+               state,
+               :room,
+               %{
+                 channel: :slack,
+                 bridge_id: bridge_id,
+                 external_id: external_id
+               },
+               []
+             )
+
+    :ok = Sqlite3.close(state.db)
+  end
+
+  test "bind errors release statements and leave the adapter usable" do
+    path = tmp_path("sqlite-bind-error")
+    {:ok, state} = SQLite.init(path: path)
+
+    room = Room.new(%{id: "room:bind-error", type: :channel, name: "bind-error"})
+
+    message =
+      Message.new(%{
+        id: "message:bind-error",
+        room_id: room.id,
+        sender_id: "user:1",
+        role: :user,
+        content: [%{type: "text", text: "still readable"}],
+        status: :sent
+      })
+
+    assert {:ok, ^room} = SQLite.save_room(state, room)
+    assert {:ok, ^message} = SQLite.save_message(state, message)
+
+    assert {:error, %ArgumentError{}} = SQLite.get_messages(state, room.id, limit: %{bad: true})
+    assert {:ok, [^message]} = SQLite.get_messages(state, room.id, limit: 10)
+
+    :ok = Sqlite3.close(state.db)
+  end
+
   test "room_timeline returns raw timeline messages and thread replies" do
     path = tmp_path("sqlite-query")
     start_supervised!({SQLiteMessaging, persistence_opts: [path: path]})

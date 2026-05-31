@@ -81,6 +81,38 @@ defmodule Jido.Messaging.EventsTest do
     assert signal.data["payload"]["kind"] == "text"
   end
 
+  test "event constructors normalize string option keys without creating atoms" do
+    {:ok, room} = TestMessaging.create_room(%{type: :group, name: "String options"})
+
+    assert {:ok, %CommandResult{signals: [signal]}} =
+             TestMessaging.post_message(
+               %{
+                 room_id: room.id,
+                 sender_id: "user:1",
+                 role: :user,
+                 content: [%{type: "text", text: "String-key options"}],
+                 status: :sent
+               },
+               %{
+                 "channel_type" => "campfire",
+                 "instance_id" => "demo",
+                 "external_room_id" => "general",
+                 "target_kind" => "room"
+               }
+             )
+
+    assert signal.data["platform"]["channel_type"] == "campfire"
+    assert signal.data["platform"]["external_room_id"] == "general"
+    assert signal.data["target"]["instance_id"] == "demo"
+    assert signal.data["target"]["external_id"] == "general"
+
+    assert Jido.Messaging.Events.telemetry_event_for("jido.messaging.participant.presence_changed") ==
+             [:jido_messaging, :participant, :presence_changed]
+
+    assert Jido.Messaging.Events.telemetry_event_for("third.party.untrusted_event") ==
+             [:jido_messaging, :signal, :custom]
+  end
+
   test "reaction commands persist and dispatch reaction signals" do
     {:ok, room} = TestMessaging.create_room(%{type: :group, name: "Reactions"})
 
@@ -106,6 +138,12 @@ defmodule Jido.Messaging.EventsTest do
     assert_receive {:signal, received_added}, 1_000
     assert received_added.type == "jido.messaging.message.reaction_added"
 
+    assert {:ok, %CommandResult{record: unchanged_reacted, signals: []}} =
+             TestMessaging.add_reaction(message.id, "user:2", "+1")
+
+    assert unchanged_reacted.reactions["+1"] == ["user:2"]
+    refute_receive {:signal, _signal}, 100
+
     assert {:ok, %CommandResult{record: unreacted, signals: [removed_signal]}} =
              TestMessaging.remove_reaction(message.id, "user:2", "+1")
 
@@ -114,6 +152,12 @@ defmodule Jido.Messaging.EventsTest do
 
     assert_receive {:signal, received_removed}, 1_000
     assert received_removed.type == "jido.messaging.message.reaction_removed"
+
+    assert {:ok, %CommandResult{record: unchanged, signals: []}} =
+             TestMessaging.remove_reaction(message.id, "user:2", "+1")
+
+    assert unchanged.reactions == %{}
+    refute_receive {:signal, _signal}, 100
 
     :ok = TestMessaging.unsubscribe_signals(subscription_id)
   end

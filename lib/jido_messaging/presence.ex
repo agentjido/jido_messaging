@@ -632,54 +632,7 @@ defmodule Jido.Messaging.Presence do
   defp normalize_optional_id(value) when is_atom(value), do: Atom.to_string(value)
   defp normalize_optional_id(_value), do: nil
 
-  defp normalize_opts(opts) when is_list(opts) do
-    Enum.flat_map(opts, &normalize_option_pair/1)
-  end
-
-  defp normalize_opts(opts) when is_map(opts) do
-    Enum.flat_map(opts, &normalize_option_pair/1)
-  end
-
-  defp normalize_opts(_opts), do: []
-
-  defp normalize_option_pair({key, value}) do
-    case normalize_option_key(key) do
-      nil -> []
-      key -> [{key, value}]
-    end
-  end
-
-  defp normalize_option_pair(_other), do: []
-
-  defp normalize_option_key(key) when is_atom(key), do: key
-  defp normalize_option_key("adapter_event_type"), do: :adapter_event_type
-  defp normalize_option_key("bridge_id"), do: :bridge_id
-  defp normalize_option_key("causation_id"), do: :causation_id
-  defp normalize_option_key("channel"), do: :channel
-  defp normalize_option_key("channel_type"), do: :channel_type
-  defp normalize_option_key("chat_type"), do: :chat_type
-  defp normalize_option_key("correlation_id"), do: :correlation_id
-  defp normalize_option_key("dataschema"), do: :dataschema
-  defp normalize_option_key("delivery_external_room_id"), do: :delivery_external_room_id
-  defp normalize_option_key("external_message_id"), do: :external_message_id
-  defp normalize_option_key("external_room_id"), do: :external_room_id
-  defp normalize_option_key("external_thread_id"), do: :external_thread_id
-  defp normalize_option_key("heartbeat_ms"), do: :heartbeat_ms
-  defp normalize_option_key("instance_id"), do: :instance_id
-  defp normalize_option_key("message_id"), do: :message_id
-  defp normalize_option_key("metadata"), do: :metadata
-  defp normalize_option_key("notify"), do: :notify
-  defp normalize_option_key("payload_kind"), do: :payload_kind
-  defp normalize_option_key("presence_pid"), do: :presence_pid
-  defp normalize_option_key("prune_ms"), do: :prune_ms
-  defp normalize_option_key("reason"), do: :reason
-  defp normalize_option_key("session_id"), do: :session_id
-  defp normalize_option_key("signal_opts"), do: :signal_opts
-  defp normalize_option_key("target_kind"), do: :target_kind
-  defp normalize_option_key("thread_id"), do: :thread_id
-  defp normalize_option_key("track_pid"), do: :track_pid
-  defp normalize_option_key("ttl_ms"), do: :ttl_ms
-  defp normalize_option_key(_key), do: nil
+  defp normalize_opts(opts), do: Jido.Messaging.EventOptions.normalize(opts, :presence)
 
   defp normalize_milliseconds(value, default, opts) when is_integer(value) do
     cond do

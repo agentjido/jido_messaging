@@ -37,9 +37,15 @@ defmodule Jido.Messaging.Persistence.SQLite do
     path = opts |> Keyword.get(:path, "data/jido_messaging.sqlite3") |> to_string()
     :ok = ensure_parent_dir(path)
 
-    with {:ok, db} <- Sqlite3.open(path),
-         :ok <- migrate(db) do
-      {:ok, %__MODULE__{db: db, path: path}}
+    with {:ok, db} <- Sqlite3.open(path) do
+      case migrate(db) do
+        :ok ->
+          {:ok, %__MODULE__{db: db, path: path}}
+
+        {:error, _reason} = error ->
+          _ = Sqlite3.close(db)
+          error
+      end
     end
   end
 
@@ -230,8 +236,8 @@ defmodule Jido.Messaging.Persistence.SQLite do
         Map.merge(attrs, %{
           room_id: room_id,
           channel: channel,
-          bridge_id: to_string(bridge_id),
-          external_room_id: to_string(external_id)
+          bridge_id: normalize_term(bridge_id),
+          external_room_id: normalize_term(external_id)
         })
       )
 
@@ -620,7 +626,7 @@ defmodule Jido.Messaging.Persistence.SQLite do
   end
 
   defp contains_ci?(value, expected) when is_binary(value) do
-    String.contains?(String.downcase(value), String.downcase(to_string(expected)))
+    String.contains?(String.downcase(value), String.downcase(normalize_term(expected)))
   end
 
   defp contains_ci?(_value, _expected), do: false
@@ -685,30 +691,38 @@ defmodule Jido.Messaging.Persistence.SQLite do
   end
 
   defp run(db, sql, params) do
-    with {:ok, statement} <- Sqlite3.prepare(db, sql),
-         :ok <- Sqlite3.bind(statement, params) do
-      try do
-        case Sqlite3.step(db, statement) do
-          :done -> :ok
-          {:row, _row} -> :ok
-          {:error, reason} -> {:error, reason}
+    with {:ok, statement} <- Sqlite3.prepare(db, sql) do
+      with_prepared_statement(db, statement, fn ->
+        with :ok <- Sqlite3.bind(statement, params) do
+          case Sqlite3.step(db, statement) do
+            :done -> :ok
+            {:row, _row} -> :ok
+            {:error, reason} -> {:error, reason}
+          end
         end
-      after
-        _ = Sqlite3.release(db, statement)
-      end
+      end)
     end
   end
 
   defp query_all(db, sql, params) do
-    with {:ok, statement} <- Sqlite3.prepare(db, sql),
-         :ok <- Sqlite3.bind(statement, params) do
-      try do
-        {:ok, collect_rows(db, statement, [])}
-      catch
-        {:sqlite_error, reason} -> {:error, reason}
-      after
-        _ = Sqlite3.release(db, statement)
-      end
+    with {:ok, statement} <- Sqlite3.prepare(db, sql) do
+      with_prepared_statement(db, statement, fn ->
+        with :ok <- Sqlite3.bind(statement, params) do
+          {:ok, collect_rows(db, statement, [])}
+        end
+      end)
+    end
+  end
+
+  defp with_prepared_statement(db, statement, fun) do
+    try do
+      fun.()
+    rescue
+      exception -> {:error, exception}
+    catch
+      {:sqlite_error, reason} -> {:error, reason}
+    after
+      _ = Sqlite3.release(db, statement)
     end
   end
 
@@ -734,5 +748,5 @@ defmodule Jido.Messaging.Persistence.SQLite do
   defp normalize_term(value) when is_binary(value), do: value
   defp normalize_term(value) when is_atom(value), do: Atom.to_string(value)
   defp normalize_term(value) when is_integer(value), do: Integer.to_string(value)
-  defp normalize_term(value), do: to_string(value)
+  defp normalize_term(value), do: inspect(value)
 end

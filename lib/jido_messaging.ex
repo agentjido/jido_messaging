@@ -763,7 +763,9 @@ defmodule Jido.Messaging do
   no side effects.
   """
   def post_message(instance_module, runtime, attrs, opts \\ [])
-      when is_atom(instance_module) and is_map(attrs) and is_list(opts) do
+      when is_atom(instance_module) and is_map(attrs) do
+    opts = normalize_event_opts(opts)
+
     with {:ok, message} <- save_message(runtime, attrs),
          {:ok, signal} <- Jido.Messaging.Events.message_added(instance_module, message, signal_opts(message, opts)),
          {:ok, signal} <-
@@ -853,7 +855,7 @@ defmodule Jido.Messaging do
   @doc "Add a participant reaction to a message and emit a committed reaction signal."
   def add_reaction(instance_module, runtime, message_id, participant_id, reaction, opts \\ [])
       when is_atom(instance_module) and is_binary(message_id) and is_binary(participant_id) and
-             is_binary(reaction) and is_list(opts) do
+             is_binary(reaction) do
     update_reaction(
       instance_module,
       runtime,
@@ -861,14 +863,14 @@ defmodule Jido.Messaging do
       participant_id,
       reaction,
       :reaction_added,
-      opts
+      normalize_event_opts(opts)
     )
   end
 
   @doc "Remove a participant reaction from a message and emit a committed reaction signal."
   def remove_reaction(instance_module, runtime, message_id, participant_id, reaction, opts \\ [])
       when is_atom(instance_module) and is_binary(message_id) and is_binary(participant_id) and
-             is_binary(reaction) and is_list(opts) do
+             is_binary(reaction) do
     update_reaction(
       instance_module,
       runtime,
@@ -876,14 +878,15 @@ defmodule Jido.Messaging do
       participant_id,
       reaction,
       :reaction_removed,
-      opts
+      normalize_event_opts(opts)
     )
   end
 
   @doc "Dispatch a custom room-scoped Jido Signal event."
   def dispatch_room_event(instance_module, event_type, room_id, data \\ %{}, opts \\ [])
-      when is_atom(instance_module) and is_atom(event_type) and is_binary(room_id) and is_map(data) and
-             is_list(opts) do
+      when is_atom(instance_module) and is_atom(event_type) and is_binary(room_id) and is_map(data) do
+    opts = normalize_event_opts(opts)
+
     with {:ok, signal} <- Jido.Messaging.Events.room_event(instance_module, event_type, room_id, data, opts),
          {:ok, signal} <-
            Jido.Messaging.Dispatch.emit(instance_module, signal,
@@ -903,7 +906,9 @@ defmodule Jido.Messaging do
   information from Phoenix Presence, adapters, polling, or any other source.
   """
   def participant_joined(instance_module, room_id, participant_id, opts \\ [])
-      when is_atom(instance_module) and is_binary(room_id) and is_binary(participant_id) and is_list(opts) do
+      when is_atom(instance_module) and is_binary(room_id) and is_binary(participant_id) do
+    opts = normalize_event_opts(opts)
+
     dispatch_room_event(
       instance_module,
       :participant_joined,
@@ -917,7 +922,9 @@ defmodule Jido.Messaging do
   Emit a canonical participant left signal for a room.
   """
   def participant_left(instance_module, room_id, participant_id, opts \\ [])
-      when is_atom(instance_module) and is_binary(room_id) and is_binary(participant_id) and is_list(opts) do
+      when is_atom(instance_module) and is_binary(room_id) and is_binary(participant_id) do
+    opts = normalize_event_opts(opts)
+
     dispatch_room_event(
       instance_module,
       :participant_left,
@@ -931,7 +938,9 @@ defmodule Jido.Messaging do
   Emit a canonical participant presence changed signal.
   """
   def participant_presence_changed(instance_module, room_id, participant_id, from, to, opts \\ [])
-      when is_atom(instance_module) and is_binary(room_id) and is_binary(participant_id) and is_list(opts) do
+      when is_atom(instance_module) and is_binary(room_id) and is_binary(participant_id) do
+    opts = normalize_event_opts(opts)
+
     data =
       participant_event_data(participant_id, opts)
       |> Map.put(:from, from)
@@ -945,7 +954,9 @@ defmodule Jido.Messaging do
   """
   def participant_typing(instance_module, room_id, participant_id, is_typing, opts \\ [])
       when is_atom(instance_module) and is_binary(room_id) and is_binary(participant_id) and
-             is_boolean(is_typing) and is_list(opts) do
+             is_boolean(is_typing) do
+    opts = normalize_event_opts(opts)
+
     data =
       participant_event_data(participant_id, opts)
       |> Map.put(:is_typing, is_typing)
@@ -1428,48 +1439,52 @@ defmodule Jido.Messaging do
 
   defp update_reaction(instance_module, runtime, message_id, participant_id, reaction, event_type, opts) do
     with {:ok, message} <- get_message(runtime, message_id) do
-      reactions = message.reactions || %{}
-      participants = reactions |> Map.get(reaction, []) |> List.wrap() |> Enum.map(&to_string/1)
+      existing_reactions = message.reactions || %{}
+      current_participants = existing_reactions |> Map.get(reaction, []) |> List.wrap() |> Enum.map(&to_string/1)
 
       participants =
         case event_type do
-          :reaction_added -> [participant_id | participants] |> Enum.uniq() |> Enum.sort()
-          :reaction_removed -> Enum.reject(participants, &(&1 == participant_id))
+          :reaction_added -> [participant_id | current_participants] |> Enum.uniq() |> Enum.sort()
+          :reaction_removed -> Enum.reject(current_participants, &(&1 == participant_id))
         end
 
       reactions =
         if participants == [] do
-          Map.delete(reactions, reaction)
+          Map.delete(existing_reactions, reaction)
         else
-          Map.put(reactions, reaction, participants)
+          Map.put(existing_reactions, reaction, participants)
         end
 
-      updated_message = %{message | reactions: reactions, updated_at: DateTime.utc_now()}
+      if reactions == existing_reactions do
+        {:ok, Jido.Messaging.CommandResult.new(message, [])}
+      else
+        updated_message = %{message | reactions: reactions, updated_at: DateTime.utc_now()}
 
-      with {:ok, updated_message} <- save_message_struct(runtime, updated_message),
-           {:ok, signal} <-
-             reaction_signal(event_type, instance_module, updated_message, participant_id, reaction, opts),
-           {:ok, signal} <-
-             Jido.Messaging.Dispatch.emit(instance_module, signal,
-               telemetry_event: Jido.Messaging.Events.telemetry_event_for(event_type),
-               telemetry_metadata:
-                 telemetry_metadata(instance_module, event_type, updated_message.room_id, %{
-                   message_id: updated_message.id,
-                   participant_id: participant_id,
-                   reaction: reaction,
-                   message: updated_message
-                 }),
-               room_id: updated_message.room_id,
-               legacy_event:
-                 {event_type,
-                  %{
-                    message_id: updated_message.id,
-                    participant_id: participant_id,
-                    reaction: reaction,
-                    message: updated_message
-                  }}
-             ) do
-        {:ok, Jido.Messaging.CommandResult.new(updated_message, [signal])}
+        with {:ok, updated_message} <- save_message_struct(runtime, updated_message),
+             {:ok, signal} <-
+               reaction_signal(event_type, instance_module, updated_message, participant_id, reaction, opts),
+             {:ok, signal} <-
+               Jido.Messaging.Dispatch.emit(instance_module, signal,
+                 telemetry_event: Jido.Messaging.Events.telemetry_event_for(event_type),
+                 telemetry_metadata:
+                   telemetry_metadata(instance_module, event_type, updated_message.room_id, %{
+                     message_id: updated_message.id,
+                     participant_id: participant_id,
+                     reaction: reaction,
+                     message: updated_message
+                   }),
+                 room_id: updated_message.room_id,
+                 legacy_event:
+                   {event_type,
+                    %{
+                      message_id: updated_message.id,
+                      participant_id: participant_id,
+                      reaction: reaction,
+                      message: updated_message
+                    }}
+               ) do
+          {:ok, Jido.Messaging.CommandResult.new(updated_message, [signal])}
+        end
       end
     end
   end
@@ -1496,6 +1511,8 @@ defmodule Jido.Messaging do
     |> Keyword.put_new(:external_thread_id, message.external_thread_id)
     |> Keyword.put_new(:delivery_external_room_id, message.delivery_external_room_id)
   end
+
+  defp normalize_event_opts(opts), do: Jido.Messaging.EventOptions.normalize(opts, :command)
 
   defp telemetry_metadata(instance_module, event_type, room_id, data) do
     data

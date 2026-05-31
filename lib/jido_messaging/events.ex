@@ -150,11 +150,22 @@ defmodule Jido.Messaging.Events do
   def type_for(event_type) when is_atom(event_type), do: "jido.messaging.room.#{event_type}"
 
   @spec telemetry_event_for(String.t() | event_type()) :: [atom()]
-  def telemetry_event_for(type) when is_binary(type) do
-    type
-    |> event_type_from_signal_type()
-    |> telemetry_event_for()
-  end
+  def telemetry_event_for("jido.messaging.message.received"), do: telemetry_event_for(:message_received)
+  def telemetry_event_for("jido.messaging.message.sent"), do: telemetry_event_for(:message_sent)
+  def telemetry_event_for("jido.messaging.message.failed"), do: telemetry_event_for(:message_failed)
+  def telemetry_event_for("jido.messaging.room.message_added"), do: telemetry_event_for(:message_added)
+  def telemetry_event_for("jido.messaging.room.created"), do: telemetry_event_for(:room_created)
+  def telemetry_event_for("jido.messaging.room.participant_joined"), do: telemetry_event_for(:participant_joined)
+  def telemetry_event_for("jido.messaging.room.participant_left"), do: telemetry_event_for(:participant_left)
+  def telemetry_event_for("jido.messaging.participant.presence_changed"), do: telemetry_event_for(:presence_changed)
+  def telemetry_event_for("jido.messaging.participant.typing"), do: telemetry_event_for(:typing)
+  def telemetry_event_for("jido.messaging.message.reaction_added"), do: telemetry_event_for(:reaction_added)
+  def telemetry_event_for("jido.messaging.message.reaction_removed"), do: telemetry_event_for(:reaction_removed)
+  def telemetry_event_for("jido.messaging.message.delivered"), do: telemetry_event_for(:message_delivered)
+  def telemetry_event_for("jido.messaging.message.read"), do: telemetry_event_for(:message_read)
+  def telemetry_event_for("jido.messaging.thread.created"), do: telemetry_event_for(:thread_created)
+  def telemetry_event_for("jido.messaging.thread.reply_added"), do: telemetry_event_for(:thread_reply_added)
+  def telemetry_event_for(type) when is_binary(type), do: [:jido_messaging, :signal, :custom]
 
   def telemetry_event_for(:message_added), do: [:jido_messaging, :room, :message_added]
   def telemetry_event_for(:message_received), do: [:jido_messaging, :message, :received]
@@ -260,36 +271,20 @@ defmodule Jido.Messaging.Events do
   end
 
   defp target_kind(%Message{thread_id: thread_id}, _opts) when is_binary(thread_id), do: "thread"
-  defp target_kind(_message, opts), do: opts |> Keyword.get(:target_kind, opts[:chat_type] || "room") |> to_string()
+  defp target_kind(_message, opts), do: metadata_value(Keyword.get(opts, :target_kind, opts[:chat_type] || "room"))
 
   defp payload_kind(_message, opts), do: metadata_value(opts[:payload_kind]) || "text"
 
   defp metadata_value(nil), do: nil
   defp metadata_value(value) when is_binary(value), do: value
   defp metadata_value(value) when is_atom(value), do: Atom.to_string(value)
-  defp metadata_value(value), do: to_string(value)
+  defp metadata_value(value), do: inspect(value)
 
   defp text_from_content([%{text: text} | _]) when is_binary(text), do: text
   defp text_from_content([%{"text" => text} | _]) when is_binary(text), do: text
   defp text_from_content([%{type: "text", text: text} | _]) when is_binary(text), do: text
   defp text_from_content([%{"type" => "text", "text" => text} | _]) when is_binary(text), do: text
   defp text_from_content(_content), do: nil
-
-  defp event_type_from_signal_type("jido.messaging.message.received"), do: :message_received
-  defp event_type_from_signal_type("jido.messaging.message.sent"), do: :message_sent
-  defp event_type_from_signal_type("jido.messaging.message.failed"), do: :message_failed
-  defp event_type_from_signal_type("jido.messaging.room.message_added"), do: :message_added
-  defp event_type_from_signal_type("jido.messaging.room.created"), do: :room_created
-  defp event_type_from_signal_type("jido.messaging.message.reaction_added"), do: :reaction_added
-  defp event_type_from_signal_type("jido.messaging.message.reaction_removed"), do: :reaction_removed
-  defp event_type_from_signal_type("jido.messaging.thread.reply_added"), do: :thread_reply_added
-
-  defp event_type_from_signal_type(type) do
-    type
-    |> String.split(".")
-    |> List.last()
-    |> String.to_atom()
-  end
 
   defp build_source(nil, nil), do: "jido_messaging/local"
   defp build_source(nil, instance_id), do: "jido_messaging/local/#{instance_id}"
@@ -313,6 +308,5 @@ defmodule Jido.Messaging.Events do
   defp channel_name(module) when is_atom(module), do: to_string(module)
   defp channel_name(other), do: inspect(other)
 
-  defp normalize_opts(opts) when is_list(opts), do: opts
-  defp normalize_opts(opts) when is_map(opts), do: Map.to_list(opts)
+  defp normalize_opts(opts), do: Jido.Messaging.EventOptions.normalize(opts)
 end
