@@ -16,6 +16,9 @@ defmodule Jido.Messaging.Query do
         }
 
   @spec room_timeline([Message.t()]) :: room_timeline()
+  @doc """
+  Groups room messages into top-level timeline messages, thread replies, and reply counts.
+  """
   def room_timeline(messages) when is_list(messages) do
     messages = Enum.sort_by(messages, & &1.inserted_at, {:asc, DateTime})
     {replies, timeline} = Enum.split_with(messages, &is_binary(&1.thread_id))

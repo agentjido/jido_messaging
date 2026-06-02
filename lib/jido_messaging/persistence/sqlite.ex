@@ -32,6 +32,11 @@ defmodule Jido.Messaging.Persistence.SQLite do
 
   defstruct [:db, :path]
 
+  @type t :: %__MODULE__{
+          db: reference(),
+          path: String.t()
+        }
+
   @impl true
   def init(opts) do
     path = opts |> Keyword.get(:path, "data/jido_messaging.sqlite3") |> to_string()

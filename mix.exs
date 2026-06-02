@@ -1,7 +1,7 @@
 defmodule Jido.Messaging.MixProject do
   use Mix.Project
 
-  @version "1.0.0"
+  @version "1.1.0"
   @source_url "https://github.com/agentjido/jido_messaging"
   @description "Messaging and notification system for the Jido ecosystem"
 
@@ -123,7 +123,7 @@ defmodule Jido.Messaging.MixProject do
 
   defp package do
     [
-      files: ["lib", "mix.exs", "README.md", "LICENSE", "CHANGELOG.md", "usage-rules.md"],
+      files: ["lib", "mix.exs", "README.md", "LICENSE", "CHANGELOG.md", "CONTRIBUTING.md", "usage-rules.md"],
       maintainers: ["Mike Hostetler"],
       licenses: ["Apache-2.0"],
       links: %{

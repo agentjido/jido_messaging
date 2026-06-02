@@ -30,6 +30,9 @@ defmodule Jido.Messaging.Events do
 
   @spec message_added(module(), Message.t(), keyword() | map()) ::
           {:ok, Jido.Signal.t()} | {:error, term()}
+  @doc """
+  Builds the canonical signal for a locally committed room message.
+  """
   def message_added(instance_module, %Message{} = message, opts \\ []) do
     opts = normalize_opts(opts)
 
@@ -43,6 +46,9 @@ defmodule Jido.Messaging.Events do
 
   @spec message_received(module() | nil, Message.t(), keyword() | map()) ::
           {:ok, Jido.Signal.t()} | {:error, term()}
+  @doc """
+  Builds the canonical signal for an inbound platform message.
+  """
   def message_received(instance_module, %Message{} = message, opts \\ []) do
     opts = normalize_opts(opts)
 
@@ -56,6 +62,9 @@ defmodule Jido.Messaging.Events do
 
   @spec message_sent(module() | nil, Message.t(), keyword() | map()) ::
           {:ok, Jido.Signal.t()} | {:error, term()}
+  @doc """
+  Builds the canonical signal for a successful outbound platform delivery.
+  """
   def message_sent(instance_module, %Message{} = message, opts \\ []) do
     opts = normalize_opts(opts)
 
@@ -69,6 +78,9 @@ defmodule Jido.Messaging.Events do
 
   @spec message_failed(module() | nil, String.t(), term(), keyword() | map()) ::
           {:ok, Jido.Signal.t()} | {:error, term()}
+  @doc """
+  Builds the canonical signal for a failed outbound platform delivery.
+  """
   def message_failed(instance_module, room_id, reason, opts \\ []) do
     opts = normalize_opts(opts)
 
@@ -86,18 +98,27 @@ defmodule Jido.Messaging.Events do
 
   @spec reaction_added(module(), Message.t(), String.t(), String.t(), keyword() | map()) ::
           {:ok, Jido.Signal.t()} | {:error, term()}
+  @doc """
+  Builds the canonical signal for a message reaction being added.
+  """
   def reaction_added(instance_module, %Message{} = message, participant_id, reaction, opts \\ []) do
     reaction_event(:reaction_added, instance_module, message, participant_id, reaction, opts)
   end
 
   @spec reaction_removed(module(), Message.t(), String.t(), String.t(), keyword() | map()) ::
           {:ok, Jido.Signal.t()} | {:error, term()}
+  @doc """
+  Builds the canonical signal for a message reaction being removed.
+  """
   def reaction_removed(instance_module, %Message{} = message, participant_id, reaction, opts \\ []) do
     reaction_event(:reaction_removed, instance_module, message, participant_id, reaction, opts)
   end
 
   @spec room_event(module(), event_type(), String.t(), map(), keyword() | map()) ::
           {:ok, Jido.Signal.t()} | {:error, term()}
+  @doc """
+  Builds a canonical room-scoped signal from arbitrary event data.
+  """
   def room_event(instance_module, event_type, room_id, data, opts \\ [])
       when is_atom(event_type) and is_map(data) do
     opts = normalize_opts(opts)
@@ -114,6 +135,9 @@ defmodule Jido.Messaging.Events do
 
   @spec new(String.t() | event_type(), module() | nil, String.t() | nil, map(), keyword() | map()) ::
           {:ok, Jido.Signal.t()} | {:error, term()}
+  @doc """
+  Builds a `Jido.Signal` CloudEvent for a normalized messaging event type.
+  """
   def new(type_or_event, instance_module, subject, data, opts \\ []) when is_map(data) do
     opts = normalize_opts(opts)
     type = type_for(type_or_event)
@@ -131,6 +155,9 @@ defmodule Jido.Messaging.Events do
   end
 
   @spec type_for(String.t() | event_type()) :: String.t()
+  @doc """
+  Returns the CloudEvent type string for a messaging event atom or custom type string.
+  """
   def type_for(type) when is_binary(type), do: type
   def type_for(:message_added), do: "jido.messaging.room.message_added"
   def type_for(:message_received), do: "jido.messaging.message.received"
@@ -150,6 +177,9 @@ defmodule Jido.Messaging.Events do
   def type_for(event_type) when is_atom(event_type), do: "jido.messaging.room.#{event_type}"
 
   @spec telemetry_event_for(String.t() | event_type()) :: [atom()]
+  @doc """
+  Returns the telemetry event name associated with a messaging event type.
+  """
   def telemetry_event_for("jido.messaging.message.received"), do: telemetry_event_for(:message_received)
   def telemetry_event_for("jido.messaging.message.sent"), do: telemetry_event_for(:message_sent)
   def telemetry_event_for("jido.messaging.message.failed"), do: telemetry_event_for(:message_failed)
@@ -185,6 +215,9 @@ defmodule Jido.Messaging.Events do
   def telemetry_event_for(event_type) when is_atom(event_type), do: [:jido_messaging, :room, event_type]
 
   @spec message_data(Message.t(), keyword() | map()) :: map()
+  @doc """
+  Converts a messaging record into the plain event payload used by message signals.
+  """
   def message_data(%Message{} = message, opts \\ []) do
     opts = normalize_opts(opts)
     text = text_from_content(message.content)

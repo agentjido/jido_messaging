@@ -18,6 +18,9 @@ defmodule Jido.Messaging.CommandResult do
 
   @type t :: t(term())
 
+  @doc """
+  Builds a command result from the committed record and emitted signals.
+  """
   @spec new(term(), [Jido.Signal.t()], map()) :: t()
   def new(record, signals \\ [], metadata \\ %{}) when is_list(signals) and is_map(metadata) do
     %__MODULE__{record: record, signals: signals, metadata: metadata}

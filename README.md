@@ -30,7 +30,7 @@ Add `jido_messaging` to your list of dependencies in `mix.exs`:
 ```elixir
 def deps do
   [
-    {:jido_messaging, github: "agentjido/jido_messaging", branch: "main"}
+    {:jido_messaging, "~> 1.1"}
   ]
 end
 ```
@@ -42,7 +42,7 @@ end
 ```elixir
 defmodule MyApp.Messaging do
   use Jido.Messaging,
-    adapter: Jido.Messaging.Adapters.ETS
+    persistence: Jido.Messaging.Persistence.ETS
 end
 ```
 
@@ -70,12 +70,75 @@ end
   room_id: room.id,
   sender_id: "user_123",
   role: :user,
-  content: [%Jido.Messaging.Content.Text{text: "Hello!"}]
+  content: [%{type: :text, text: "Hello!"}]
 })
 
 # List messages
 {:ok, messages} = MyApp.Messaging.list_messages(room.id)
 ```
+
+### Eventful Commands
+
+Use low-level persistence functions such as `save_message/1` for imports,
+migrations, and tests that should not notify realtime consumers. Use eventful
+commands when a write should emit canonical `jido.messaging.*` signals:
+
+```elixir
+{:ok, result} =
+  MyApp.Messaging.post_message(%{
+    room_id: room.id,
+    sender_id: "user_123",
+    role: :user,
+    content: [%{type: :text, text: "Hello!"}]
+  })
+
+message = result.record
+[%Jido.Signal{type: "jido.messaging.room.message_added"}] = result.signals
+```
+
+Subscribe to the instance Signal Bus for application UI or bridge notifications:
+
+```elixir
+{:ok, subscription_id} = MyApp.Messaging.subscribe_signals("jido.messaging.room.**")
+:ok = MyApp.Messaging.unsubscribe_signals(subscription_id)
+```
+
+### Durable SQLite Persistence
+
+Use the SQLite adapter when the host app needs durable local messaging state:
+
+```elixir
+defmodule MyApp.Messaging do
+  use Jido.Messaging,
+    persistence: Jido.Messaging.Persistence.SQLite,
+    persistence_opts: [path: "data/my_app_messaging.sqlite3"]
+end
+```
+
+The SQLite adapter stores canonical rooms, participants, messages, threads,
+bridge bindings, routing policies, bridge configs, and ingress subscriptions.
+`room_timeline/2` returns top-level messages, grouped thread replies, and reply
+counts from the persisted message records.
+
+### Presence Signals
+
+`Jido.Messaging.Presence` bridges transport-specific presence state, such as
+Phoenix Presence, into canonical messaging participant signals:
+
+```elixir
+defmodule MyApp.Presence do
+  use Jido.Messaging.Presence,
+    messaging: MyApp.Messaging,
+    presence: MyAppWeb.Presence,
+    topic: "my_app:presence",
+    source: "my_app.presence"
+end
+```
+
+Call `touch/3` when a participant is seen online and `mark_left/2` when a
+session disconnects. The helper emits `jido.messaging.room.participant_joined`,
+`jido.messaging.room.participant_left`, and
+`jido.messaging.participant.presence_changed` signals.
 
 ## Adapter Integration (Telegram + Discord)
 
@@ -90,10 +153,10 @@ Use adapter packages directly:
 ```elixir
 def deps do
   [
-    {:jido_chat, github: "agentjido/jido_chat", branch: "main"},
-    {:jido_chat_telegram, github: "agentjido/jido_chat_telegram", branch: "main"},
-    {:jido_chat_discord, github: "agentjido/jido_chat_discord", branch: "main"},
-    {:jido_messaging, github: "agentjido/jido_messaging", branch: "main"}
+    {:jido_chat, "~> 1.0"},
+    {:jido_chat_telegram, "~> 1.1"},
+    {:jido_chat_discord, "~> 1.0"},
+    {:jido_messaging, "~> 1.1"}
   ]
 end
 ```

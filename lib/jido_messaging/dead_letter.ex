@@ -4,7 +4,7 @@ defmodule Jido.Messaging.DeadLetter do
 
   Dead-letter records are written when outbound gateway work reaches terminal
   failure paths (including explicit load shedding). Replay execution is
-  partitioned by dead-letter id via `Jido.Messaging.DeadLetter.ReplayWorker`.
+  partitioned by dead-letter id through internal replay workers.
   """
   use GenServer
 

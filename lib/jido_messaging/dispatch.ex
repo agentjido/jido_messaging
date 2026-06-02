@@ -21,6 +21,9 @@ defmodule Jido.Messaging.Dispatch do
           legacy_event: term() | nil
         ]
 
+  @doc """
+  Emits a messaging signal to telemetry, the instance Signal Bus, and the optional legacy PubSub mirror.
+  """
   @spec emit(module() | nil, Jido.Signal.t(), emit_opts()) ::
           {:ok, Jido.Signal.t()} | {:error, term()}
   def emit(instance_module, %Jido.Signal{} = signal, opts \\ []) do
@@ -41,6 +44,9 @@ defmodule Jido.Messaging.Dispatch do
     result
   end
 
+  @doc """
+  Subscribes a process to an instance Signal Bus path such as `"jido.messaging.room.**"`.
+  """
   @spec subscribe(module(), String.t(), keyword()) ::
           {:ok, Jido.Signal.Bus.subscription_id()} | {:error, term()}
   def subscribe(instance_module, path, opts \\ []) when is_atom(instance_module) and is_binary(path) do
@@ -49,6 +55,9 @@ defmodule Jido.Messaging.Dispatch do
     |> Jido.Signal.Bus.subscribe(path, opts)
   end
 
+  @doc """
+  Removes a Signal Bus subscription created by `subscribe/3`.
+  """
   @spec unsubscribe(module(), Jido.Signal.Bus.subscription_id(), keyword()) :: :ok | {:error, term()}
   def unsubscribe(instance_module, subscription_id, opts \\ []) when is_atom(instance_module) do
     instance_module

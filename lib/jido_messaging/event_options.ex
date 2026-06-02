@@ -1,5 +1,7 @@
 defmodule Jido.Messaging.EventOptions do
-  @moduledoc false
+  @moduledoc """
+  Normalizes user-facing event option keys for messaging command and presence APIs.
+  """
 
   @event_keys %{
     "adapter_event_type" => :adapter_event_type,
@@ -41,6 +43,13 @@ defmodule Jido.Messaging.EventOptions do
                  })
 
   @spec normalize(keyword() | map() | term(), :event | :command | :presence) :: keyword()
+  @doc """
+  Returns a keyword list containing only recognized options for the selected keyspace.
+
+  Atom keys pass through unchanged. String keys are converted to their canonical
+  atom form when they are known for the `:event`, `:command`, or `:presence`
+  keyspace.
+  """
   def normalize(opts, keyspace \\ :event)
 
   def normalize(opts, keyspace) when is_list(opts) do
