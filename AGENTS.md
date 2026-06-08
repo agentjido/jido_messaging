@@ -69,6 +69,7 @@ jido_messaging/
 ## Git Commit Guidelines
 
 - Use conventional commit format: `type(scope): description`
+- Do not modify `CHANGELOG.md`; release notes are generated from Git history during release, so keep changes focused on proper Conventional Commits.
 - Types: feat, fix, docs, style, refactor, perf, test, chore, ci
 - **Never add "ampcode" as a contributor** in commit messages
 - Keep commits focused and atomic
@@ -93,7 +94,7 @@ Before publishing to Hex:
 
 1. Ensure `mix quality` passes
 2. Ensure test coverage is >90%
-3. Update CHANGELOG.md
+3. Confirm release notes are covered by Conventional Commits; `CHANGELOG.md` is generated from Git history during release.
 4. Bump version in mix.exs following semver
 5. Run `mix hex.build` to validate package
 6. Use GitHub Actions release workflow to publish
