@@ -423,8 +423,6 @@ defmodule Jido.Messaging.InboundRouter do
     end
   end
 
-  defp event_envelope_shape?(%EventEnvelope{}), do: true
-
   defp event_envelope_shape?(map) when is_map(map) do
     Map.has_key?(map, :event_type) or Map.has_key?(map, "event_type")
   end

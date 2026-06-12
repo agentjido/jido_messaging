@@ -309,6 +309,9 @@ defmodule Jido.Messaging.Demo.Bridge do
     normalize_module(module)
   end
 
+  defp normalize_module(nil),
+    do: raise(ArgumentError, "missing adapter module configuration (set opts or env)")
+
   defp normalize_module(module) when is_atom(module), do: module
 
   defp normalize_module(module_name) when is_binary(module_name) and module_name != "" do
@@ -316,9 +319,6 @@ defmodule Jido.Messaging.Demo.Bridge do
     |> String.split(".")
     |> Module.concat()
   end
-
-  defp normalize_module(nil),
-    do: raise(ArgumentError, "missing adapter module configuration (set opts or env)")
 
   defp normalize_module(other),
     do: raise(ArgumentError, "invalid adapter module configuration: #{inspect(other)}")
