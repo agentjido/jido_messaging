@@ -22,7 +22,6 @@ defmodule Jido.Messaging.InstanceServer do
   - `[:jido_messaging, :instance, :error]`
   """
   use GenServer
-  require Logger
 
   alias Jido.Messaging.Instance
 

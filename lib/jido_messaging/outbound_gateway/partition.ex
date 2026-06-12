@@ -440,10 +440,6 @@ defmodule Jido.Messaging.OutboundGateway.Partition do
      })}
   end
 
-  defp media_text_fallback(_request, _fallback_text, _metadata) do
-    {:error, :unsupported_media_fallback}
-  end
-
   defp media_policy_opts(opts) when is_list(opts) do
     case Keyword.get(opts, :media_policy, []) do
       value when is_list(value) -> value
