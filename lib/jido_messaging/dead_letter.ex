@@ -166,7 +166,8 @@ defmodule Jido.Messaging.DeadLetter do
 
   @doc false
   @spec prepare_replay(module(), String.t(), boolean()) ::
-          {:ok, :replay | :already_replayed, dead_letter_record()} | {:error, :not_found | :archived | :replay_in_progress}
+          {:ok, :replay | :already_replayed, dead_letter_record()}
+          | {:error, :not_found | :archived | :replay_in_progress}
   def prepare_replay(instance_module, dead_letter_id, force? \\ false)
       when is_atom(instance_module) and is_binary(dead_letter_id) and is_boolean(force?) do
     call(instance_module, {:prepare_replay, dead_letter_id, force?})

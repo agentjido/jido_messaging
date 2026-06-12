@@ -438,9 +438,6 @@ defmodule Jido.Messaging.OutboundGateway.Partition do
            fallback_mode: :text_edit,
            fallback_operation: :edit
          })}
-
-      _request ->
-        {:error, :unsupported_media_fallback}
     end
   end
 
