@@ -418,26 +418,27 @@ defmodule Jido.Messaging.OutboundGateway.Partition do
     end
   end
 
-  defp media_text_fallback(%{operation: :send_media}, fallback_text, metadata) do
-    {:ok, fallback_text,
-     Map.merge(metadata, %{
-       fallback: true,
-       fallback_mode: :text_send,
-       fallback_operation: :send
-     })}
-  end
+  defp media_text_fallback(request, fallback_text, metadata) do
+    case request do
+      %{operation: :send_media} ->
+        {:ok, fallback_text,
+         Map.merge(metadata, %{
+           fallback: true,
+           fallback_mode: :text_send,
+           fallback_operation: :send
+         })}
 
-  defp media_text_fallback(%{operation: :edit_media, external_message_id: nil}, _fallback_text, _metadata) do
-    {:error, :missing_external_message_id}
-  end
+      %{operation: :edit_media, external_message_id: nil} ->
+        {:error, :missing_external_message_id}
 
-  defp media_text_fallback(%{operation: :edit_media}, fallback_text, metadata) do
-    {:ok, fallback_text,
-     Map.merge(metadata, %{
-       fallback: true,
-       fallback_mode: :text_edit,
-       fallback_operation: :edit
-     })}
+      %{operation: :edit_media} ->
+        {:ok, fallback_text,
+         Map.merge(metadata, %{
+           fallback: true,
+           fallback_mode: :text_edit,
+           fallback_operation: :edit
+         })}
+    end
   end
 
   defp media_policy_opts(opts) when is_list(opts) do
