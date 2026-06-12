@@ -25,7 +25,7 @@ defmodule Jido.Messaging.DeadLetter do
           last_result: term() | nil
         }
 
-  @type record :: %{
+  @type dead_letter_record :: %{
           id: String.t(),
           instance_module: module(),
           status: record_status(),
@@ -48,13 +48,13 @@ defmodule Jido.Messaging.DeadLetter do
         }
 
   @type replay_response ::
-          %{status: :already_replayed, record: record()}
-          | %{status: :replayed, response: OutboundGateway.success_response(), record: record()}
+          %{status: :already_replayed, record: dead_letter_record()}
+          | %{status: :replayed, response: OutboundGateway.success_response(), record: dead_letter_record()}
 
   @type state :: %{
           instance_module: module(),
           max_records: pos_integer(),
-          records: %{optional(String.t()) => record()},
+          records: %{optional(String.t()) => dead_letter_record()},
           order: [String.t()]
         }
 
@@ -108,7 +108,7 @@ defmodule Jido.Messaging.DeadLetter do
   @doc """
   Capture a terminal outbound failure into dead-letter storage.
   """
-  @spec capture_outbound_failure(module(), map(), map(), map()) :: {:ok, record()} | {:error, :unavailable}
+  @spec capture_outbound_failure(module(), map(), map(), map()) :: {:ok, dead_letter_record()} | {:error, :unavailable}
   def capture_outbound_failure(instance_module, request, error, diagnostics \\ %{})
       when is_atom(instance_module) and is_map(request) and is_map(error) and is_map(diagnostics) do
     call(instance_module, {:capture_outbound_failure, request, error, diagnostics})
@@ -121,7 +121,7 @@ defmodule Jido.Messaging.DeadLetter do
   - `:status` - `:active`, `:archived`, or `:all` (default: `:all`)
   - `:limit` - positive integer limit
   """
-  @spec list(module(), keyword()) :: {:ok, [record()]} | {:error, :unavailable}
+  @spec list(module(), keyword()) :: {:ok, [dead_letter_record()]} | {:error, :unavailable}
   def list(instance_module, opts \\ []) when is_atom(instance_module) and is_list(opts) do
     call(instance_module, {:list, opts})
   end
@@ -129,7 +129,7 @@ defmodule Jido.Messaging.DeadLetter do
   @doc """
   Get a dead-letter record by id.
   """
-  @spec get(module(), String.t()) :: {:ok, record()} | {:error, :not_found | :unavailable}
+  @spec get(module(), String.t()) :: {:ok, dead_letter_record()} | {:error, :not_found | :unavailable}
   def get(instance_module, dead_letter_id) when is_atom(instance_module) and is_binary(dead_letter_id) do
     call(instance_module, {:get, dead_letter_id})
   end
@@ -166,7 +166,7 @@ defmodule Jido.Messaging.DeadLetter do
 
   @doc false
   @spec prepare_replay(module(), String.t(), boolean()) ::
-          {:ok, :replay | :already_replayed, record()} | {:error, :not_found | :archived | :replay_in_progress}
+          {:ok, :replay | :already_replayed, dead_letter_record()} | {:error, :not_found | :archived | :replay_in_progress}
   def prepare_replay(instance_module, dead_letter_id, force? \\ false)
       when is_atom(instance_module) and is_binary(dead_letter_id) and is_boolean(force?) do
     call(instance_module, {:prepare_replay, dead_letter_id, force?})
@@ -174,7 +174,7 @@ defmodule Jido.Messaging.DeadLetter do
 
   @doc false
   @spec complete_replay(module(), String.t(), {:ok, term()} | {:error, term()}) ::
-          {:ok, record()} | {:error, :not_found | :unavailable}
+          {:ok, dead_letter_record()} | {:error, :not_found | :unavailable}
   def complete_replay(instance_module, dead_letter_id, replay_result)
       when is_atom(instance_module) and is_binary(dead_letter_id) do
     call(instance_module, {:complete_replay, dead_letter_id, replay_result})

@@ -6,8 +6,6 @@ defmodule Jido.Messaging.Runtime do
   adapter module and adapter state (e.g., ETS table references).
   """
   use GenServer
-  require Logger
-
   @schema Zoi.struct(
             __MODULE__,
             %{

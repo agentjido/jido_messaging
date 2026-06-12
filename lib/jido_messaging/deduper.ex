@@ -14,8 +14,6 @@ defmodule Jido.Messaging.Deduper do
       end
   """
   use GenServer
-  require Logger
-
   @default_ttl_ms :timer.hours(1)
   @sweep_interval_ms :timer.minutes(1)
 
