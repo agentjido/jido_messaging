@@ -76,7 +76,7 @@ defmodule Jido.Messaging.MixProject do
       {:jido_ai, "~> 2.2"},
       {:yaml_elixir, "~> 2.12"},
       {:plug, "~> 1.16"},
-      {:exqlite, "~> 0.38.0"},
+      {:exqlite, "~> 0.39.0"},
 
       # PubSub support (required by jido_signal, also used for integration tests)
       {:phoenix_pubsub, "~> 2.1"},
