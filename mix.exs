@@ -1,7 +1,7 @@
 defmodule Jido.Messaging.MixProject do
   use Mix.Project
 
-  @version "1.1.0"
+  @version "1.1.1"
   @source_url "https://github.com/agentjido/jido_messaging"
   @description "Messaging and notification system for the Jido ecosystem"
 
