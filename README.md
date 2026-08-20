@@ -407,6 +407,10 @@ Message Flow:
 - `mix test.story`: story/spec contract tests (`@moduletag :story`)
 - `mix test.all`: full suite except `:flaky`
 
+## Design RFCs
+
+- [RFC 0001: Durable Inbox, Outbox, and Delivery Recovery](docs/rfcs/0001-durable-delivery.md)
+
 ## Domain Model
 
 ### Message (Canonical)
