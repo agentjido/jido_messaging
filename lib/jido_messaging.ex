@@ -181,7 +181,12 @@ defmodule Jido.Messaging do
         Jido.Messaging.get_message(__jido_messaging__(:runtime), message_id)
       end
 
-      @doc "List messages for a room"
+      @doc """
+      List messages for a room.
+
+      Use a message ID with `:before` or `:after` for cursor pagination. The
+      two cursor options are mutually exclusive.
+      """
       def list_messages(room_id, opts \\ []) do
         Jido.Messaging.list_messages(__jido_messaging__(:runtime), room_id, opts)
       end
@@ -790,7 +795,12 @@ defmodule Jido.Messaging do
     persistence.get_message(persistence_state, message_id)
   end
 
-  @doc "List messages for a room"
+  @doc """
+  List messages for a room.
+
+  Use a message ID with `:before` or `:after` for cursor pagination. The two
+  cursor options are mutually exclusive.
+  """
   def list_messages(runtime, room_id, opts \\ []) do
     {persistence, persistence_state} = Runtime.get_persistence(runtime)
     persistence.get_messages(persistence_state, room_id, opts)

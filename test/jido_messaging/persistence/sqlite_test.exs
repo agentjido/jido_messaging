@@ -163,6 +163,32 @@ defmodule Jido.Messaging.Persistence.SQLiteTest do
     :ok = Sqlite3.close(state.db)
   end
 
+  test "paginates before and after a stable message cursor" do
+    path = tmp_path("sqlite-cursors")
+    {:ok, state} = SQLite.init(path: path)
+    room = Room.new(%{id: "room:cursors", type: :channel, name: "cursors"})
+    assert {:ok, ^room} = SQLite.save_room(state, room)
+
+    messages = pagination_messages(room.id)
+    Enum.each(messages, &SQLite.save_message(state, &1))
+
+    assert {:ok, latest} = SQLite.get_messages(state, room.id, limit: 2)
+    assert Enum.map(latest, & &1.id) == ["message:3", "message:4"]
+
+    assert {:ok, older} = SQLite.get_messages(state, room.id, before: "message:3", limit: 2)
+    assert Enum.map(older, & &1.id) == ["message:1", "message:2"]
+
+    assert {:ok, newer} = SQLite.get_messages(state, room.id, after: "message:2", limit: 2)
+    assert Enum.map(newer, & &1.id) == ["message:3", "message:4"]
+
+    assert {:error, :cursor_not_found} = SQLite.get_messages(state, room.id, after: "missing")
+
+    assert {:error, :invalid_cursor_options} =
+             SQLite.get_messages(state, room.id, before: "message:3", after: "message:2")
+
+    :ok = Sqlite3.close(state.db)
+  end
+
   test "room_timeline returns raw timeline messages and thread replies" do
     path = tmp_path("sqlite-query")
     start_supervised!({SQLiteMessaging, persistence_opts: [path: path]})
@@ -202,5 +228,27 @@ defmodule Jido.Messaging.Persistence.SQLiteTest do
     path = Path.join(["tmp", "#{prefix}-#{System.unique_integer([:positive])}.sqlite3"])
     File.rm(path)
     path
+  end
+
+  defp pagination_messages(room_id) do
+    base = ~U[2026-01-01 00:00:00.000000Z]
+
+    [
+      pagination_message("message:1", room_id, base),
+      pagination_message("message:2", room_id, DateTime.add(base, 1, :second)),
+      pagination_message("message:3", room_id, DateTime.add(base, 1, :second)),
+      pagination_message("message:4", room_id, DateTime.add(base, 2, :second))
+    ]
+  end
+
+  defp pagination_message(id, room_id, inserted_at) do
+    Message.new(%{
+      id: id,
+      room_id: room_id,
+      sender_id: "user:cursor",
+      role: :user,
+      content: [%{type: :text, text: id}],
+      inserted_at: inserted_at
+    })
   end
 end

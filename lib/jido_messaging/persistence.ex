@@ -70,8 +70,16 @@ defmodule Jido.Messaging.Persistence do
   @doc "Get a message by ID"
   @callback get_message(state, message_id) :: {:ok, Message.t()} | {:error, :not_found}
 
-  @doc "Get messages for a room with options (limit, before, after)"
-  @callback get_messages(state, room_id, opts :: keyword()) :: {:ok, [Message.t()]}
+  @doc """
+  Get messages for a room with `:limit`, `:before`, and `:after` options.
+
+  Cursor values are message IDs. A cursor must identify a message in the same
+  room and optional thread scope. Adapters return `{:error, :cursor_not_found}`
+  for a missing or stale cursor and `{:error, :invalid_cursor_options}` when
+  both cursor directions are present.
+  """
+  @callback get_messages(state, room_id, opts :: keyword()) ::
+              {:ok, [Message.t()]} | {:error, :cursor_not_found | :invalid_cursor_options}
 
   @doc "Delete a message by ID"
   @callback delete_message(state, message_id) :: :ok | {:error, term()}
