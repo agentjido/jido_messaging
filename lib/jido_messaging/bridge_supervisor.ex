@@ -15,7 +15,12 @@ defmodule Jido.Messaging.BridgeSupervisor do
   """
   def start_link(opts) do
     name = Keyword.fetch!(opts, :name)
-    DynamicSupervisor.start_link(__MODULE__, opts, name: name)
+    instance_module = Keyword.fetch!(opts, :instance_module)
+
+    with {:ok, supervisor} <- DynamicSupervisor.start_link(__MODULE__, opts, name: name),
+         :ok <- reconcile(instance_module) do
+      {:ok, supervisor}
+    end
   end
 
   @impl true

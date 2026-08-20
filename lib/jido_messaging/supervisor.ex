@@ -59,6 +59,11 @@ defmodule Jido.Messaging.Supervisor do
           {Registry, keys: :unique, name: instance_registry_name},
           {Registry, keys: :unique, name: bridge_registry_name},
           {Jido.Signal.Bus, name: signal_bus_name},
+          {Jido.Messaging.Runtime,
+           name: runtime_name,
+           instance_module: instance_module,
+           persistence: persistence,
+           persistence_opts: persistence_opts},
           {Jido.Messaging.RoomSupervisor, name: room_supervisor_name, instance_module: instance_module},
           {Jido.Messaging.AgentSupervisor, name: agent_supervisor_name, instance_module: instance_module},
           {Jido.Messaging.SessionManager.Supervisor,
@@ -71,12 +76,7 @@ defmodule Jido.Messaging.Supervisor do
           {Jido.Messaging.ConfigStore, name: config_store_name, instance_module: instance_module},
           {Jido.Messaging.InstanceSupervisor, name: instance_supervisor_name, instance_module: instance_module},
           {Jido.Messaging.BridgeSupervisor, name: bridge_supervisor_name, instance_module: instance_module},
-          {Jido.Messaging.Deduper, name: deduper_name, instance_module: instance_module},
-          {Jido.Messaging.Runtime,
-           name: runtime_name,
-           instance_module: instance_module,
-           persistence: persistence,
-           persistence_opts: persistence_opts}
+          {Jido.Messaging.Deduper, name: deduper_name, instance_module: instance_module}
         ]
 
         onboarding_children =
