@@ -343,7 +343,7 @@ defmodule Jido.Messaging.Ingest do
 
   defp resolve_participant(messaging_module, channel_type, bridge_id, incoming) do
     author = Map.get(incoming, :author)
-    external_id = first_present(Map.get(incoming, :external_user_id), author_value(author, :user_id))
+    external_id = external_user_id(incoming)
     username = first_present(author_value(author, :user_name), Map.get(incoming, :username))
     display_name = first_present(author_value(author, :full_name), Map.get(incoming, :display_name))
     email = author_value(author, :email)
@@ -368,6 +368,13 @@ defmodule Jido.Messaging.Ingest do
 
   defp author_value(author, key) when is_map(author), do: Map.get(author, key) || Map.get(author, Atom.to_string(key))
   defp author_value(_author, _key), do: nil
+
+  defp external_user_id(incoming) do
+    first_present(
+      Map.get(incoming, :external_user_id),
+      author_value(Map.get(incoming, :author), :user_id)
+    )
+  end
 
   defp first_present(value, fallback) do
     if blank_value?(value), do: fallback, else: value
@@ -414,12 +421,7 @@ defmodule Jido.Messaging.Ingest do
   end
 
   defp build_msg_context(channel_module, bridge_id, incoming, room, participant, opts) do
-    incoming =
-      Map.put(
-        incoming,
-        :external_user_id,
-        first_present(Map.get(incoming, :external_user_id), author_value(Map.get(incoming, :author), :user_id))
-      )
+    incoming = Map.put(incoming, :external_user_id, external_user_id(incoming))
 
     channel_module
     |> MsgContext.from_incoming(bridge_id, incoming)
