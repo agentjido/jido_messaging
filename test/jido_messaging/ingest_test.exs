@@ -225,6 +225,7 @@ defmodule Jido.Messaging.IngestTest do
       assert context.participant.id == "author_stable"
       assert message.sender_id == "author_stable"
       assert context.participant_id == "author_stable"
+      assert context.msg_context.external_user_id == "provider_user"
 
       assert context.participant.identity == %{
                username: "stable_user",
@@ -1086,6 +1087,24 @@ defmodule Jido.Messaging.IngestTest do
                TestMessaging.get_room_by_external_binding(:mock, "security_inst", "chat_security_deny")
 
       assert {:error, :not_found} = TestMessaging.get_message_by_external_id(:mock, "security_inst", 7002)
+    end
+
+    test "author-only identity rejects a conflicting sender claim before persistence" do
+      incoming = %{
+        external_room_id: "chat_security_author_deny",
+        author: %Jido.Chat.Author{id: "author_stable", user_id: "trusted_author", user_name: "trusted_author"},
+        text: "spoof attempt",
+        external_message_id: 7004,
+        raw: %{claimed_sender_id: "spoofed_user"}
+      }
+
+      assert {:error, {:security_denied, :verify, :sender_claim_mismatch, _description}} =
+               Ingest.ingest_incoming(TestMessaging, MockChannel, "security_inst", incoming)
+
+      assert {:error, :not_found} =
+               TestMessaging.get_room_by_external_binding(:mock, "security_inst", "chat_security_author_deny")
+
+      assert {:error, :not_found} = TestMessaging.get_message_by_external_id(:mock, "security_inst", 7004)
     end
 
     test "security timeout policy deny is bounded and returns typed retry-class failure" do

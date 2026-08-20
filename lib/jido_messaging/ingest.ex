@@ -209,6 +209,7 @@ defmodule Jido.Messaging.Ingest do
          incoming,
          opts
        ) do
+    incoming = Map.put(incoming, :external_user_id, external_user_id(incoming))
     raw_payload = incoming_raw_payload(incoming)
 
     with {:ok, verify_result} <-
@@ -421,8 +422,6 @@ defmodule Jido.Messaging.Ingest do
   end
 
   defp build_msg_context(channel_module, bridge_id, incoming, room, participant, opts) do
-    incoming = Map.put(incoming, :external_user_id, external_user_id(incoming))
-
     channel_module
     |> MsgContext.from_incoming(bridge_id, incoming)
     |> Normalizer.normalize(incoming, opts)
