@@ -62,6 +62,20 @@ defmodule Jido.Messaging.BridgeConfig do
     %{config | revision: config.revision + 1, updated_at: DateTime.utc_now()}
   end
 
+  @doc """
+  Adds the selected bridge context to adapter call options.
+
+  Call-specific options have precedence. This lets a caller make an explicit
+  override without changing the stored bridge configuration.
+  """
+  @spec adapter_opts(t(), keyword()) :: keyword()
+  def adapter_opts(%__MODULE__{} = config, opts \\ []) when is_list(opts) do
+    opts
+    |> Keyword.put_new(:bridge_config, config)
+    |> Keyword.put_new(:credentials, config.credentials)
+    |> Keyword.put_new(:settings, config.opts)
+  end
+
   defp normalize_attrs(attrs) do
     attrs
     |> Enum.reduce(%{}, fn

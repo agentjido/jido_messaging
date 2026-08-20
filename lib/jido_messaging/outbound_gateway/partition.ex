@@ -9,6 +9,8 @@ defmodule Jido.Messaging.OutboundGateway.Partition do
   @dialyzer {:nowarn_function, media_text_fallback: 3}
 
   alias Jido.Messaging.AdapterBridge
+  alias Jido.Messaging.BridgeConfig
+  alias Jido.Messaging.ConfigStore
   alias Jido.Messaging.DeadLetter
   alias Jido.Messaging.MediaPolicy
   alias Jido.Messaging.OutboundGateway
@@ -277,15 +279,17 @@ defmodule Jido.Messaging.OutboundGateway.Partition do
   end
 
   defp perform_operation(instance_module, %{operation: :send} = request) do
+    adapter_opts = adapter_opts(instance_module, request)
+
     with {:ok, sanitized_payload, security_result} <-
-           Security.sanitize_outbound(instance_module, request.channel, request.payload, request.opts),
+           Security.sanitize_outbound(instance_module, request.channel, request.payload, adapter_opts),
          {:ok, provider_result} <-
            invoke_channel(fn ->
              AdapterBridge.send_message(
                request.channel,
                request.external_room_id,
                sanitized_payload,
-               request.opts
+               adapter_opts
              )
            end) do
       {:ok, provider_result, security_result}
@@ -293,8 +297,10 @@ defmodule Jido.Messaging.OutboundGateway.Partition do
   end
 
   defp perform_operation(instance_module, %{operation: :edit} = request) do
+    adapter_opts = adapter_opts(instance_module, request)
+
     with {:ok, sanitized_payload, security_result} <-
-           Security.sanitize_outbound(instance_module, request.channel, request.payload, request.opts),
+           Security.sanitize_outbound(instance_module, request.channel, request.payload, adapter_opts),
          {:ok, provider_result} <-
            invoke_channel(fn ->
              AdapterBridge.edit_message(
@@ -302,7 +308,7 @@ defmodule Jido.Messaging.OutboundGateway.Partition do
                request.external_room_id,
                request.external_message_id,
                sanitized_payload,
-               request.opts
+               adapter_opts
              )
            end) do
       {:ok, provider_result, security_result}
@@ -310,17 +316,19 @@ defmodule Jido.Messaging.OutboundGateway.Partition do
   end
 
   defp perform_operation(instance_module, %{operation: :send_media} = request) do
+    adapter_opts = adapter_opts(instance_module, request)
+
     case media_preflight(request) do
       {:ok_media, payload, media_metadata} ->
         with {:ok, sanitized_payload, security_result} <-
-               Security.sanitize_outbound(instance_module, request.channel, payload, request.opts),
+               Security.sanitize_outbound(instance_module, request.channel, payload, adapter_opts),
              {:ok, provider_result} <-
                invoke_channel(fn ->
                  AdapterBridge.send_media(
                    request.channel,
                    request.external_room_id,
                    sanitized_payload,
-                   request.opts
+                   adapter_opts
                  )
                end) do
           {:ok, provider_result, security_result, %{media: media_metadata}}
@@ -328,14 +336,14 @@ defmodule Jido.Messaging.OutboundGateway.Partition do
 
       {:fallback_text, fallback_text, media_metadata} ->
         with {:ok, sanitized_payload, security_result} <-
-               Security.sanitize_outbound(instance_module, request.channel, fallback_text, request.opts),
+               Security.sanitize_outbound(instance_module, request.channel, fallback_text, adapter_opts),
              {:ok, provider_result} <-
                invoke_channel(fn ->
                  AdapterBridge.send_message(
                    request.channel,
                    request.external_room_id,
                    sanitized_payload,
-                   request.opts
+                   adapter_opts
                  )
                end) do
           {:ok, provider_result, security_result, %{media: media_metadata}}
@@ -347,10 +355,12 @@ defmodule Jido.Messaging.OutboundGateway.Partition do
   end
 
   defp perform_operation(instance_module, %{operation: :edit_media} = request) do
+    adapter_opts = adapter_opts(instance_module, request)
+
     case media_preflight(request) do
       {:ok_media, payload, media_metadata} ->
         with {:ok, sanitized_payload, security_result} <-
-               Security.sanitize_outbound(instance_module, request.channel, payload, request.opts),
+               Security.sanitize_outbound(instance_module, request.channel, payload, adapter_opts),
              {:ok, provider_result} <-
                invoke_channel(fn ->
                  AdapterBridge.edit_media(
@@ -358,7 +368,7 @@ defmodule Jido.Messaging.OutboundGateway.Partition do
                    request.external_room_id,
                    request.external_message_id,
                    sanitized_payload,
-                   request.opts
+                   adapter_opts
                  )
                end) do
           {:ok, provider_result, security_result, %{media: media_metadata}}
@@ -366,7 +376,7 @@ defmodule Jido.Messaging.OutboundGateway.Partition do
 
       {:fallback_text, fallback_text, media_metadata} ->
         with {:ok, sanitized_payload, security_result} <-
-               Security.sanitize_outbound(instance_module, request.channel, fallback_text, request.opts),
+               Security.sanitize_outbound(instance_module, request.channel, fallback_text, adapter_opts),
              {:ok, provider_result} <-
                invoke_channel(fn ->
                  AdapterBridge.edit_message(
@@ -374,7 +384,7 @@ defmodule Jido.Messaging.OutboundGateway.Partition do
                    request.external_room_id,
                    request.external_message_id,
                    sanitized_payload,
-                   request.opts
+                   adapter_opts
                  )
                end) do
           {:ok, provider_result, security_result, %{media: media_metadata}}
@@ -387,6 +397,13 @@ defmodule Jido.Messaging.OutboundGateway.Partition do
 
   defp perform_operation(_instance_module, %{operation: operation}) do
     {:error, {:unsupported_operation, operation}}
+  end
+
+  defp adapter_opts(instance_module, request) do
+    case ConfigStore.get_bridge_config(instance_module, request.bridge_id) do
+      {:ok, %BridgeConfig{} = config} -> BridgeConfig.adapter_opts(config, request.opts)
+      {:error, :not_found} -> request.opts
+    end
   end
 
   defp media_preflight(request) do
