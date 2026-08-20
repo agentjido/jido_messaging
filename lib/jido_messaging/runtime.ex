@@ -44,7 +44,11 @@ defmodule Jido.Messaging.Runtime do
   def init(opts) do
     instance_module = Keyword.fetch!(opts, :instance_module)
     persistence = Keyword.fetch!(opts, :persistence)
-    persistence_opts = Keyword.get(opts, :persistence_opts, [])
+
+    persistence_opts =
+      opts
+      |> Keyword.get(:persistence_opts, [])
+      |> Keyword.put_new(:instance_id, Atom.to_string(instance_module))
 
     case persistence.init(persistence_opts) do
       {:ok, persistence_state} ->
