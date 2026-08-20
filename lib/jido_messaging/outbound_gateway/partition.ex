@@ -476,8 +476,6 @@ defmodule Jido.Messaging.OutboundGateway.Partition do
     end
   end
 
-  defp media_policy_opts(_opts), do: []
-
   defp invoke_channel(fun) when is_function(fun, 0) do
     try do
       case fun.() do

@@ -47,7 +47,6 @@ defmodule Jido.Messaging.SecretResolver do
     case ConfigStore.get_bridge_config(instance_module, bridge_id) do
       {:ok, %BridgeConfig{} = config} -> adapter_opts_for_config(instance_module, config, operation, opts)
       {:error, :not_found} -> {:ok, opts}
-      {:error, _reason} = error -> error
     end
   end
 
@@ -62,7 +61,7 @@ defmodule Jido.Messaging.SecretResolver do
        opts
        |> Keyword.put(:bridge_config, config)
        |> Keyword.put(:credentials, credentials)
-       |> Keyword.put(:settings, config.opts || %{})}
+       |> Keyword.put(:settings, config.opts)}
     end
   end
 
