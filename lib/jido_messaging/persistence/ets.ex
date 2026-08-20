@@ -274,6 +274,20 @@ defmodule Jido.Messaging.Persistence.ETS do
     end
   end
 
+  @impl true
+  def get_participant_messages(state, participant_id, room_ids, opts \\ [])
+      when is_binary(participant_id) and is_list(room_ids) and is_list(opts) do
+    allowed_rooms = MapSet.new(room_ids)
+
+    messages =
+      state.messages
+      |> :ets.tab2list()
+      |> Enum.map(&elem(&1, 1))
+      |> Enum.filter(&(&1.sender_id == participant_id and MapSet.member?(allowed_rooms, &1.room_id)))
+
+    Jido.Messaging.Transcript.paginate(messages, opts)
+  end
+
   # Thread operations
 
   @impl true

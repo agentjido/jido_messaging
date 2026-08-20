@@ -212,6 +212,33 @@ defmodule Jido.Messaging.Persistence.SQLite do
   end
 
   @impl true
+  def get_participant_messages(state, participant_id, room_ids, opts \\ [])
+
+  def get_participant_messages(_state, _participant_id, [], _opts), do: {:ok, []}
+
+  def get_participant_messages(state, participant_id, room_ids, opts)
+      when is_binary(participant_id) and is_list(room_ids) and is_list(opts) do
+    room_params = room_ids |> Enum.with_index(2) |> Enum.map(fn {_room_id, index} -> "?#{index}" end)
+
+    with {:ok, rows} <-
+           query_all(
+             state.db,
+             """
+             SELECT payload
+             FROM #{@table}
+             WHERE kind = ?1 AND room_id IN (#{Enum.join(room_params, ", ")})
+             ORDER BY inserted_at ASC, id ASC
+             """,
+             ["message" | room_ids]
+           ) do
+      rows
+      |> decode_rows()
+      |> Enum.filter(&(&1.sender_id == participant_id))
+      |> Jido.Messaging.Transcript.paginate(opts)
+    end
+  end
+
+  @impl true
   def save_thread(state, %Thread{} = thread) do
     persist(state, "thread", thread.id, thread,
       room_id: thread.room_id,
