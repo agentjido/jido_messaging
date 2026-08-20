@@ -156,6 +156,7 @@ defmodule Jido.Messaging.ConfigStore do
 
     reply =
       with :ok <- validate_revision(expected_revision, existing),
+           :ok <- validate_bridge_secrets(attrs, existing),
            {:ok, config} <- normalize_bridge_config(attrs, existing),
            {:ok, _saved} <- persistence.save_bridge_config(persistence_state, config) do
         trigger_reconcile(state.instance_module)
@@ -265,6 +266,22 @@ defmodule Jido.Messaging.ConfigStore do
       {:ok, config}
     else
       {:error, :invalid_adapter_module}
+    end
+  end
+
+  defp validate_bridge_secrets(attrs, existing) do
+    incoming_credentials = map_get(attrs, :credentials)
+    existing_credentials = existing && existing.credentials
+
+    cond do
+      is_map(incoming_credentials) and map_size(incoming_credentials) > 0 ->
+        {:error, :raw_bridge_credentials_not_allowed}
+
+      is_map(existing_credentials) and map_size(existing_credentials) > 0 ->
+        {:error, {:bridge_credentials_migration_required, existing.id}}
+
+      true ->
+        :ok
     end
   end
 
@@ -398,6 +415,7 @@ defmodule Jido.Messaging.ConfigStore do
   defp key_to_atom("adapter_module"), do: :adapter_module
   defp key_to_atom("adapter"), do: :adapter_module
   defp key_to_atom("credentials"), do: :credentials
+  defp key_to_atom("secret_refs"), do: :secret_refs
   defp key_to_atom("opts"), do: :opts
   defp key_to_atom("enabled"), do: :enabled
   defp key_to_atom("capabilities"), do: :capabilities

@@ -477,7 +477,9 @@ defmodule Jido.Messaging.Persistence.SQLite do
 
   @impl true
   def save_bridge_config(state, %BridgeConfig{} = bridge_config) do
-    persist(state, "bridge_config", bridge_config.id, bridge_config, inserted_at: bridge_config.inserted_at)
+    with :ok <- BridgeConfig.validate_for_storage(bridge_config) do
+      persist(state, "bridge_config", bridge_config.id, bridge_config, inserted_at: bridge_config.inserted_at)
+    end
   end
 
   @impl true

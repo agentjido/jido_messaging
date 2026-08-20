@@ -10,7 +10,7 @@ defmodule Jido.Messaging.InboundRouter do
 
   alias Jido.Chat
   alias Jido.Chat.{Adapter, EventEnvelope, Incoming, WebhookRequest, WebhookResponse}
-  alias Jido.Messaging.{BridgeConfig, BridgeServer, ConfigStore, Ingest, IngressOutcome}
+  alias Jido.Messaging.{BridgeConfig, BridgeServer, ConfigStore, Ingest, IngressOutcome, SecretResolver}
 
   @type ingest_result ::
           {:ok, {:message, Jido.Messaging.Message.t(), Ingest.context(), EventEnvelope.t()}}
@@ -85,8 +85,8 @@ defmodule Jido.Messaging.InboundRouter do
 
     with {:ok, config} <- fetch_bridge(instance_module, bridge_id),
          :ok <- ensure_enabled(config),
-         {:ok, adapter_module} <- ensure_adapter_module(config) do
-      adapter_opts = BridgeConfig.adapter_opts(config, opts)
+         {:ok, adapter_module} <- ensure_adapter_module(config),
+         {:ok, adapter_opts} <- SecretResolver.adapter_opts_for_config(instance_module, config, :webhook, opts) do
       request = build_webhook_request(adapter_module, payload, request_meta)
       format_opts = Keyword.put(adapter_opts, :request, request)
 
@@ -118,9 +118,8 @@ defmodule Jido.Messaging.InboundRouter do
 
     with {:ok, config} <- fetch_bridge(instance_module, bridge_id),
          :ok <- ensure_enabled(config),
-         {:ok, adapter_module} <- ensure_adapter_module(config) do
-      adapter_opts = BridgeConfig.adapter_opts(config, opts)
-
+         {:ok, adapter_module} <- ensure_adapter_module(config),
+         {:ok, adapter_opts} <- SecretResolver.adapter_opts_for_config(instance_module, config, :payload, opts) do
       outcome =
         case normalize_payload_event(adapter_module, payload, adapter_opts) do
           {:ok, :noop} ->

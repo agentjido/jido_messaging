@@ -192,6 +192,45 @@ config :jido_chat_discord,
   discord_public_key: System.get_env("DISCORD_PUBLIC_KEY")
 ```
 
+### Durable Bridge Secret References
+
+Do not put tokens or passwords in `BridgeConfig.credentials`. Durable bridge
+configuration stores opaque references in `secret_refs`:
+
+```elixir
+{:ok, _bridge} =
+  MyApp.Messaging.put_bridge_config(%{
+    id: "telegram-main",
+    adapter_module: Jido.Chat.Telegram.Adapter,
+    secret_refs: %{token: "vault://chat/telegram-main/token"}
+  })
+```
+
+Configure a resolver. The resolver can use environment variables, application
+configuration, a vault, or another secret manager:
+
+```elixir
+defmodule MyApp.SecretResolver do
+  @behaviour Jido.Messaging.SecretResolver
+
+  @impl true
+  def resolve(reference, _context), do: MyApp.Vault.fetch(reference)
+end
+
+config MyApp.Messaging, secret_resolver: MyApp.SecretResolver
+```
+
+The runtime resolves each reference when an adapter operation starts. A secret
+rotation therefore does not change the bridge record. The operation receives
+the resolved values in its `:credentials` adapter option.
+
+Raw credentials are not accepted in new or updated bridge records. For an
+existing durable record, replace `credentials` with `secret_refs` before you
+enable the bridge. A legacy record with nonempty `credentials` returns
+`{:bridge_credentials_migration_required, bridge_id}`. A failed lookup returns
+`{:secret_resolution_failed, bridge_id, credential, category}` without the
+resolver error details.
+
 ### Ingress Wiring Pattern
 
 `jido_messaging` is now the shared ingress runtime:

@@ -15,6 +15,7 @@ defmodule Jido.Messaging.OutboundGateway.Partition do
   alias Jido.Messaging.MediaPolicy
   alias Jido.Messaging.OutboundGateway
   alias Jido.Messaging.Security
+  alias Jido.Messaging.SecretResolver
 
   @default_call_timeout 15_000
 
@@ -400,7 +401,12 @@ defmodule Jido.Messaging.OutboundGateway.Partition do
   defp adapter_opts(instance_module, request) do
     case ConfigStore.get_bridge_config(instance_module, request.bridge_id) do
       {:ok, %BridgeConfig{adapter_module: adapter_module} = config} when adapter_module == request.channel ->
-        {:ok, BridgeConfig.adapter_opts(config, request.opts)}
+        SecretResolver.adapter_opts_for_config(
+          instance_module,
+          config,
+          request.operation,
+          request.opts
+        )
 
       {:ok, %BridgeConfig{adapter_module: adapter_module}} ->
         {:error, {:bridge_adapter_mismatch, request.bridge_id, adapter_module, request.channel}}
