@@ -25,3 +25,13 @@ jobs:
       validate_hex_package: false
       docs_command: mix docs -f html
       test_command: mix test
+
+  optional-jido-ai:
+    name: Optional jido_ai example
+    uses: agentjido/github-actions/.github/workflows/jido-ci.yml@v5
+    secrets: inherit
+    with:
+      credo_command: mix credo --min-priority higher
+      validate_hex_package: false
+      docs_command: mix docs -f html
+      test_command: mix test.optional_jido_ai
