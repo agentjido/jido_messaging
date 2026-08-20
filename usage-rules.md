@@ -6,6 +6,14 @@ This document provides guidelines for AI assistants (Claude, Cursor, etc.) when 
 
 Jido Messaging is part of the Jido ecosystem - a framework for building intelligent agent systems. It provides messaging and notification infrastructure.
 
+## Author Identity
+
+Trusted application or runtime resolvers supply stable `Author.id` values.
+Ingest uses the value only when creating an unbound participant. Existing
+external bindings remain authoritative. Adapters must not infer stable identity,
+and ingest must not merge or rebind participants across external bindings or
+platforms.
+
 ## Code Generation Rules
 
 1. **Always use conventional commits** - Follow `type(scope): description` format

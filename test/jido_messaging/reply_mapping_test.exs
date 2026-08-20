@@ -157,6 +157,7 @@ defmodule Jido.Messaging.ReplyMappingTest do
       {:ok, reply_msg, _ctx} = Ingest.ingest_incoming(TestMessaging, MockChannel, "inst_reply", incoming_reply)
 
       assert reply_msg.reply_to_id == parent_msg.id
+      assert reply_msg.external_reply_to_id == "parent_ext_123"
       assert reply_msg.external_id == "reply_ext_456"
     end
 
@@ -172,6 +173,7 @@ defmodule Jido.Messaging.ReplyMappingTest do
       {:ok, message, _ctx} = Ingest.ingest_incoming(TestMessaging, MockChannel, "inst_orphan", incoming)
 
       assert message.reply_to_id == nil
+      assert message.external_reply_to_id == "nonexistent_parent"
     end
 
     test "reply_to_id is nil when no external_reply_to_id provided" do
