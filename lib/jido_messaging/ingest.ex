@@ -215,7 +215,7 @@ defmodule Jido.Messaging.Ingest do
            Security.verify_sender(messaging_module, channel_module, incoming, raw_payload, opts),
          {:ok, room} <- resolve_room(messaging_module, channel_type, bridge_id, incoming),
          {:ok, room_server} <- RoomSupervisor.get_or_start_room(messaging_module, room),
-         {:ok, participant} <- resolve_participant(messaging_module, channel_type, incoming),
+         {:ok, participant} <- resolve_participant(messaging_module, channel_type, bridge_id, incoming),
          msg_context <- build_msg_context(channel_module, bridge_id, incoming, room, participant, opts),
          {:ok, thread} <-
            resolve_thread_scope(
@@ -341,7 +341,7 @@ defmodule Jido.Messaging.Ingest do
     )
   end
 
-  defp resolve_participant(messaging_module, channel_type, incoming) do
+  defp resolve_participant(messaging_module, channel_type, bridge_id, incoming) do
     external_id = to_string(incoming.external_user_id)
 
     participant_attrs = %{
@@ -354,6 +354,7 @@ defmodule Jido.Messaging.Ingest do
 
     messaging_module.get_or_create_participant_by_external_id(
       channel_type,
+      bridge_id,
       external_id,
       participant_attrs
     )

@@ -188,6 +188,63 @@ defmodule Jido.Messaging.Persistence.SQLiteTest do
     Enum.each(states, fn state -> :ok = Sqlite3.close(state.db) end)
   end
 
+  test "scopes provider identities by bridge and supports explicit links" do
+    path = tmp_path("sqlite-participant-scope")
+    {:ok, state} = SQLite.init(path: path)
+
+    assert {:ok, first} =
+             SQLite.get_or_create_participant_by_external_binding(
+               state,
+               :slack,
+               "workspace-one",
+               "user-1",
+               %{type: :human, identity: %{name: "First"}}
+             )
+
+    assert {:ok, second} =
+             SQLite.get_or_create_participant_by_external_binding(
+               state,
+               :slack,
+               "workspace-two",
+               "user-1",
+               %{type: :human, identity: %{name: "Second"}}
+             )
+
+    refute first.id == second.id
+
+    assert :ok =
+             SQLite.bind_participant_external_id(
+               state,
+               first.id,
+               :slack,
+               "workspace-three",
+               "user-linked"
+             )
+
+    assert {:ok, linked} =
+             SQLite.get_or_create_participant_by_external_binding(
+               state,
+               :slack,
+               "workspace-three",
+               "user-linked",
+               %{}
+             )
+
+    assert linked.id == first.id
+
+    assert {:error, {:external_identity_conflict, first_id}} =
+             SQLite.bind_participant_external_id(
+               state,
+               second.id,
+               :slack,
+               "workspace-three",
+               "user-linked"
+             )
+
+    assert first_id == first.id
+    :ok = Sqlite3.close(state.db)
+  end
+
   test "normalizes non-string external binding values without crashing" do
     path = tmp_path("sqlite-normalized-bindings")
     {:ok, state} = SQLite.init(path: path)

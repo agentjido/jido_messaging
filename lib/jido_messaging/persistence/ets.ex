@@ -367,7 +367,12 @@ defmodule Jido.Messaging.Persistence.ETS do
 
   @impl true
   def get_or_create_participant_by_external_id(state, channel, external_id, attrs) do
-    binding_key = {channel, external_id}
+    get_or_create_participant_by_external_binding(state, channel, "default", external_id, attrs)
+  end
+
+  @impl true
+  def get_or_create_participant_by_external_binding(state, channel, bridge_id, external_id, attrs) do
+    binding_key = participant_binding_key(channel, bridge_id, external_id)
 
     case :ets.lookup(state.participant_bindings, binding_key) do
       [{^binding_key, participant_id}] ->
@@ -378,7 +383,14 @@ defmodule Jido.Messaging.Persistence.ETS do
           {:error, :not_found} ->
             # Remove stale binding only if it still points at the missing participant.
             true = :ets.delete_object(state.participant_bindings, {binding_key, participant_id})
-            get_or_create_participant_by_external_id(state, channel, external_id, attrs)
+
+            get_or_create_participant_by_external_binding(
+              state,
+              channel,
+              bridge_id,
+              external_id,
+              attrs
+            )
         end
 
       [] ->
@@ -392,6 +404,27 @@ defmodule Jido.Messaging.Persistence.ETS do
           false ->
             resolve_participant_binding_race(state, binding_key, participant.id)
         end
+    end
+  end
+
+  @impl true
+  def bind_participant_external_id(state, participant_id, channel, bridge_id, external_id) do
+    with {:ok, _participant} <- get_participant(state, participant_id) do
+      binding_key = participant_binding_key(channel, bridge_id, external_id)
+
+      case :ets.insert_new(state.participant_bindings, {binding_key, participant_id}) do
+        true ->
+          :ok
+
+        false ->
+          case :ets.lookup(state.participant_bindings, binding_key) do
+            [{^binding_key, ^participant_id}] ->
+              :ok
+
+            [{^binding_key, existing_participant_id}] ->
+              {:error, {:external_identity_conflict, existing_participant_id}}
+          end
+      end
     end
   end
 
@@ -853,6 +886,10 @@ defmodule Jido.Messaging.Persistence.ETS do
   defp normalize_term(value) when is_atom(value), do: Atom.to_string(value)
   defp normalize_term(value) when is_integer(value), do: Integer.to_string(value)
   defp normalize_term(value), do: inspect(value)
+
+  defp participant_binding_key(channel, bridge_id, external_id) do
+    {channel, normalize_term(bridge_id), normalize_term(external_id)}
+  end
 
   defp build_bound_room(channel, bridge_id, external_id, attrs) do
     Room.new(
