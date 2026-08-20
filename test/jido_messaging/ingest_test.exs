@@ -219,6 +219,47 @@ defmodule Jido.Messaging.IngestTest do
       assert is_atom(context.instance_module)
     end
 
+    test "accepts different messages when the provider does not supply message IDs" do
+      first = %{
+        external_room_id: "chat_without_message_ids",
+        external_user_id: "user_without_message_ids",
+        text: "First",
+        external_message_id: nil
+      }
+
+      second = %{first | text: "Second"}
+
+      assert {:ok, first_message, _context} =
+               Ingest.ingest_incoming(TestMessaging, MockChannel, "no_id_inst", first)
+
+      assert {:ok, second_message, context} =
+               Ingest.ingest_incoming(TestMessaging, MockChannel, "no_id_inst", second)
+
+      refute first_message.id == second_message.id
+      assert {:ok, messages} = TestMessaging.list_messages(context.room.id)
+      assert Enum.map(messages, &hd(&1.content).text) == ["First", "Second"]
+    end
+
+    test "releases the dedupe claim after a temporary ingest failure" do
+      incoming = %{
+        external_room_id: "chat_retry_after_failure",
+        external_user_id: "user_retry_after_failure",
+        text: "Retry me",
+        external_message_id: "provider-message-1"
+      }
+
+      assert {:error, {:policy_denied, :gating, :denied, "Denied by gater"}} =
+               Ingest.ingest_incoming(TestMessaging, MockChannel, "retry_inst", incoming, gaters: [DenyGater])
+
+      assert {:ok, message, _context} =
+               Ingest.ingest_incoming(TestMessaging, MockChannel, "retry_inst", incoming)
+
+      assert message.external_id == "provider-message-1"
+
+      assert {:ok, :duplicate} =
+               Ingest.ingest_incoming(TestMessaging, MockChannel, "retry_inst", incoming)
+    end
+
     test "reuses existing room for same external binding" do
       incoming = %{
         external_room_id: "chat_same",
