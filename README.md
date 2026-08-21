@@ -192,6 +192,70 @@ session disconnects. The helper emits `jido.messaging.room.participant_joined`,
 `jido.messaging.room.participant_left`, and
 `jido.messaging.participant.presence_changed` signals.
 
+### Scoped Chat Actions
+
+`Jido.Messaging.ChatActions` provides reusable `Jido.Action` modules for chat
+reads, messages, moderation, typing, direct messages, and provider
+subscriptions. It filters each set with the resolved adapter capability matrix.
+
+```elixir
+alias Jido.Chat.MessagingTarget
+alias Jido.Messaging.ChatActions
+alias Jido.Messaging.ChatActions.{Policy, Scope}
+
+target =
+  MessagingTarget.for_thread("channel-123", "thread-456",
+    bridge_id: "slack-main",
+    channel_type: :slack
+  )
+
+scope =
+  Scope.thread("slack-main", :slack, "channel-123", "thread-456",
+    actor_id: "participant-789"
+  )
+
+# Visible writes need approval unless a narrow rule allows them.
+policy =
+  Policy.allow([:post_message],
+    actor: "participant-789",
+    channel: "channel-123",
+    thread: "thread-456"
+  )
+
+action_context =
+  ChatActions.context(MyApp.Messaging, %{
+    scope: scope,
+    policy: policy,
+    actor_id: "participant-789"
+  })
+
+{:ok, tools} = ChatActions.actions_for(MyApp.Messaging, target, :messenger)
+
+{:ok, %{status: :ok, data: response}} =
+  Jido.Exec.run(
+    Jido.Messaging.ChatActions.Messenger.PostMessage,
+    %{target: Map.from_struct(target), text: "Hello"},
+    action_context
+  )
+```
+
+Named presets are `:reader`, `:messenger`, `:moderator`, and `:all`. You can
+also pass a custom list of action modules to `actions_for/3`. Unsupported
+operations return `status: :error` before an adapter call. Out-of-scope work
+returns `status: :denied`. A visible write that has no matching allow rule
+returns `status: :approval_required` with audit context.
+
+Use `Scope.channel/4`, `Scope.thread/5`, or `Scope.strict_thread/5` for normal
+conversation work. Strict-thread scope does not permit its parent channel or a
+sibling thread. Unbounded reads, direct messages, and subscription control use
+an explicit `Scope.workspace/2`. `ChatActions.context/3` can infer a channel or
+thread scope from a normalized active message context.
+
+Scopes and policies support `to_map/1` and `from_map/1` for storage or job
+queues. Pass the restored values in Jido Action context. `Jido.Exec.run_async/4`
+preserves this context. Provider credentials and clients stay in trusted bridge
+configuration. They do not appear in action input or output schemas.
+
 ## Adapter Integration (Telegram + Discord)
 
 `jido_messaging` no longer ships in-package Telegram/Discord handlers.  
