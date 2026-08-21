@@ -204,7 +204,7 @@ defmodule Jido.Messaging.IngestTest do
     test "uses normalized author identity and stable id for participant, sender, and context" do
       incoming = %{
         external_room_id: "author_room",
-        author: %Jido.Chat.Author{
+        author: %{
           id: "author_stable",
           user_id: "provider_user",
           user_name: "stable_user",
@@ -240,7 +240,7 @@ defmodule Jido.Messaging.IngestTest do
       bot = %{
         external_room_id: "bot_room",
         external_user_id: "bot_provider",
-        author: %Jido.Chat.Author{id: "bot_stable", user_id: "bot_provider", user_name: "bot", is_bot: true},
+        author: %{id: "bot_stable", user_id: "bot_provider", user_name: "bot", is_bot: true},
         text: "Bot"
       }
 
@@ -253,7 +253,7 @@ defmodule Jido.Messaging.IngestTest do
       system = %{
         external_room_id: "system_room",
         external_user_id: "system_provider",
-        author: %Jido.Chat.Author{
+        author: %{
           id: "system_stable",
           user_id: "system_provider",
           user_name: "system",
@@ -274,7 +274,7 @@ defmodule Jido.Messaging.IngestTest do
       incoming = %{
         external_room_id: "blank_author_room",
         external_user_id: "blank_provider",
-        author: %Jido.Chat.Author{id: "  ", user_id: "blank_provider", user_name: "blank"},
+        author: %{id: "  ", user_id: "blank_provider", user_name: "blank"},
         text: "First"
       }
 
@@ -304,7 +304,7 @@ defmodule Jido.Messaging.IngestTest do
     test "nil author id keeps generated IDs and does not merge equal display names" do
       base = %{
         external_room_id: "same_name_room",
-        author: %Jido.Chat.Author{id: nil, user_id: "provider_one", user_name: "same", full_name: "Same Name"},
+        author: %{id: nil, user_id: "provider_one", user_name: "same", full_name: "Same Name"},
         text: "Same name"
       }
 
@@ -321,7 +321,7 @@ defmodule Jido.Messaging.IngestTest do
       second_input =
         base
         |> Map.put(:external_user_id, "provider_two")
-        |> Map.put(:author, %Jido.Chat.Author{
+        |> Map.put(:author, %{
           id: nil,
           user_id: "provider_two",
           user_name: "same",
@@ -337,7 +337,7 @@ defmodule Jido.Messaging.IngestTest do
       first = %{
         external_room_id: "conflict_room",
         external_user_id: "conflict_provider",
-        author: %Jido.Chat.Author{id: "original_stable", user_id: "conflict_provider", user_name: "original"},
+        author: %{id: "original_stable", user_id: "conflict_provider", user_name: "original"},
         text: "First",
         external_message_id: "conflict_first"
       }
@@ -346,7 +346,7 @@ defmodule Jido.Messaging.IngestTest do
 
       second = %{
         first
-        | author: %Jido.Chat.Author{id: "other_stable", user_id: "conflict_provider", user_name: "other", is_bot: true},
+        | author: %{id: "other_stable", user_id: "conflict_provider", user_name: "other", is_bot: true},
           text: "Second",
           external_message_id: "conflict_second"
       }
@@ -1092,7 +1092,7 @@ defmodule Jido.Messaging.IngestTest do
     test "author-only identity rejects a conflicting sender claim before persistence" do
       incoming = %{
         external_room_id: "chat_security_author_deny",
-        author: %Jido.Chat.Author{id: "author_stable", user_id: "trusted_author", user_name: "trusted_author"},
+        author: %{id: "author_stable", user_id: "trusted_author", user_name: "trusted_author"},
         text: "spoof attempt",
         external_message_id: 7004,
         raw: %{claimed_sender_id: "spoofed_user"}
