@@ -201,6 +201,164 @@ defmodule Jido.Messaging.IngestTest do
   end
 
   describe "ingest_incoming/4" do
+    test "uses normalized author identity and stable id for participant, sender, and context" do
+      incoming = %{
+        external_room_id: "author_room",
+        author: %{
+          id: "author_stable",
+          user_id: "provider_user",
+          user_name: "stable_user",
+          full_name: "Stable User",
+          email: "stable@example.com",
+          is_bot: false,
+          is_me: false,
+          is_system: false,
+          metadata: %{}
+        },
+        text: "Hello",
+        external_message_id: "author_message"
+      }
+
+      assert {:ok, message, context} =
+               Ingest.ingest_incoming(TestMessaging, MockChannel, "author_instance", incoming)
+
+      assert context.participant.id == "author_stable"
+      assert message.sender_id == "author_stable"
+      assert context.participant_id == "author_stable"
+      assert context.msg_context.external_user_id == "provider_user"
+
+      assert context.participant.identity == %{
+               username: "stable_user",
+               display_name: "Stable User",
+               email: "stable@example.com"
+             }
+
+      assert context.participant.type == :human
+    end
+
+    test "maps bot and system author classifications while keeping runtime role user" do
+      bot = %{
+        external_room_id: "bot_room",
+        external_user_id: "bot_provider",
+        author: %{id: "bot_stable", user_id: "bot_provider", user_name: "bot", is_bot: true},
+        text: "Bot"
+      }
+
+      assert {:ok, bot_message, bot_context} =
+               Ingest.ingest_incoming(TestMessaging, MockChannel, "bot_instance", bot)
+
+      assert bot_context.participant.type == :agent
+      assert bot_message.role == :user
+
+      system = %{
+        external_room_id: "system_room",
+        external_user_id: "system_provider",
+        author: %{
+          id: "system_stable",
+          user_id: "system_provider",
+          user_name: "system",
+          is_bot: true,
+          is_system: true
+        },
+        text: "System"
+      }
+
+      assert {:ok, system_message, system_context} =
+               Ingest.ingest_incoming(TestMessaging, MockChannel, "system_instance", system)
+
+      assert system_context.participant.type == :system
+      assert system_message.role == :user
+    end
+
+    test "keeps generated id and external binding when stable author id is blank" do
+      incoming = %{
+        external_room_id: "blank_author_room",
+        external_user_id: "blank_provider",
+        author: %{id: "  ", user_id: "blank_provider", user_name: "blank"},
+        text: "First"
+      }
+
+      assert {:ok, first, _} = Ingest.ingest_incoming(TestMessaging, MockChannel, "blank_instance", incoming)
+      assert is_binary(first.sender_id) and first.sender_id != ""
+      refute first.sender_id == "  "
+
+      incoming = Map.merge(incoming, %{text: "Second", external_message_id: "second"})
+      assert {:ok, second, _} = Ingest.ingest_incoming(TestMessaging, MockChannel, "blank_instance", incoming)
+      assert second.sender_id == first.sender_id
+    end
+
+    test "legacy top-level identity remains supported" do
+      incoming = %{
+        external_room_id: "legacy_author_room",
+        external_user_id: "legacy_provider",
+        username: "legacy_user",
+        display_name: "Legacy User",
+        text: "Legacy"
+      }
+
+      assert {:ok, message, context} = Ingest.ingest_incoming(TestMessaging, MockChannel, "legacy_instance", incoming)
+      assert message.sender_id == context.participant.id
+      assert context.participant.identity == %{username: "legacy_user", display_name: "Legacy User"}
+    end
+
+    test "nil author id keeps generated IDs and does not merge equal display names" do
+      base = %{
+        external_room_id: "same_name_room",
+        author: %{id: nil, user_id: "provider_one", user_name: "same", full_name: "Same Name"},
+        text: "Same name"
+      }
+
+      assert {:ok, first, _} =
+               Ingest.ingest_incoming(
+                 TestMessaging,
+                 MockChannel,
+                 "same_name_instance",
+                 Map.put(base, :external_user_id, "provider_one")
+               )
+
+      assert is_binary(first.sender_id) and first.sender_id != ""
+
+      second_input =
+        base
+        |> Map.put(:external_user_id, "provider_two")
+        |> Map.put(:author, %{
+          id: nil,
+          user_id: "provider_two",
+          user_name: "same",
+          full_name: "Same Name"
+        })
+        |> Map.put(:external_message_id, "same_name_second")
+
+      assert {:ok, second, _} = Ingest.ingest_incoming(TestMessaging, MockChannel, "same_name_instance", second_input)
+      assert second.sender_id != first.sender_id
+    end
+
+    test "existing external binding keeps original stable id and type" do
+      first = %{
+        external_room_id: "conflict_room",
+        external_user_id: "conflict_provider",
+        author: %{id: "original_stable", user_id: "conflict_provider", user_name: "original"},
+        text: "First",
+        external_message_id: "conflict_first"
+      }
+
+      assert {:ok, first_message, _} = Ingest.ingest_incoming(TestMessaging, MockChannel, "conflict_instance", first)
+
+      second = %{
+        first
+        | author: %{id: "other_stable", user_id: "conflict_provider", user_name: "other", is_bot: true},
+          text: "Second",
+          external_message_id: "conflict_second"
+      }
+
+      assert {:ok, second_message, second_context} =
+               Ingest.ingest_incoming(TestMessaging, MockChannel, "conflict_instance", second)
+
+      assert second_message.sender_id == first_message.sender_id
+      assert second_context.participant.id == "original_stable"
+      assert second_context.participant.type == :human
+    end
+
     test "creates room, participant, and message" do
       incoming = %{
         external_room_id: "chat_123",
@@ -929,6 +1087,24 @@ defmodule Jido.Messaging.IngestTest do
                TestMessaging.get_room_by_external_binding(:mock, "security_inst", "chat_security_deny")
 
       assert {:error, :not_found} = TestMessaging.get_message_by_external_id(:mock, "security_inst", 7002)
+    end
+
+    test "author-only identity rejects a conflicting sender claim before persistence" do
+      incoming = %{
+        external_room_id: "chat_security_author_deny",
+        author: %{id: "author_stable", user_id: "trusted_author", user_name: "trusted_author"},
+        text: "spoof attempt",
+        external_message_id: 7004,
+        raw: %{claimed_sender_id: "spoofed_user"}
+      }
+
+      assert {:error, {:security_denied, :verify, :sender_claim_mismatch, _description}} =
+               Ingest.ingest_incoming(TestMessaging, MockChannel, "security_inst", incoming)
+
+      assert {:error, :not_found} =
+               TestMessaging.get_room_by_external_binding(:mock, "security_inst", "chat_security_author_deny")
+
+      assert {:error, :not_found} = TestMessaging.get_message_by_external_id(:mock, "security_inst", 7004)
     end
 
     test "security timeout policy deny is bounded and returns typed retry-class failure" do

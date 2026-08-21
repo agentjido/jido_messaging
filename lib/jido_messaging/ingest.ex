@@ -209,6 +209,7 @@ defmodule Jido.Messaging.Ingest do
          incoming,
          opts
        ) do
+    incoming = Map.put(incoming, :external_user_id, external_user_id(incoming))
     raw_payload = incoming_raw_payload(incoming)
 
     with {:ok, verify_result} <-
@@ -342,22 +343,58 @@ defmodule Jido.Messaging.Ingest do
   end
 
   defp resolve_participant(messaging_module, channel_type, bridge_id, incoming) do
-    external_id = to_string(incoming.external_user_id)
+    author = Map.get(incoming, :author)
+    external_id = external_user_id(incoming)
+    username = first_present(author_value(author, :user_name), Map.get(incoming, :username))
+    display_name = first_present(author_value(author, :full_name), Map.get(incoming, :display_name))
+    email = author_value(author, :email)
 
-    participant_attrs = %{
-      type: :human,
-      identity: %{
-        username: Map.get(incoming, :username),
-        display_name: Map.get(incoming, :display_name)
+    identity = %{username: username, display_name: display_name}
+    identity = if blank_value?(email), do: identity, else: Map.put(identity, :email, email)
+
+    participant_attrs =
+      %{
+        type: author_type(author),
+        identity: identity
       }
-    }
+      |> maybe_put_stable_author_id(author_value(author, :id))
 
     messaging_module.get_or_create_participant_by_external_id(
       channel_type,
       bridge_id,
-      external_id,
+      to_string(external_id),
       participant_attrs
     )
+  end
+
+  defp author_value(author, key) when is_map(author), do: Map.get(author, key) || Map.get(author, Atom.to_string(key))
+  defp author_value(_author, _key), do: nil
+
+  defp external_user_id(incoming) do
+    first_present(
+      Map.get(incoming, :external_user_id),
+      author_value(Map.get(incoming, :author), :user_id)
+    )
+  end
+
+  defp first_present(value, fallback) do
+    if blank_value?(value), do: fallback, else: value
+  end
+
+  defp blank_value?(nil), do: true
+  defp blank_value?(value) when is_binary(value), do: String.trim(value) == ""
+  defp blank_value?(_value), do: false
+
+  defp maybe_put_stable_author_id(attrs, author_id) do
+    if blank_value?(author_id), do: attrs, else: Map.put(attrs, :id, author_id)
+  end
+
+  defp author_type(author) do
+    cond do
+      author_value(author, :is_system) == true -> :system
+      author_value(author, :is_bot) == true -> :agent
+      true -> :human
+    end
   end
 
   defp build_message(messaging_module, room, participant, thread, incoming, channel_type, bridge_id, opts) do

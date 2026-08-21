@@ -452,6 +452,15 @@ Message Flow:
 }
 ```
 
+### Inbound author identity
+
+Trusted application or runtime code supplies the normalized `Jido.Chat.Author.id`.
+Ingest uses that ID only when it creates an unbound participant. An existing
+external binding remains authoritative, including its participant ID and type.
+Adapters do not infer stable identity and ingest does not merge participants
+across bindings or platforms. Runtime messages keep role `:user`; author type
+(`:human`, `:agent`, or `:system`) is stored on the participant.
+
 ## Documentation
 
 Full documentation is available at [HexDocs](https://hexdocs.pm/jido_messaging).
