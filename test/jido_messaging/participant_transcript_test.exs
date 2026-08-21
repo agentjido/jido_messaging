@@ -131,6 +131,24 @@ defmodule Jido.Messaging.ParticipantTranscriptTest do
                results: [leaked_entry]
              )
 
+    nested_room_leak = %{entry | message: %{entry.message | room_id: records.denied_room.id}}
+
+    assert {:error, :search_projection_scope_violation} =
+             ETSMessaging.search_transcript("nested leak", scope,
+               projection: Projection,
+               test_pid: self(),
+               results: [nested_room_leak]
+             )
+
+    mismatched_id = %{entry | message: %{entry.message | id: "different-message"}}
+
+    assert {:error, :search_projection_scope_violation} =
+             ETSMessaging.search_transcript("mismatched id", scope,
+               projection: Projection,
+               test_pid: self(),
+               results: [mismatched_id]
+             )
+
     assert :ok =
              ETSMessaging.rebuild_transcript_search(records.participant.id, scope,
                projection: Projection,
@@ -140,6 +158,57 @@ defmodule Jido.Messaging.ParticipantTranscriptTest do
 
     assert_receive {:projection_rebuild, entries, %{instance_module: ETSMessaging, scope: ^scope}}
     assert Enum.map(entries, & &1.canonical_message_id) == Enum.map(records.allowed_messages, & &1.id)
+  end
+
+  test "ETS and SQLite paginate messages with nullable timestamps" do
+    for messaging <- [ETSMessaging, SQLiteMessaging] do
+      prefix = messaging |> Module.split() |> List.last() |> String.downcase()
+      {:ok, room} = messaging.create_room(%{id: "#{prefix}-nullable-room", type: :group})
+
+      {:ok, participant} =
+        messaging.create_participant(%{
+          id: "#{prefix}-nullable-participant",
+          type: :human,
+          identity: %{name: "Nullable User"}
+        })
+
+      without_timestamp =
+        save_message(
+          messaging,
+          participant.id,
+          room.id,
+          "#{prefix}-nullable-message",
+          nil,
+          :slack,
+          "slack-main",
+          "nullable-provider-message"
+        )
+
+      with_timestamp =
+        save_message(
+          messaging,
+          participant.id,
+          room.id,
+          "#{prefix}-dated-message",
+          DateTime.from_unix!(1_700_000_000),
+          :slack,
+          "slack-main",
+          "dated-provider-message"
+        )
+
+      assert {:ok, scope} = messaging.history_scope([room.id])
+      assert {:ok, entries} = messaging.participant_transcript(participant.id, scope, limit: 10)
+
+      assert Enum.map(entries, & &1.canonical_message_id) == [without_timestamp.id, with_timestamp.id]
+
+      assert {:ok, [before_entry]} =
+               messaging.participant_transcript(participant.id, scope,
+                 before: with_timestamp.id,
+                 limit: 10
+               )
+
+      assert before_entry.canonical_message_id == without_timestamp.id
+    end
   end
 
   defp seed_transcript(messaging) do

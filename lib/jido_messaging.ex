@@ -2280,8 +2280,8 @@ defmodule Jido.Messaging do
     allowed_rooms = MapSet.new(scope.room_ids)
 
     if Enum.all?(entries, fn
-         %Jido.Messaging.TranscriptEntry{instance_module: ^instance_module, room_id: room_id} ->
-           MapSet.member?(allowed_rooms, room_id)
+         %Jido.Messaging.TranscriptEntry{instance_module: ^instance_module, room_id: room_id} = entry ->
+           MapSet.member?(allowed_rooms, room_id) and projection_entry_consistent?(entry)
 
          _other ->
            false
@@ -2295,6 +2295,23 @@ defmodule Jido.Messaging do
   defp validate_projection_results(_entries, _instance_module, _scope) do
     {:error, :invalid_search_projection_result}
   end
+
+  defp projection_entry_consistent?(%Jido.Messaging.TranscriptEntry{
+         canonical_message_id: canonical_message_id,
+         canonical_participant_id: canonical_participant_id,
+         room_id: room_id,
+         provider_message_id: provider_message_id,
+         inserted_at: inserted_at,
+         message: %Message{} = message
+       }) do
+    message.id == canonical_message_id and
+      message.sender_id == canonical_participant_id and
+      message.room_id == room_id and
+      message.external_id == provider_message_id and
+      message.inserted_at == inserted_at
+  end
+
+  defp projection_entry_consistent?(_entry), do: false
 
   defp collect_transcript(instance_module, runtime, participant_id, scope, opts) do
     batch_size = opts |> Keyword.get(:batch_size, 500) |> normalize_transcript_batch_size()

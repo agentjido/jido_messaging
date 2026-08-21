@@ -53,7 +53,9 @@ defmodule Jido.Messaging.Transcript do
     end
   end
 
-  defp order_key(message) do
-    {DateTime.to_unix(message.inserted_at, :microsecond), message.id}
+  defp order_key(%Message{inserted_at: %DateTime{} = inserted_at, id: id}) do
+    {DateTime.to_iso8601(inserted_at), id}
   end
+
+  defp order_key(%Message{id: id}), do: {"", id}
 end

@@ -118,6 +118,7 @@ defmodule Jido.Messaging.Persistence.SQLite do
     persist(state, "message", message.id, message,
       room_id: message.room_id,
       thread_id: message.thread_id,
+      sender_id: message.sender_id,
       inserted_at: message.inserted_at,
       channel: metadata_value(metadata, :channel),
       bridge_id: metadata_value(metadata, :bridge_id),
@@ -218,23 +219,105 @@ defmodule Jido.Messaging.Persistence.SQLite do
 
   def get_participant_messages(state, participant_id, room_ids, opts)
       when is_binary(participant_id) and is_list(room_ids) and is_list(opts) do
-    room_params = room_ids |> Enum.with_index(2) |> Enum.map(fn {_room_id, index} -> "?#{index}" end)
+    limit = Keyword.get(opts, :limit, 50)
+
+    if is_integer(limit) and limit > 0 do
+      query_participant_messages(state, participant_id, room_ids, opts, limit)
+    else
+      {:error, :invalid_limit}
+    end
+  end
+
+  defp query_participant_messages(state, participant_id, room_ids, opts, limit) do
+    room_placeholders =
+      room_ids
+      |> Enum.with_index(3)
+      |> Enum.map_join(", ", fn {_room_id, index} -> "?#{index}" end)
+
+    where = "kind = ?1 AND sender_id = ?2 AND room_id IN (#{room_placeholders})"
+    params = ["message", participant_id | room_ids]
+    {where, params} = with_instance_scope(state, where, params)
+
+    case participant_cursor_direction(opts) do
+      :none ->
+        query_participant_page(state.db, where, params, "DESC", limit, true)
+
+      {:before, cursor_id} ->
+        with {:ok, {inserted_at, id}} <- participant_cursor(state.db, where, params, cursor_id) do
+          timestamp_param = length(params) + 1
+          id_param = timestamp_param + 1
+
+          cursor_where =
+            "#{where} AND (COALESCE(inserted_at, '') < ?#{timestamp_param} OR " <>
+              "(COALESCE(inserted_at, '') = ?#{timestamp_param} AND id < ?#{id_param}))"
+
+          query_participant_page(state.db, cursor_where, params ++ [inserted_at, id], "DESC", limit, true)
+        end
+
+      {:after, cursor_id} ->
+        with {:ok, {inserted_at, id}} <- participant_cursor(state.db, where, params, cursor_id) do
+          timestamp_param = length(params) + 1
+          id_param = timestamp_param + 1
+
+          cursor_where =
+            "#{where} AND (COALESCE(inserted_at, '') > ?#{timestamp_param} OR " <>
+              "(COALESCE(inserted_at, '') = ?#{timestamp_param} AND id > ?#{id_param}))"
+
+          query_participant_page(state.db, cursor_where, params ++ [inserted_at, id], "ASC", limit, false)
+        end
+
+      {:error, _reason} = error ->
+        error
+    end
+  end
+
+  defp participant_cursor(db, where, params, cursor_id) do
+    cursor_param = length(params) + 1
 
     with {:ok, rows} <-
            query_all(
-             state.db,
+             db,
+             """
+             SELECT COALESCE(inserted_at, ''), id
+             FROM #{@table}
+             WHERE #{where} AND id = ?#{cursor_param}
+             LIMIT 1
+             """,
+             params ++ [cursor_id]
+           ) do
+      case rows do
+        [[inserted_at, id]] -> {:ok, {inserted_at, id}}
+        [] -> {:error, :cursor_not_found}
+      end
+    end
+  end
+
+  defp query_participant_page(db, where, params, direction, limit, reverse?) do
+    limit_param = length(params) + 1
+
+    with {:ok, rows} <-
+           query_all(
+             db,
              """
              SELECT payload
              FROM #{@table}
-             WHERE kind = ?1 AND room_id IN (#{Enum.join(room_params, ", ")})
-             ORDER BY inserted_at ASC, id ASC
+             WHERE #{where}
+             ORDER BY COALESCE(inserted_at, '') #{direction}, id #{direction}
+             LIMIT ?#{limit_param}
              """,
-             ["message" | room_ids]
+             params ++ [limit]
            ) do
-      rows
-      |> decode_rows()
-      |> Enum.filter(&(&1.sender_id == participant_id))
-      |> Jido.Messaging.Transcript.paginate(opts)
+      messages = decode_rows(rows)
+      {:ok, if(reverse?, do: Enum.reverse(messages), else: messages)}
+    end
+  end
+
+  defp participant_cursor_direction(opts) do
+    case {Keyword.get(opts, :before), Keyword.get(opts, :after)} do
+      {nil, nil} -> :none
+      {before, nil} when is_binary(before) and before != "" -> {:before, before}
+      {nil, after_cursor} when is_binary(after_cursor) and after_cursor != "" -> {:after, after_cursor}
+      {_before, _after_cursor} -> {:error, :invalid_cursor_options}
     end
   end
 
@@ -595,17 +678,23 @@ defmodule Jido.Messaging.Persistence.SQLite do
            PRAGMA journal_mode = WAL;
            PRAGMA synchronous = NORMAL;
            """),
-         {:ok, columns} <- query_all(db, "PRAGMA table_info(#{@table})", []) do
-      cond do
-        columns == [] ->
-          with :ok <- exec(db, create_table_sql()), do: migrate_binding_indexes(db)
+         {:ok, columns} <- query_all(db, "PRAGMA table_info(#{@table})", []),
+         :ok <- migrate_schema(db, columns, instance_id),
+         :ok <- ensure_sender_id_column(db),
+         :ok <- backfill_message_sender_ids(db) do
+      create_history_index(db)
+    end
+  end
 
-        Enum.any?(columns, fn [_cid, name | _rest] -> name == "instance_id" end) ->
-          migrate_binding_indexes(db)
+  defp migrate_schema(db, [], _instance_id) do
+    with :ok <- exec(db, create_table_sql()), do: migrate_binding_indexes(db)
+  end
 
-        true ->
-          migrate_legacy_table(db, instance_id)
-      end
+  defp migrate_schema(db, columns, instance_id) do
+    if Enum.any?(columns, fn [_cid, name | _rest] -> name == "instance_id" end) do
+      migrate_binding_indexes(db)
+    else
+      migrate_legacy_table(db, instance_id)
     end
   end
 
@@ -669,6 +758,7 @@ defmodule Jido.Messaging.Persistence.SQLite do
       id TEXT NOT NULL,
       room_id TEXT,
       thread_id TEXT,
+      sender_id TEXT,
       inserted_at TEXT,
       channel TEXT,
       bridge_id TEXT,
@@ -741,6 +831,49 @@ defmodule Jido.Messaging.Persistence.SQLite do
     """)
   end
 
+  defp ensure_sender_id_column(db) do
+    with {:ok, columns} <- query_all(db, "PRAGMA table_info(#{@table})", []) do
+      if Enum.any?(columns, fn [_index, name | _rest] -> name == "sender_id" end) do
+        :ok
+      else
+        exec(db, "ALTER TABLE #{@table} ADD COLUMN sender_id TEXT")
+      end
+    end
+  end
+
+  defp backfill_message_sender_ids(db) do
+    with {:ok, rows} <-
+           query_all(
+             db,
+             "SELECT instance_id, id, payload FROM #{@table} WHERE kind = 'message' AND sender_id IS NULL",
+             []
+           ) do
+      Enum.reduce_while(rows, :ok, fn [instance_id, id, payload], :ok ->
+        case :erlang.binary_to_term(payload) do
+          %Message{sender_id: sender_id} ->
+            case run(
+                   db,
+                   "UPDATE #{@table} SET sender_id = ?1 WHERE instance_id = ?2 AND kind = 'message' AND id = ?3",
+                   [sender_id, instance_id, id]
+                 ) do
+              :ok -> {:cont, :ok}
+              {:error, _reason} = error -> {:halt, error}
+            end
+
+          _other ->
+            {:cont, :ok}
+        end
+      end)
+    end
+  end
+
+  defp create_history_index(db) do
+    exec(db, """
+    CREATE INDEX IF NOT EXISTS #{@table}_participant_history_idx
+      ON #{@table} (instance_id, kind, sender_id, inserted_at, id);
+    """)
+  end
+
   defp persist(state, kind, id, record, opts \\ []) do
     with :ok <- upsert_record(state, kind, id, record, opts) do
       {:ok, record}
@@ -752,11 +885,12 @@ defmodule Jido.Messaging.Persistence.SQLite do
       state.db,
       """
       INSERT INTO #{@table}
-        (instance_id, kind, id, room_id, thread_id, inserted_at, channel, bridge_id, external_id, payload)
-      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+        (instance_id, kind, id, room_id, thread_id, sender_id, inserted_at, channel, bridge_id, external_id, payload)
+      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
       ON CONFLICT(instance_id, kind, id) DO UPDATE SET
         room_id = excluded.room_id,
         thread_id = excluded.thread_id,
+        sender_id = excluded.sender_id,
         inserted_at = excluded.inserted_at,
         channel = excluded.channel,
         bridge_id = excluded.bridge_id,
@@ -769,6 +903,7 @@ defmodule Jido.Messaging.Persistence.SQLite do
         id,
         Keyword.get(opts, :room_id),
         Keyword.get(opts, :thread_id),
+        Keyword.get(opts, :sender_id),
         format_datetime(Keyword.get(opts, :inserted_at)),
         opts |> Keyword.get(:channel) |> normalize_nullable(),
         opts |> Keyword.get(:bridge_id) |> normalize_nullable(),

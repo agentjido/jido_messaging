@@ -161,7 +161,11 @@ Full-text search is optional. Configure a module that implements
 projection always receives the instance and `HistoryScope`. Canonical messages
 remain the source of truth. Use `rebuild_transcript_search/3` to page through
 canonical history and replace the projection after data loss or a projection
-schema change. Small deployments can omit a projection.
+schema change. The core does not call projection `upsert/3` or `delete/3`
+callbacks from low-level persistence writes. Applications that maintain an
+incremental index must call those callbacks from their committed message event
+consumer. This keeps a failed optional index from changing canonical message
+commit behavior. Small deployments can omit a projection.
 
 ### Presence Signals
 
