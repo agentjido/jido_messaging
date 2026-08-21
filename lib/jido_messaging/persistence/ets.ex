@@ -208,13 +208,56 @@ defmodule Jido.Messaging.Persistence.ETS do
           [] -> []
         end
       end)
-      |> Enum.sort_by(& &1.inserted_at, {:desc, DateTime})
       |> maybe_filter_thread(thread_id)
-      |> Enum.take(limit)
-      |> Enum.reverse()
+      |> Enum.sort_by(&message_order_key/1)
 
-    {:ok, messages}
+    paginate_messages(messages, opts, limit)
   end
+
+  defp paginate_messages(messages, opts, limit) do
+    case cursor_direction(opts) do
+      :none ->
+        {:ok, Enum.take(messages, -limit)}
+
+      {:before, cursor_id} ->
+        with {:ok, cursor} <- find_cursor(messages, cursor_id) do
+          page = messages |> Enum.filter(&(message_order_key(&1) < message_order_key(cursor))) |> Enum.take(-limit)
+          {:ok, page}
+        end
+
+      {:after, cursor_id} ->
+        with {:ok, cursor} <- find_cursor(messages, cursor_id) do
+          page = messages |> Enum.filter(&(message_order_key(&1) > message_order_key(cursor))) |> Enum.take(limit)
+          {:ok, page}
+        end
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp cursor_direction(opts) do
+    case {Keyword.get(opts, :before), Keyword.get(opts, :after)} do
+      {nil, nil} -> :none
+      {before, nil} when is_binary(before) and before != "" -> {:before, before}
+      {nil, after_cursor} when is_binary(after_cursor) and after_cursor != "" -> {:after, after_cursor}
+      {_before, _after_cursor} -> {:error, :invalid_cursor_options}
+    end
+  end
+
+  defp find_cursor(messages, cursor_id) do
+    case Enum.find(messages, &(&1.id == cursor_id)) do
+      nil -> {:error, :cursor_not_found}
+      cursor -> {:ok, cursor}
+    end
+  end
+
+  defp message_order_key(message) do
+    {message_timestamp_key(message.inserted_at), message.id}
+  end
+
+  defp message_timestamp_key(%DateTime{} = inserted_at), do: DateTime.to_iso8601(inserted_at)
+  defp message_timestamp_key(nil), do: ""
 
   @impl true
   def delete_message(state, message_id) do

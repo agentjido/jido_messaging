@@ -115,27 +115,76 @@ defmodule Jido.Messaging.Persistence.SQLite do
     limit = Keyword.get(opts, :limit, 50)
     thread_id = Keyword.get(opts, :thread_id)
 
-    {where, params} =
-      if is_binary(thread_id) do
-        {"kind = ?1 AND room_id = ?2 AND thread_id = ?3", ["message", room_id, thread_id]}
-      else
-        {"kind = ?1 AND room_id = ?2", ["message", room_id]}
-      end
+    with {:ok, direction} <- cursor_direction(opts),
+         {where, params} <- message_scope(room_id, thread_id),
+         {:ok, cursor} <- resolve_message_cursor(state, where, params, direction),
+         {where, params, order, reverse?} <- apply_message_cursor(where, params, direction, cursor),
+         {:ok, rows} <- query_message_page(state, where, params, order, limit) do
+      messages = decode_rows(rows)
+      {:ok, if(reverse?, do: Enum.reverse(messages), else: messages)}
+    end
+  end
+
+  defp cursor_direction(opts) do
+    case {Keyword.get(opts, :before), Keyword.get(opts, :after)} do
+      {nil, nil} -> {:ok, :none}
+      {before, nil} when is_binary(before) and before != "" -> {:ok, {:before, before}}
+      {nil, after_cursor} when is_binary(after_cursor) and after_cursor != "" -> {:ok, {:after, after_cursor}}
+      {_before, _after_cursor} -> {:error, :invalid_cursor_options}
+    end
+  end
+
+  defp message_scope(room_id, thread_id) when is_binary(thread_id) do
+    {"kind = ?1 AND room_id = ?2 AND thread_id = ?3", ["message", room_id, thread_id]}
+  end
+
+  defp message_scope(room_id, _thread_id), do: {"kind = ?1 AND room_id = ?2", ["message", room_id]}
+
+  defp resolve_message_cursor(_state, _where, _params, :none), do: {:ok, nil}
+
+  defp resolve_message_cursor(state, where, params, {_direction, cursor_id}) do
+    cursor_param = length(params) + 1
 
     with {:ok, rows} <-
            query_all(
              state.db,
-             """
-             SELECT payload
-             FROM #{@table}
-             WHERE #{where}
-             ORDER BY inserted_at DESC, id DESC
-             LIMIT ?#{length(params) + 1}
-             """,
-             params ++ [limit]
+             "SELECT COALESCE(inserted_at, ''), id FROM #{@table} WHERE #{where} AND id = ?#{cursor_param} LIMIT 1",
+             params ++ [cursor_id]
            ) do
-      {:ok, rows |> decode_rows() |> Enum.reverse()}
+      case rows do
+        [[inserted_at, id]] -> {:ok, {inserted_at, id}}
+        [] -> {:error, :cursor_not_found}
+      end
     end
+  end
+
+  defp apply_message_cursor(where, params, :none, nil), do: {where, params, "DESC", true}
+
+  defp apply_message_cursor(where, params, {direction, _cursor_id}, {inserted_at, id}) do
+    operator = if direction == :before, do: "<", else: ">"
+    timestamp_param = length(params) + 1
+    id_param = timestamp_param + 1
+
+    cursor_where =
+      "#{where} AND (COALESCE(inserted_at, '') #{operator} ?#{timestamp_param} OR " <>
+        "(COALESCE(inserted_at, '') = ?#{timestamp_param} AND id #{operator} ?#{id_param}))"
+
+    order = if direction == :before, do: "DESC", else: "ASC"
+    {cursor_where, params ++ [inserted_at, id], order, direction == :before}
+  end
+
+  defp query_message_page(state, where, params, order, limit) do
+    query_all(
+      state.db,
+      """
+      SELECT payload
+      FROM #{@table}
+      WHERE #{where}
+      ORDER BY COALESCE(inserted_at, '') #{order}, id #{order}
+      LIMIT ?#{length(params) + 1}
+      """,
+      params ++ [limit]
+    )
   end
 
   @impl true
