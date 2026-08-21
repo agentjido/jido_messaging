@@ -6,10 +6,11 @@ defmodule Jido.Messaging.SearchProjection do
   committed entries and can be rebuilt from `participant_transcript/3`. Search
   implementations must apply the supplied `HistoryScope` and instance module.
 
-  The messaging core calls `search/3` and `rebuild/3`. Applications call
-  `upsert/3` and `delete/3` from a committed message event consumer when they
-  need incremental indexing. Projection failure does not roll back canonical
-  persistence.
+  The messaging core calls `search/3` and `rebuild/3`. Applications use
+  `upsert_transcript_search/3` and `delete_transcript_search/4` from a committed
+  message event consumer when they need incremental indexing. These helpers
+  invoke `upsert/3` and `delete/3` after scope checks. Projection failure does
+  not roll back canonical persistence.
   """
 
   alias Jido.Messaging.{HistoryScope, TranscriptEntry}

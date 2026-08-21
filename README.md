@@ -163,8 +163,10 @@ remain the source of truth. Use `rebuild_transcript_search/3` to page through
 canonical history and replace the projection after data loss or a projection
 schema change. The core does not call projection `upsert/3` or `delete/3`
 callbacks from low-level persistence writes. Applications that maintain an
-incremental index must call those callbacks from their committed message event
-consumer. This keeps a failed optional index from changing canonical message
+incremental index call `upsert_transcript_search/3` and
+`delete_transcript_search/4` from their committed message event consumer. The
+helpers enforce the same instance and room scope before they invoke the
+projection. This keeps a failed optional index from changing canonical message
 commit behavior. Small deployments can omit a projection.
 
 ### Presence Signals

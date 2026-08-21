@@ -217,6 +217,22 @@ defmodule Jido.Messaging do
         Jido.Messaging.search_transcript(__MODULE__, query, scope, opts)
       end
 
+      @doc "Upsert one committed canonical message into the optional search projection"
+      def upsert_transcript_search(message_id, scope, opts \\ []) do
+        Jido.Messaging.upsert_transcript_search(
+          __MODULE__,
+          __jido_messaging__(:runtime),
+          message_id,
+          scope,
+          opts
+        )
+      end
+
+      @doc "Delete one committed canonical message from the optional search projection"
+      def delete_transcript_search(message_id, room_id, scope, opts \\ []) do
+        Jido.Messaging.delete_transcript_search(__MODULE__, message_id, room_id, scope, opts)
+      end
+
       @doc "Rebuild the optional search projection from canonical participant history"
       def rebuild_transcript_search(participant_id, scope, opts \\ []) do
         Jido.Messaging.rebuild_transcript_search(
@@ -903,6 +919,34 @@ defmodule Jido.Messaging do
            :ok <- validate_projection_results(entries, instance_module, scope) do
         {:ok, entries}
       end
+    end
+  end
+
+  @doc "Upsert one committed canonical message into a configured search projection."
+  def upsert_transcript_search(instance_module, runtime, message_id, scope, opts \\ [])
+      when is_atom(instance_module) and is_binary(message_id) and is_list(opts) do
+    with :ok <- validate_history_scope(instance_module, scope),
+         {:ok, projection} <- search_projection(instance_module, opts),
+         :ok <- validate_projection(projection),
+         {persistence, persistence_state} <- Runtime.get_persistence(runtime),
+         {:ok, message} <- persistence.get_message(persistence_state, message_id),
+         :ok <- validate_history_room(scope, message.room_id),
+         {:ok, participant} <- persistence.get_participant(persistence_state, message.sender_id) do
+      entry = Jido.Messaging.TranscriptEntry.new(instance_module, participant, message)
+      context = %{instance_module: instance_module, scope: scope}
+      projection.upsert(entry, context, Keyword.delete(opts, :projection))
+    end
+  end
+
+  @doc "Delete one committed canonical message from a configured search projection."
+  def delete_transcript_search(instance_module, message_id, room_id, scope, opts \\ [])
+      when is_atom(instance_module) and is_binary(message_id) and is_binary(room_id) and is_list(opts) do
+    with :ok <- validate_history_scope(instance_module, scope),
+         :ok <- validate_history_room(scope, room_id),
+         {:ok, projection} <- search_projection(instance_module, opts),
+         :ok <- validate_projection(projection) do
+      context = %{instance_module: instance_module, scope: scope}
+      projection.delete(message_id, context, Keyword.delete(opts, :projection))
     end
   end
 
@@ -2251,6 +2295,10 @@ defmodule Jido.Messaging do
   end
 
   defp validate_history_scope(_instance_module, _scope), do: {:error, :history_scope_required}
+
+  defp validate_history_room(scope, room_id) do
+    if room_id in scope.room_ids, do: :ok, else: {:error, :history_scope_violation}
+  end
 
   defp search_projection(instance_module, opts) do
     projection =

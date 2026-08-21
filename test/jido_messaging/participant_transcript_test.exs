@@ -15,10 +15,16 @@ defmodule Jido.Messaging.ParticipantTranscriptTest do
     @behaviour Jido.Messaging.SearchProjection
 
     @impl true
-    def upsert(_entry, _context, _opts), do: :ok
+    def upsert(entry, context, opts) do
+      if test_pid = Keyword.get(opts, :test_pid), do: send(test_pid, {:projection_upsert, entry, context})
+      :ok
+    end
 
     @impl true
-    def delete(_message_id, _context, _opts), do: :ok
+    def delete(message_id, context, opts) do
+      if test_pid = Keyword.get(opts, :test_pid), do: send(test_pid, {:projection_delete, message_id, context})
+      :ok
+    end
 
     @impl true
     def search(query, context, opts) do
@@ -121,6 +127,29 @@ defmodule Jido.Messaging.ParticipantTranscriptTest do
 
     assert {:ok, [entry | _entries]} =
              ETSMessaging.participant_transcript(records.participant.id, scope, limit: 10)
+
+    assert :ok =
+             ETSMessaging.upsert_transcript_search(entry.canonical_message_id, scope,
+               projection: Projection,
+               test_pid: self()
+             )
+
+    assert_receive {:projection_upsert, ^entry, %{instance_module: ETSMessaging, scope: ^scope}}
+
+    assert :ok =
+             ETSMessaging.delete_transcript_search(entry.canonical_message_id, entry.room_id, scope,
+               projection: Projection,
+               test_pid: self()
+             )
+
+    assert_receive {:projection_delete, message_id, %{instance_module: ETSMessaging, scope: ^scope}}
+    assert message_id == entry.canonical_message_id
+
+    assert {:error, :history_scope_violation} =
+             ETSMessaging.delete_transcript_search(entry.canonical_message_id, records.denied_room.id, scope,
+               projection: Projection,
+               test_pid: self()
+             )
 
     leaked_entry = %{entry | room_id: records.denied_room.id}
 
