@@ -199,6 +199,7 @@ defmodule Jido.Messaging.OutboundGateway do
   def classify_error({:unsupported_operation, _}), do: :fatal
   def classify_error({:unsupported_media, _kind, _causes}), do: :terminal
   def classify_error({:media_policy_denied, _reason}), do: :terminal
+  def classify_error({:secret_resolution_failed, _bridge_id, _credential, _category}), do: :terminal
 
   def classify_error(reason) do
     case AdapterBridge.classify_failure(reason) do

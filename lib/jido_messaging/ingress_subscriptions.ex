@@ -6,7 +6,7 @@ defmodule Jido.Messaging.IngressSubscriptions do
   messaging runtime control plane. It does not own webhook request routing.
   """
 
-  alias Jido.Messaging.{AdapterBridge, BridgeConfig, ConfigStore, IngressSubscription}
+  alias Jido.Messaging.{AdapterBridge, BridgeConfig, ConfigStore, IngressSubscription, SecretResolver}
 
   @type result :: {:ok, IngressSubscription.t()} | {:error, term()}
   @type list_result :: {:ok, [IngressSubscription.t()]} | {:error, term()}
@@ -17,9 +17,9 @@ defmodule Jido.Messaging.IngressSubscriptions do
       when is_atom(instance_module) and is_binary(bridge_id) and is_list(opts) do
     with {:ok, config} <- fetch_bridge(instance_module, bridge_id),
          :ok <- ensure_enabled(config),
-         {:ok, adapter_module} <- ensure_adapter_module(config) do
+         {:ok, adapter_module} <- ensure_adapter_module(config),
+         {:ok, adapter_opts} <- subscription_opts(instance_module, bridge_id, config, :subscription_ensure, opts) do
       adapter_name = AdapterBridge.channel_type(adapter_module)
-      adapter_opts = subscription_opts(instance_module, bridge_id, config, opts)
 
       case AdapterBridge.ensure_ingress_subscription(adapter_module, bridge_id, adapter_opts) do
         {:ok, raw_subscription} ->
@@ -40,9 +40,9 @@ defmodule Jido.Messaging.IngressSubscriptions do
   def list(instance_module, bridge_id, opts \\ [])
       when is_atom(instance_module) and is_binary(bridge_id) and is_list(opts) do
     with {:ok, config} <- fetch_bridge(instance_module, bridge_id),
-         {:ok, adapter_module} <- ensure_adapter_module(config) do
+         {:ok, adapter_module} <- ensure_adapter_module(config),
+         {:ok, adapter_opts} <- subscription_opts(instance_module, bridge_id, config, :subscription_list, opts) do
       adapter_name = AdapterBridge.channel_type(adapter_module)
-      adapter_opts = subscription_opts(instance_module, bridge_id, config, opts)
 
       case AdapterBridge.list_ingress_subscriptions(adapter_module, bridge_id, adapter_opts) do
         {:ok, raw_subscriptions} ->
@@ -67,9 +67,9 @@ defmodule Jido.Messaging.IngressSubscriptions do
   def delete(instance_module, bridge_id, subscription_id, opts \\ [])
       when is_atom(instance_module) and is_binary(bridge_id) and is_binary(subscription_id) and is_list(opts) do
     with {:ok, config} <- fetch_bridge(instance_module, bridge_id),
-         {:ok, adapter_module} <- ensure_adapter_module(config) do
+         {:ok, adapter_module} <- ensure_adapter_module(config),
+         {:ok, adapter_opts} <- subscription_opts(instance_module, bridge_id, config, :subscription_delete, opts) do
       adapter_name = AdapterBridge.channel_type(adapter_module)
-      adapter_opts = subscription_opts(instance_module, bridge_id, config, opts)
 
       case AdapterBridge.delete_ingress_subscription(adapter_module, bridge_id, subscription_id, adapter_opts) do
         {:ok, raw_subscription} ->
@@ -107,21 +107,21 @@ defmodule Jido.Messaging.IngressSubscriptions do
     end
   end
 
-  defp subscription_opts(instance_module, bridge_id, %BridgeConfig{} = config, opts) do
+  defp subscription_opts(instance_module, bridge_id, %BridgeConfig{} = config, operation, opts) do
     settings = config.opts
     ingress = ingress_settings(settings)
     target_url = target_url(opts, ingress)
 
-    opts
-    |> Keyword.put_new(:instance_module, instance_module)
-    |> Keyword.put_new(:bridge_id, bridge_id)
-    |> Keyword.put_new(:bridge_config, config)
-    |> Keyword.put_new(:credentials, config.credentials)
-    |> Keyword.put_new(:settings, settings)
-    |> Keyword.put_new(:ingress, ingress)
-    |> Keyword.put_new(:adapter_name, AdapterBridge.channel_type(config.adapter_module))
-    |> maybe_put_new(:target_url, target_url)
-    |> maybe_put_new(:webhook_url, target_url)
+    base_opts =
+      opts
+      |> Keyword.put_new(:instance_module, instance_module)
+      |> Keyword.put_new(:bridge_id, bridge_id)
+      |> Keyword.put_new(:ingress, ingress)
+      |> Keyword.put_new(:adapter_name, AdapterBridge.channel_type(config.adapter_module))
+      |> maybe_put_new(:target_url, target_url)
+      |> maybe_put_new(:webhook_url, target_url)
+
+    SecretResolver.adapter_opts_for_config(instance_module, config, operation, base_opts)
   end
 
   defp ingress_settings(settings) when is_map(settings) do

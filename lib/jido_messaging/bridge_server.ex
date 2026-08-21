@@ -7,7 +7,7 @@ defmodule Jido.Messaging.BridgeServer do
 
   use GenServer
 
-  alias Jido.Messaging.{AdapterBridge, BridgeConfig, BridgeStatus}
+  alias Jido.Messaging.{AdapterBridge, BridgeConfig, BridgeStatus, SecretResolver}
 
   @type state :: %{
           instance_module: module(),
@@ -146,16 +146,17 @@ defmodule Jido.Messaging.BridgeServer do
     settings = config.opts || %{}
     ingress = ingress_settings(settings)
 
-    opts = [
+    base_opts = [
       instance_module: instance_module,
       bridge_id: bridge_id,
-      bridge_config: config,
-      settings: settings,
       ingress: ingress,
       sink_mfa: {Jido.Messaging.IngressSink, :emit, [instance_module, bridge_id]}
     ]
 
-    AdapterBridge.listener_child_specs(config.adapter_module, bridge_id, opts)
+    with {:ok, adapter_opts} <-
+           SecretResolver.adapter_opts_for_config(instance_module, config, :listener_start, base_opts) do
+      AdapterBridge.listener_child_specs(config.adapter_module, bridge_id, adapter_opts)
+    end
   end
 
   defp start_listener_supervisor([]), do: {:ok, nil}

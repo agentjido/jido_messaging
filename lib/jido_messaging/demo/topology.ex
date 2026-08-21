@@ -432,6 +432,7 @@ defmodule Jido.Messaging.Demo.Topology do
   defp safe_key_to_atom("dedupe_scope"), do: :dedupe_scope
   defp safe_key_to_atom("fallback_order"), do: :fallback_order
   defp safe_key_to_atom("credentials"), do: :credentials
+  defp safe_key_to_atom("secret_refs"), do: :secret_refs
   defp safe_key_to_atom("opts"), do: :opts
   defp safe_key_to_atom("capabilities"), do: :capabilities
   defp safe_key_to_atom("revision"), do: :revision

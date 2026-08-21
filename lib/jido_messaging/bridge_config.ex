@@ -3,6 +3,10 @@ defmodule Jido.Messaging.BridgeConfig do
   Runtime-editable bridge configuration for adapter-backed ingress/egress.
 
   `BridgeConfig` is the control-plane definition for a single external adapter bridge.
+
+  `secret_refs` contains durable, opaque references. Resolved credentials are
+  never stored in this struct. The `credentials` field is kept for data-shape
+  compatibility and must stay empty.
   """
 
   alias Jido.Chat.Adapter
@@ -14,6 +18,7 @@ defmodule Jido.Messaging.BridgeConfig do
               id: Zoi.string(),
               adapter_module: Zoi.module(),
               credentials: Zoi.map() |> Zoi.default(%{}),
+              secret_refs: Zoi.map() |> Zoi.default(%{}),
               opts: Zoi.map() |> Zoi.default(%{}),
               enabled: Zoi.boolean() |> Zoi.default(true),
               capabilities: Zoi.map() |> Zoi.default(%{}),
@@ -45,7 +50,8 @@ defmodule Jido.Messaging.BridgeConfig do
     struct!(__MODULE__, %{
       id: Map.get(attrs, :id, generate_id()),
       adapter_module: adapter_module,
-      credentials: Map.get(attrs, :credentials, %{}),
+      credentials: %{},
+      secret_refs: Map.get(attrs, :secret_refs, %{}),
       opts: Map.get(attrs, :opts, %{}),
       enabled: Map.get(attrs, :enabled, true),
       capabilities: Map.get(attrs, :capabilities, Adapter.capabilities(adapter_module)),
@@ -76,6 +82,14 @@ defmodule Jido.Messaging.BridgeConfig do
     |> Keyword.put_new(:settings, config.opts)
   end
 
+  @doc "Checks that a bridge config has no resolved credentials."
+  @spec validate_for_storage(t()) :: :ok | {:error, {:bridge_credentials_migration_required, String.t()}}
+  def validate_for_storage(%__MODULE__{credentials: credentials}) when credentials in [%{}, nil], do: :ok
+
+  def validate_for_storage(%__MODULE__{id: id}) do
+    {:error, {:bridge_credentials_migration_required, id}}
+  end
+
   defp normalize_attrs(attrs) do
     attrs
     |> Enum.reduce(%{}, fn
@@ -96,6 +110,7 @@ defmodule Jido.Messaging.BridgeConfig do
   defp key_to_atom("id"), do: :id
   defp key_to_atom("adapter_module"), do: :adapter_module
   defp key_to_atom("credentials"), do: :credentials
+  defp key_to_atom("secret_refs"), do: :secret_refs
   defp key_to_atom("opts"), do: :opts
   defp key_to_atom("enabled"), do: :enabled
   defp key_to_atom("capabilities"), do: :capabilities

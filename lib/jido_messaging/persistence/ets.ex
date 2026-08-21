@@ -63,7 +63,7 @@ defmodule Jido.Messaging.Persistence.ETS do
   def schema, do: @schema
 
   alias Jido.Chat.{Participant, Room}
-  alias Jido.Messaging.{IngressSubscription, Message, RoomBinding, Thread}
+  alias Jido.Messaging.{BridgeConfig, IngressSubscription, Message, RoomBinding, Thread}
 
   @impl true
   def init(_opts) do
@@ -605,9 +605,11 @@ defmodule Jido.Messaging.Persistence.ETS do
   # Bridge/routing control plane persistence
 
   @impl true
-  def save_bridge_config(state, bridge_config) do
-    true = :ets.insert(state.bridge_configs, {bridge_config.id, bridge_config})
-    {:ok, bridge_config}
+  def save_bridge_config(state, %BridgeConfig{} = bridge_config) do
+    with :ok <- BridgeConfig.validate_for_storage(bridge_config) do
+      true = :ets.insert(state.bridge_configs, {bridge_config.id, bridge_config})
+      {:ok, bridge_config}
+    end
   end
 
   @impl true

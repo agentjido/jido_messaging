@@ -103,6 +103,15 @@ defmodule Jido.Messaging.OutboundGatewayTest do
     end
   end
 
+  defmodule BridgeSecretResolver do
+    @behaviour Jido.Messaging.SecretResolver
+
+    @impl true
+    def resolve(:bridge_token, _context), do: {:ok, "bridge-token"}
+    def resolve(:stored_token, _context), do: {:ok, "stored-token"}
+    def resolve(:must_not_resolve, _context), do: raise("adapter mismatch resolved a secret")
+  end
+
   defmodule MediaChannel do
     @behaviour Jido.Chat.Adapter
 
@@ -144,12 +153,20 @@ defmodule Jido.Messaging.OutboundGatewayTest do
 
   setup do
     original_config = Application.get_env(TestMessaging, :outbound_gateway)
+    original_resolver = Application.get_env(TestMessaging, :secret_resolver)
+    Application.put_env(TestMessaging, :secret_resolver, BridgeSecretResolver)
 
     on_exit(fn ->
       if is_nil(original_config) do
         Application.delete_env(TestMessaging, :outbound_gateway)
       else
         Application.put_env(TestMessaging, :outbound_gateway, original_config)
+      end
+
+      if is_nil(original_resolver) do
+        Application.delete_env(TestMessaging, :secret_resolver)
+      else
+        Application.put_env(TestMessaging, :secret_resolver, original_resolver)
       end
     end)
 
@@ -494,7 +511,7 @@ defmodule Jido.Messaging.OutboundGatewayTest do
         TestMessaging.put_bridge_config(%{
           id: "config_bridge",
           adapter_module: BridgeConfigChannel,
-          credentials: %{token: "bridge-token"},
+          secret_refs: %{token: :bridge_token},
           opts: %{tenant: "tenant-one"}
         })
 
@@ -509,18 +526,18 @@ defmodule Jido.Messaging.OutboundGatewayTest do
 
       assert_receive {:bridge_adapter_opts, adapter_opts}
       assert adapter_opts[:bridge_config] == bridge_config
-      assert adapter_opts[:credentials] == bridge_config.credentials
+      assert adapter_opts[:credentials] == %{token: "bridge-token"}
       assert adapter_opts[:settings] == bridge_config.opts
     end
 
-    test "call-specific adapter options override bridge defaults" do
+    test "resolved credentials replace call-specific credential values" do
       start_messaging(partition_count: 1, queue_capacity: 8, max_attempts: 1)
 
       {:ok, _bridge_config} =
         TestMessaging.put_bridge_config(%{
           id: "override_bridge",
           adapter_module: BridgeConfigChannel,
-          credentials: %{token: "stored-token"},
+          secret_refs: %{token: :stored_token},
           opts: %{tenant: "stored-tenant"}
         })
 
@@ -537,7 +554,7 @@ defmodule Jido.Messaging.OutboundGatewayTest do
                )
 
       assert_receive {:bridge_adapter_opts, adapter_opts}
-      assert adapter_opts[:credentials] == %{token: "override-token"}
+      assert adapter_opts[:credentials] == %{token: "stored-token"}
       assert adapter_opts[:settings] == %{tenant: "stored-tenant"}
     end
 
@@ -548,7 +565,7 @@ defmodule Jido.Messaging.OutboundGatewayTest do
                TestMessaging.put_bridge_config(%{
                  id: "mismatch_bridge",
                  adapter_module: BridgeConfigChannel,
-                 credentials: %{token: "must-not-leak"}
+                 secret_refs: %{token: :must_not_resolve}
                })
 
       context = %{
