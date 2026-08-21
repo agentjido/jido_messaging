@@ -170,6 +170,9 @@ defmodule Jido.Messaging.DeliverTest do
     test "routes proactive send through room bindings and bridge config", %{original_message: orig} do
       {:ok, _bridge} = TestMessaging.put_bridge_config(%{id: "bridge_mock", adapter_module: MockChannel})
 
+      {:ok, existing_bindings} = TestMessaging.list_room_bindings(orig.room_id)
+      Enum.each(existing_bindings, &TestMessaging.delete_room_binding(&1.id))
+
       {:ok, _binding} =
         TestMessaging.create_room_binding(orig.room_id, :mock, "bridge_mock", "route_chat", %{direction: :both})
 
