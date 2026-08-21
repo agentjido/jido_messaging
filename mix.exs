@@ -70,7 +70,7 @@ defmodule Jido.Messaging.MixProject do
   defp deps do
     [
       # Runtime dependencies
-      {:jido_chat, "~> 1.0"},
+      {:jido_chat, "~> 1.2"},
       {:jason, "~> 1.4"},
       {:zoi, "~> 0.14"},
       {:jido, "~> 2.3"},

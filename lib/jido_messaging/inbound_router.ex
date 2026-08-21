@@ -455,7 +455,6 @@ defmodule Jido.Messaging.InboundRouter do
   defp stringify(value), do: to_string(value)
 
   defp normalize_incoming_for_ingest(%Incoming{} = incoming), do: Map.from_struct(incoming)
-  defp normalize_incoming_for_ingest(incoming) when is_map(incoming), do: incoming
 
   defp normalize_payload_event(_adapter_module, %EventEnvelope{} = envelope, _opts),
     do: {:ok, envelope}
