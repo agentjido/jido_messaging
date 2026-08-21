@@ -111,7 +111,6 @@ defmodule Jido.Messaging.BridgeSupervisor do
       case stop_bridge(instance_module, bridge_id) do
         :ok -> {:cont, :ok}
         {:error, :not_found} -> {:cont, :ok}
-        {:error, reason} -> {:halt, {:error, {:stop_bridge_failed, bridge_id, reason}}}
       end
     end)
   end
