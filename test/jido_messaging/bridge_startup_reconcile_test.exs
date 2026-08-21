@@ -155,7 +155,12 @@ defmodule Jido.Messaging.BridgeStartupReconcileTest do
   end
 
   defp persist_bridge(database_path, bridge_id, adapter_module) do
-    {:ok, state} = SQLite.init(path: database_path)
+    {:ok, state} =
+      SQLite.init(
+        path: database_path,
+        instance_id: Atom.to_string(SQLiteMessaging)
+      )
+
     config = BridgeConfig.new(%{id: bridge_id, adapter_module: adapter_module, enabled: true})
     assert {:ok, ^config} = SQLite.save_bridge_config(state, config)
     :ok = Exqlite.Sqlite3.close(state.db)
