@@ -86,6 +86,38 @@ defmodule Jido.Messaging.InboundRouterTest do
     end
   end
 
+  defmodule ConfigAwareAdapter do
+    @behaviour Jido.Chat.Adapter
+
+    @impl true
+    def channel_type, do: :config_aware
+
+    @impl true
+    def transform_incoming(_payload), do: {:error, :not_implemented}
+
+    @impl true
+    def send_message(_room_id, _text, _opts), do: {:error, :not_implemented}
+
+    @impl true
+    def verify_webhook(%WebhookRequest{} = request, opts) do
+      credentials = Keyword.fetch!(opts, :credentials)
+
+      if request.headers["authorization"] == credentials.token do
+        :ok
+      else
+        {:error, :invalid_signature}
+      end
+    end
+
+    @impl true
+    def parse_event(%WebhookRequest{}, opts) do
+      case Keyword.fetch!(opts, :settings) do
+        %{parse_result: :noop} -> {:ok, :noop}
+        _settings -> {:error, :invalid_settings}
+      end
+    end
+  end
+
   defmodule TestMessaging do
     use Jido.Messaging, persistence: Jido.Messaging.Persistence.ETS
   end
@@ -154,6 +186,32 @@ defmodule Jido.Messaging.InboundRouterTest do
   end
 
   describe "route_webhook/4" do
+    test "uses credentials and settings from the selected bridge" do
+      {:ok, _bridge} =
+        TestMessaging.put_bridge_config(%{
+          id: "bridge_config_aware",
+          adapter_module: ConfigAwareAdapter,
+          credentials: %{token: "bridge-secret"},
+          opts: %{parse_result: :noop}
+        })
+
+      assert {:ok, :noop} =
+               InboundRouter.route_webhook(
+                 TestMessaging,
+                 "bridge_config_aware",
+                 %{"kind" => "noop"},
+                 headers: %{"authorization" => "bridge-secret"}
+               )
+
+      assert {:error, :invalid_signature} =
+               InboundRouter.route_webhook(
+                 TestMessaging,
+                 "bridge_config_aware",
+                 %{"kind" => "noop"},
+                 headers: %{"authorization" => "wrong-secret"}
+               )
+    end
+
     test "returns :noop for ack-only webhook events" do
       assert {:ok, :noop} =
                InboundRouter.route_webhook(

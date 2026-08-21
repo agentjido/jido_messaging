@@ -86,13 +86,14 @@ defmodule Jido.Messaging.InboundRouter do
     with {:ok, config} <- fetch_bridge(instance_module, bridge_id),
          :ok <- ensure_enabled(config),
          {:ok, adapter_module} <- ensure_adapter_module(config) do
+      adapter_opts = BridgeConfig.adapter_opts(config, opts)
       request = build_webhook_request(adapter_module, payload, request_meta)
-      format_opts = Keyword.merge(opts, request: request)
+      format_opts = Keyword.put(adapter_opts, :request, request)
 
       outcome =
-        with :ok <- Adapter.verify_webhook(adapter_module, request, opts),
-             {:ok, event} <- Adapter.parse_event(adapter_module, request, opts) do
-          dispatch_event(instance_module, adapter_module, bridge_id, event, ingest_opts, opts)
+        with :ok <- Adapter.verify_webhook(adapter_module, request, adapter_opts),
+             {:ok, event} <- Adapter.parse_event(adapter_module, request, adapter_opts) do
+          dispatch_event(instance_module, adapter_module, bridge_id, event, ingest_opts, adapter_opts)
         end
 
       response =
@@ -118,13 +119,15 @@ defmodule Jido.Messaging.InboundRouter do
     with {:ok, config} <- fetch_bridge(instance_module, bridge_id),
          :ok <- ensure_enabled(config),
          {:ok, adapter_module} <- ensure_adapter_module(config) do
+      adapter_opts = BridgeConfig.adapter_opts(config, opts)
+
       outcome =
-        case normalize_payload_event(adapter_module, payload, opts) do
+        case normalize_payload_event(adapter_module, payload, adapter_opts) do
           {:ok, :noop} ->
             {:ok, :noop}
 
           {:ok, %EventEnvelope{} = event} ->
-            dispatch_event(instance_module, adapter_module, bridge_id, event, ingest_opts, opts)
+            dispatch_event(instance_module, adapter_module, bridge_id, event, ingest_opts, adapter_opts)
 
           :fallback ->
             with {:ok, incoming} <- Adapter.transform_incoming(adapter_module, payload) do
@@ -140,7 +143,7 @@ defmodule Jido.Messaging.InboundRouter do
                   metadata: %{source: :payload, bridge_id: bridge_id}
                 })
 
-              dispatch_event(instance_module, adapter_module, bridge_id, event, ingest_opts, opts)
+              dispatch_event(instance_module, adapter_module, bridge_id, event, ingest_opts, adapter_opts)
             end
         end
 
