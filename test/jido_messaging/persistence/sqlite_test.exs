@@ -534,6 +534,7 @@ defmodule Jido.Messaging.Persistence.SQLiteTest do
 
   test "backfills sender IDs for participant transcript queries" do
     path = tmp_path("sqlite-participant-sender-migration")
+    File.mkdir_p!(Path.dirname(path))
     {:ok, db} = Sqlite3.open(path)
 
     :ok =
