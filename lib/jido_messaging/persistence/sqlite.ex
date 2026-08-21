@@ -99,7 +99,16 @@ defmodule Jido.Messaging.Persistence.SQLite do
 
   @impl true
   def delete_participant(state, participant_id) do
-    delete_record(state, "participant", participant_id)
+    run(
+      state.db,
+      """
+      DELETE FROM #{@table}
+      WHERE instance_id = ?1
+        AND ((kind = 'participant' AND id = ?2)
+          OR (kind = 'participant_binding' AND room_id = ?2))
+      """,
+      [state.instance_id, participant_id]
+    )
   end
 
   @impl true
@@ -260,13 +269,42 @@ defmodule Jido.Messaging.Persistence.SQLite do
 
   @impl true
   def get_or_create_participant_by_external_id(state, channel, external_id, attrs) do
-    case find_participant_by_external_id(state, channel, external_id) do
-      {:ok, participant} ->
-        {:ok, participant}
+    get_or_create_participant_by_external_binding(state, channel, "default", external_id, attrs)
+  end
 
-      {:error, :not_found} ->
-        participant = build_bound_participant(channel, external_id, attrs)
-        save_participant(state, participant)
+  @impl true
+  def get_or_create_participant_by_external_binding(state, channel, bridge_id, external_id, attrs) do
+    participant_binding_lock(state, channel, external_id, fn ->
+      case find_participant_binding(state, channel, bridge_id, external_id) do
+        {:ok, participant} ->
+          {:ok, participant}
+
+        {:error, :not_found} ->
+          claim_legacy_or_create_participant(state, channel, bridge_id, external_id, attrs)
+      end
+    end)
+  end
+
+  @impl true
+  def bind_participant_external_id(state, participant_id, channel, bridge_id, external_id) do
+    with {:ok, _participant} <- get_participant(state, participant_id) do
+      case find_participant_binding_record(state, channel, bridge_id, external_id) do
+        {:ok, %{participant_id: ^participant_id}} ->
+          :ok
+
+        {:ok, %{participant_id: existing_participant_id}} ->
+          case get_participant(state, existing_participant_id) do
+            {:ok, _participant} ->
+              {:error, {:external_identity_conflict, existing_participant_id}}
+
+            {:error, :not_found} ->
+              :ok = delete_participant_binding_record(state, channel, bridge_id, external_id)
+              bind_participant_external_id(state, participant_id, channel, bridge_id, external_id)
+          end
+
+        {:error, :not_found} ->
+          save_participant_binding(state, participant_id, channel, bridge_id, external_id)
+      end
     end
   end
 
@@ -580,6 +618,10 @@ defmodule Jido.Messaging.Persistence.SQLite do
 
     CREATE INDEX IF NOT EXISTS #{@table}_external_idx
       ON #{@table} (instance_id, kind, channel, bridge_id, external_id);
+
+    CREATE UNIQUE INDEX IF NOT EXISTS #{@table}_participant_binding_unique_idx
+      ON #{@table} (instance_id, channel, bridge_id, external_id)
+      WHERE kind = 'participant_binding';
     """)
   end
 
@@ -704,6 +746,137 @@ defmodule Jido.Messaging.Persistence.SQLite do
     state
     |> list_records("participant", limit: 500)
     |> find_record(&participant_external_id_matches?(&1, %{channel: channel, external_id: external_id}))
+  end
+
+  defp find_participant_binding(state, channel, bridge_id, external_id) do
+    with {:ok, binding} <- find_participant_binding_record(state, channel, bridge_id, external_id) do
+      case get_participant(state, binding.participant_id) do
+        {:ok, participant} ->
+          {:ok, participant}
+
+        {:error, :not_found} ->
+          :ok = delete_participant_binding_record(state, channel, bridge_id, external_id)
+          {:error, :not_found}
+      end
+    end
+  end
+
+  defp find_participant_binding_record(state, channel, bridge_id, external_id) do
+    fetch_one(state, "participant_binding", [
+      {"channel", normalize_term(channel)},
+      {"bridge_id", normalize_term(bridge_id)},
+      {"external_id", normalize_term(external_id)}
+    ])
+  end
+
+  defp find_unclaimed_legacy_participant(state, channel, external_id) do
+    case fetch_one(state, "participant_binding", [
+           {"channel", normalize_term(channel)},
+           {"external_id", normalize_term(external_id)}
+         ]) do
+      {:ok, _binding} -> {:error, :not_found}
+      {:error, :not_found} -> find_participant_by_external_id(state, channel, external_id)
+    end
+  end
+
+  defp save_participant_binding(state, participant_id, channel, bridge_id, external_id) do
+    normalized_channel = normalize_term(channel)
+    normalized_bridge_id = normalize_term(bridge_id)
+    normalized_external_id = normalize_term(external_id)
+
+    binding = %{
+      participant_id: participant_id,
+      channel: normalized_channel,
+      bridge_id: normalized_bridge_id,
+      external_id: normalized_external_id
+    }
+
+    id = participant_binding_id(normalized_channel, normalized_bridge_id, normalized_external_id)
+
+    with :ok <-
+           run(
+             state.db,
+             """
+             INSERT INTO #{@table}
+               (instance_id, kind, id, room_id, channel, bridge_id, external_id, payload)
+             VALUES (?1, 'participant_binding', ?2, ?3, ?4, ?5, ?6, ?7)
+             ON CONFLICT DO NOTHING
+             """,
+             [
+               state.instance_id,
+               id,
+               participant_id,
+               normalized_channel,
+               normalized_bridge_id,
+               normalized_external_id,
+               {:blob, :erlang.term_to_binary(binding)}
+             ]
+           ),
+         {:ok, stored_binding} <- find_participant_binding_record(state, channel, bridge_id, external_id) do
+      if stored_binding.participant_id == participant_id do
+        :ok
+      else
+        {:error, {:external_identity_conflict, stored_binding.participant_id}}
+      end
+    end
+  end
+
+  defp claim_legacy_or_create_participant(state, channel, bridge_id, external_id, attrs) do
+    case find_unclaimed_legacy_participant(state, channel, external_id) do
+      {:ok, participant} ->
+        bind_or_resolve_participant(state, participant, channel, bridge_id, external_id, false)
+
+      {:error, :not_found} ->
+        participant = build_bound_participant(channel, external_id, attrs)
+
+        with {:ok, participant} <- save_participant(state, participant) do
+          bind_or_resolve_participant(state, participant, channel, bridge_id, external_id, true)
+        end
+    end
+  end
+
+  defp bind_or_resolve_participant(state, participant, channel, bridge_id, external_id, created?) do
+    case bind_participant_external_id(state, participant.id, channel, bridge_id, external_id) do
+      :ok ->
+        {:ok, participant}
+
+      {:error, {:external_identity_conflict, winner_id}} ->
+        if created?, do: delete_participant(state, participant.id)
+        get_participant(state, winner_id)
+
+      {:error, _reason} = error ->
+        if created?, do: delete_participant(state, participant.id)
+        error
+    end
+  end
+
+  defp delete_participant_binding_record(state, channel, bridge_id, external_id) do
+    delete_record(
+      state,
+      "participant_binding",
+      participant_binding_id(normalize_term(channel), normalize_term(bridge_id), normalize_term(external_id))
+    )
+  end
+
+  defp participant_binding_lock(state, channel, external_id, fun) do
+    resource = {
+      __MODULE__,
+      Path.expand(state.path),
+      state.instance_id,
+      :participant_binding,
+      normalize_term(channel),
+      normalize_term(external_id)
+    }
+
+    case :global.trans({resource, self()}, fun) do
+      :aborted -> {:error, :participant_binding_lock_aborted}
+      result -> result
+    end
+  end
+
+  defp participant_binding_id(channel, bridge_id, external_id) do
+    digest = :crypto.hash(:sha256, :erlang.term_to_binary({channel, bridge_id, external_id}))
+    "participant_binding:" <> Base.url_encode64(digest, padding: false)
   end
 
   defp participant_matches?(participant, query) do

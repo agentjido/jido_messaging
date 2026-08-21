@@ -127,6 +127,14 @@ reading or replacing each other's records. Set `persistence_opts: [instance_id:
 Direct calls to `Jido.Messaging.Persistence.SQLite.init/1` use the explicit
 default namespace `"default"` unless `:instance_id` is supplied.
 
+Inbound participant identity is scoped by adapter and bridge ID. This prevents
+equal tenant-local provider IDs from merging participants across workspaces or
+server installations. Use `bind_participant_external_id/4` to link another
+provider identity to an existing canonical participant. Legacy unscoped calls
+use the explicit `"default"` bridge scope. SQLite assigns an unclaimed legacy
+participant record to the first matching scoped identity; applications can use
+the binding API before traffic starts when a different migration is required.
+
 ### Presence Signals
 
 `Jido.Messaging.Presence` bridges transport-specific presence state, such as

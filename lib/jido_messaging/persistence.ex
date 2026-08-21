@@ -130,6 +130,24 @@ defmodule Jido.Messaging.Persistence do
               attrs :: map()
             ) :: {:ok, Participant.t()}
 
+  @doc """
+  Get or create a participant from a bridge-scoped provider identity.
+
+  The bridge ID is the provider tenant or installation scope. Adapters that do
+  not implement this callback use the legacy channel-scoped callback.
+  """
+  @callback get_or_create_participant_by_external_binding(
+              state,
+              channel,
+              bridge_id,
+              external_id,
+              attrs :: map()
+            ) :: {:ok, Participant.t()}
+
+  @doc "Bind a bridge-scoped provider identity to an existing participant."
+  @callback bind_participant_external_id(state, participant_id, channel, bridge_id, external_id) ::
+              :ok | {:error, :not_found | {:external_identity_conflict, participant_id}}
+
   # Message external ID operations (for reply/quote mapping)
   @doc """
   Get a message by its external ID within a channel/instance context.
@@ -225,7 +243,9 @@ defmodule Jido.Messaging.Persistence do
   @doc "Delete stored ingress subscription metadata."
   @callback delete_ingress_subscription(state, bridge_id(), String.t()) :: :ok | {:error, :not_found}
 
-  @optional_callbacks save_ingress_subscription: 2,
+  @optional_callbacks get_or_create_participant_by_external_binding: 5,
+                      bind_participant_external_id: 5,
+                      save_ingress_subscription: 2,
                       list_ingress_subscriptions: 3,
                       delete_ingress_subscription: 3
 

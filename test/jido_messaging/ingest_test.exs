@@ -353,6 +353,58 @@ defmodule Jido.Messaging.IngestTest do
       assert Enum.count(results, &(&1 == {:ok, :duplicate})) == 19
     end
 
+    test "keeps equal provider user IDs separate across bridges" do
+      incoming = %{
+        external_room_id: "chat_identity_scope",
+        external_user_id: "tenant-local-user",
+        text: "Scoped identity",
+        external_message_id: "identity-message-a"
+      }
+
+      assert {:ok, first_message, _context} =
+               Ingest.ingest_incoming(TestMessaging, MockChannel, "tenant-a", incoming)
+
+      assert {:ok, second_message, _context} =
+               Ingest.ingest_incoming(
+                 TestMessaging,
+                 MockChannel,
+                 "tenant-b",
+                 %{incoming | external_message_id: "identity-message-b"}
+               )
+
+      refute first_message.sender_id == second_message.sender_id
+    end
+
+    test "uses an explicit identity link across bridges" do
+      assert {:ok, participant} =
+               TestMessaging.get_or_create_participant_by_external_id(
+                 :mock,
+                 "tenant-link-a",
+                 "provider-user-a",
+                 %{type: :human, identity: %{display_name: "Linked User"}}
+               )
+
+      assert :ok =
+               TestMessaging.bind_participant_external_id(
+                 participant.id,
+                 :mock,
+                 "tenant-link-b",
+                 "provider-user-b"
+               )
+
+      incoming = %{
+        external_room_id: "chat_linked_identity",
+        external_user_id: "provider-user-b",
+        text: "Linked identity",
+        external_message_id: "linked-message"
+      }
+
+      assert {:ok, message, _context} =
+               Ingest.ingest_incoming(TestMessaging, MockChannel, "tenant-link-b", incoming)
+
+      assert message.sender_id == participant.id
+    end
+
     test "reuses existing room for same external binding" do
       incoming = %{
         external_room_id: "chat_same",

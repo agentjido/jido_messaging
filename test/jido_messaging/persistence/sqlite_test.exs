@@ -188,6 +188,160 @@ defmodule Jido.Messaging.Persistence.SQLiteTest do
     Enum.each(states, fn state -> :ok = Sqlite3.close(state.db) end)
   end
 
+  test "scopes provider identities by bridge and supports explicit links" do
+    path = tmp_path("sqlite-participant-scope")
+    {:ok, state} = SQLite.init(path: path)
+
+    assert {:ok, first} =
+             SQLite.get_or_create_participant_by_external_binding(
+               state,
+               :slack,
+               "workspace-one",
+               "user-1",
+               %{type: :human, identity: %{name: "First"}}
+             )
+
+    assert {:ok, second} =
+             SQLite.get_or_create_participant_by_external_binding(
+               state,
+               :slack,
+               "workspace-two",
+               "user-1",
+               %{type: :human, identity: %{name: "Second"}}
+             )
+
+    refute first.id == second.id
+
+    assert :ok =
+             SQLite.bind_participant_external_id(
+               state,
+               first.id,
+               :slack,
+               "workspace-three",
+               "user-linked"
+             )
+
+    assert {:ok, linked} =
+             SQLite.get_or_create_participant_by_external_binding(
+               state,
+               :slack,
+               "workspace-three",
+               "user-linked",
+               %{}
+             )
+
+    assert linked.id == first.id
+
+    assert {:error, {:external_identity_conflict, first_id}} =
+             SQLite.bind_participant_external_id(
+               state,
+               second.id,
+               :slack,
+               "workspace-three",
+               "user-linked"
+             )
+
+    assert first_id == first.id
+    :ok = Sqlite3.close(state.db)
+  end
+
+  test "claims a matching legacy participant for a scoped provider identity" do
+    path = tmp_path("sqlite-participant-legacy-claim")
+    {:ok, state} = SQLite.init(path: path)
+
+    legacy =
+      Participant.new(%{
+        id: "participant:legacy",
+        type: :human,
+        identity: %{name: "Legacy User"},
+        external_ids: %{slack: "user-legacy"}
+      })
+
+    assert {:ok, ^legacy} = SQLite.save_participant(state, legacy)
+
+    assert {:ok, claimed} =
+             SQLite.get_or_create_participant_by_external_binding(
+               state,
+               :slack,
+               "workspace-one",
+               "user-legacy",
+               %{type: :human, identity: %{name: "Replacement"}}
+             )
+
+    assert claimed.id == legacy.id
+
+    assert {:ok, same_participant} =
+             SQLite.get_or_create_participant_by_external_binding(
+               state,
+               :slack,
+               "workspace-one",
+               "user-legacy",
+               %{}
+             )
+
+    assert same_participant.id == legacy.id
+    :ok = Sqlite3.close(state.db)
+  end
+
+  test "creates one participant during concurrent scoped identity claims" do
+    path = tmp_path("sqlite-participant-concurrent-claim")
+    {:ok, state} = SQLite.init(path: path)
+
+    results =
+      1..40
+      |> Task.async_stream(
+        fn _index ->
+          SQLite.get_or_create_participant_by_external_binding(
+            state,
+            :slack,
+            "workspace-one",
+            "user-concurrent",
+            %{type: :human, identity: %{name: "Concurrent User"}}
+          )
+        end,
+        max_concurrency: 40,
+        ordered: false,
+        timeout: 5_000
+      )
+      |> Enum.to_list()
+
+    participant_ids = Enum.map(results, fn {:ok, {:ok, participant}} -> participant.id end)
+    assert length(participant_ids) == 40
+    assert participant_ids |> Enum.uniq() |> length() == 1
+
+    assert {:ok, participants} = SQLite.directory_search(state, :participant, %{}, [])
+    assert length(participants) == 1
+    :ok = Sqlite3.close(state.db)
+  end
+
+  test "deleting a participant releases its scoped identity" do
+    path = tmp_path("sqlite-participant-delete-binding")
+    {:ok, state} = SQLite.init(path: path)
+
+    assert {:ok, original} =
+             SQLite.get_or_create_participant_by_external_binding(
+               state,
+               :slack,
+               "workspace-one",
+               "user-replaced",
+               %{type: :human, identity: %{name: "Original"}}
+             )
+
+    assert :ok = SQLite.delete_participant(state, original.id)
+
+    assert {:ok, replacement} =
+             SQLite.get_or_create_participant_by_external_binding(
+               state,
+               :slack,
+               "workspace-one",
+               "user-replaced",
+               %{type: :human, identity: %{name: "Replacement"}}
+             )
+
+    refute replacement.id == original.id
+    :ok = Sqlite3.close(state.db)
+  end
+
   test "normalizes non-string external binding values without crashing" do
     path = tmp_path("sqlite-normalized-bindings")
     {:ok, state} = SQLite.init(path: path)
@@ -359,6 +513,7 @@ defmodule Jido.Messaging.Persistence.SQLiteTest do
 
   defp tmp_path(prefix) do
     path = Path.join(["tmp", "#{prefix}-#{System.unique_integer([:positive])}.sqlite3"])
+    File.mkdir_p!(Path.dirname(path))
     File.rm(path)
     path
   end

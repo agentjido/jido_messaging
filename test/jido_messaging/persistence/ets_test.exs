@@ -56,6 +56,59 @@ defmodule Jido.Messaging.Persistence.ETSTest do
       assert {:ok, fetched} = ETS.get_participant(state, participant.id)
       assert fetched.identity.name == "Alice"
     end
+
+    test "scopes provider identities by bridge and supports explicit links", %{state: state} do
+      assert {:ok, first} =
+               ETS.get_or_create_participant_by_external_binding(
+                 state,
+                 :slack,
+                 "workspace-one",
+                 "user-1",
+                 %{type: :human, identity: %{name: "First"}}
+               )
+
+      assert {:ok, second} =
+               ETS.get_or_create_participant_by_external_binding(
+                 state,
+                 :slack,
+                 "workspace-two",
+                 "user-1",
+                 %{type: :human, identity: %{name: "Second"}}
+               )
+
+      refute first.id == second.id
+
+      assert :ok =
+               ETS.bind_participant_external_id(
+                 state,
+                 first.id,
+                 :slack,
+                 "workspace-three",
+                 "user-linked"
+               )
+
+      assert {:ok, linked} =
+               ETS.get_or_create_participant_by_external_binding(
+                 state,
+                 :slack,
+                 "workspace-three",
+                 "user-linked",
+                 %{}
+               )
+
+      assert linked.id == first.id
+
+      assert {:error, {:external_identity_conflict, first_id}} =
+               ETS.bind_participant_external_id(
+                 state,
+                 second.id,
+                 :slack,
+                 "workspace-three",
+                 "user-linked"
+               )
+
+      assert first_id == first.id
+    end
   end
 
   describe "message operations" do

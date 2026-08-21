@@ -255,6 +255,28 @@ defmodule Jido.Messaging do
         )
       end
 
+      @doc "Get or create a participant by bridge-scoped external identity"
+      def get_or_create_participant_by_external_id(channel, bridge_id, external_id, attrs) do
+        Jido.Messaging.get_or_create_participant_by_external_id(
+          __jido_messaging__(:runtime),
+          channel,
+          bridge_id,
+          external_id,
+          attrs
+        )
+      end
+
+      @doc "Bind a bridge-scoped external identity to an existing participant"
+      def bind_participant_external_id(participant_id, channel, bridge_id, external_id) do
+        Jido.Messaging.bind_participant_external_id(
+          __jido_messaging__(:runtime),
+          participant_id,
+          channel,
+          bridge_id,
+          external_id
+        )
+      end
+
       @doc "Get a message by its external ID within a channel/bridge context"
       def get_message_by_external_id(channel, bridge_id, external_id) do
         Jido.Messaging.get_message_by_external_id(
@@ -840,8 +862,41 @@ defmodule Jido.Messaging do
 
   @doc "Get or create participant by external ID"
   def get_or_create_participant_by_external_id(runtime, channel, external_id, attrs) do
+    get_or_create_participant_by_external_id(runtime, channel, "default", external_id, attrs)
+  end
+
+  @doc "Get or create a participant by bridge-scoped external identity"
+  def get_or_create_participant_by_external_id(runtime, channel, bridge_id, external_id, attrs) do
     {persistence, persistence_state} = Runtime.get_persistence(runtime)
-    persistence.get_or_create_participant_by_external_id(persistence_state, channel, external_id, attrs)
+
+    if function_exported?(persistence, :get_or_create_participant_by_external_binding, 5) do
+      persistence.get_or_create_participant_by_external_binding(
+        persistence_state,
+        channel,
+        bridge_id,
+        external_id,
+        attrs
+      )
+    else
+      persistence.get_or_create_participant_by_external_id(persistence_state, channel, external_id, attrs)
+    end
+  end
+
+  @doc "Bind a bridge-scoped external identity to an existing participant"
+  def bind_participant_external_id(runtime, participant_id, channel, bridge_id, external_id) do
+    {persistence, persistence_state} = Runtime.get_persistence(runtime)
+
+    if function_exported?(persistence, :bind_participant_external_id, 5) do
+      persistence.bind_participant_external_id(
+        persistence_state,
+        participant_id,
+        channel,
+        bridge_id,
+        external_id
+      )
+    else
+      {:error, :unsupported}
+    end
   end
 
   @doc "Get a message by its external ID within a channel/instance context"
