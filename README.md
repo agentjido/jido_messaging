@@ -331,7 +331,9 @@ Supported top-level keys:
 
 Use `config/demo.topology.example.yaml` as the starter template.
 For live bridge ingress with Telegram polling + Discord gateway, use
-`config/demo.topology.live.yaml` with `.env` values.
+`config/demo.topology.live.yaml` with `.env` values. The live script resolves
+the Telegram token from its environment reference at operation time. It does
+not put the token in the stored bridge configuration.
 
 ## Architecture
 

@@ -271,6 +271,7 @@ defmodule Jido.Messaging.ConfigStore do
 
   defp validate_bridge_secrets(attrs, existing) do
     incoming_credentials = map_get(attrs, :credentials)
+    incoming_secret_refs = map_get(attrs, :secret_refs)
     existing_credentials = existing && existing.credentials
 
     cond do
@@ -278,11 +279,20 @@ defmodule Jido.Messaging.ConfigStore do
         {:error, :raw_bridge_credentials_not_allowed}
 
       is_map(existing_credentials) and map_size(existing_credentials) > 0 ->
-        {:error, {:bridge_credentials_migration_required, existing.id}}
+        if explicit_secret_migration?(attrs, incoming_credentials, incoming_secret_refs) do
+          :ok
+        else
+          {:error, {:bridge_credentials_migration_required, existing.id}}
+        end
 
       true ->
         :ok
     end
+  end
+
+  defp explicit_secret_migration?(attrs, credentials, secret_refs) do
+    Map.has_key?(attrs, :credentials) and credentials == %{} and
+      Map.has_key?(attrs, :secret_refs) and is_map(secret_refs) and map_size(secret_refs) > 0
   end
 
   defp normalize_routing_policy(attrs, existing) do

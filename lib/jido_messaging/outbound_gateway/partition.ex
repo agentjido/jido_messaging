@@ -9,8 +9,6 @@ defmodule Jido.Messaging.OutboundGateway.Partition do
   @dialyzer {:nowarn_function, media_text_fallback: 3}
 
   alias Jido.Messaging.AdapterBridge
-  alias Jido.Messaging.BridgeConfig
-  alias Jido.Messaging.ConfigStore
   alias Jido.Messaging.DeadLetter
   alias Jido.Messaging.MediaPolicy
   alias Jido.Messaging.OutboundGateway
@@ -399,21 +397,13 @@ defmodule Jido.Messaging.OutboundGateway.Partition do
   end
 
   defp adapter_opts(instance_module, request) do
-    case ConfigStore.get_bridge_config(instance_module, request.bridge_id) do
-      {:ok, %BridgeConfig{adapter_module: adapter_module} = config} when adapter_module == request.channel ->
-        SecretResolver.adapter_opts_for_config(
-          instance_module,
-          config,
-          request.operation,
-          request.opts
-        )
-
-      {:ok, %BridgeConfig{adapter_module: adapter_module}} ->
-        {:error, {:bridge_adapter_mismatch, request.bridge_id, adapter_module, request.channel}}
-
-      {:error, :not_found} ->
-        {:ok, request.opts}
-    end
+    SecretResolver.adapter_opts(
+      instance_module,
+      request.bridge_id,
+      request.channel,
+      request.operation,
+      request.opts
+    )
   end
 
   defp media_preflight(request) do

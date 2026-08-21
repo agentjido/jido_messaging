@@ -15,8 +15,8 @@ bridge_rooms:
     bridge_configs:
       - id: "${TELEGRAM_BRIDGE_ID:-telegram-main}"
         adapter_module: Elixir.Jido.Chat.Telegram.Adapter
-        credentials:
-          token: "${TELEGRAM_BOT_TOKEN}"
+        secret_refs:
+          token: "TELEGRAM_BOT_TOKEN"
         opts:
           ingress:
             mode: polling

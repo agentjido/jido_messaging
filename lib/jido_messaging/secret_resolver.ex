@@ -44,9 +44,23 @@ defmodule Jido.Messaging.SecretResolver do
   @spec adapter_opts(module(), String.t(), atom(), keyword()) :: {:ok, keyword()} | {:error, failure() | term()}
   def adapter_opts(instance_module, bridge_id, operation, opts \\ [])
       when is_atom(instance_module) and is_binary(bridge_id) and is_atom(operation) and is_list(opts) do
+    adapter_opts(instance_module, bridge_id, nil, operation, opts)
+  end
+
+  @doc "Adds operation-scoped credentials after checking the requested adapter."
+  @spec adapter_opts(module(), String.t(), module(), atom(), keyword()) ::
+          {:ok, keyword()} | {:error, failure() | term()}
+  def adapter_opts(instance_module, bridge_id, adapter_module, operation, opts)
+      when is_atom(instance_module) and is_binary(bridge_id) and
+             (is_atom(adapter_module) or is_nil(adapter_module)) and is_atom(operation) and is_list(opts) do
     case ConfigStore.get_bridge_config(instance_module, bridge_id) do
-      {:ok, %BridgeConfig{} = config} -> adapter_opts_for_config(instance_module, config, operation, opts)
-      {:error, :not_found} -> {:ok, opts}
+      {:ok, %BridgeConfig{} = config} ->
+        with :ok <- validate_adapter(config, adapter_module) do
+          adapter_opts_for_config(instance_module, config, operation, opts)
+        end
+
+      {:error, :not_found} ->
+        {:ok, opts}
     end
   end
 
@@ -70,7 +84,7 @@ defmodule Jido.Messaging.SecretResolver do
           {:ok, map()} | {:error, failure() | term()}
   def resolve_credentials(instance_module, %BridgeConfig{} = config, operation)
       when is_atom(instance_module) and is_atom(operation) do
-    refs = config.secret_refs || %{}
+    refs = Map.get(config, :secret_refs, %{}) || %{}
 
     if map_size(refs) == 0 do
       {:ok, %{}}
@@ -103,6 +117,14 @@ defmodule Jido.Messaging.SecretResolver do
   defp configured_resolver(instance_module) do
     Application.get_env(instance_module, :secret_resolver) ||
       Application.get_env(:jido_messaging, :secret_resolver)
+  end
+
+  defp validate_adapter(_config, nil), do: :ok
+
+  defp validate_adapter(%BridgeConfig{adapter_module: adapter_module}, adapter_module), do: :ok
+
+  defp validate_adapter(%BridgeConfig{} = config, adapter_module) do
+    {:error, {:bridge_adapter_mismatch, config.id, config.adapter_module, adapter_module}}
   end
 
   defp resolve_one(nil, _reference, _context), do: {:error, :resolver_not_configured}
