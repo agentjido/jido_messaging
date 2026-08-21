@@ -68,6 +68,10 @@ Before the tracker closes:
 - Run the persistence conformance contract against ETS and SQLite.
 - Run the restart reconciliation tests in CI.
 - Run the SQLite concurrency and shared-file isolation tests in CI.
+- Run legacy SQLite migration races and participant binding claim races in CI.
+- Confirm that adapter mismatch tests stop credentials before provider code runs.
+- Confirm that secret migration tests find no resolved marker values in durable storage or diagnostics.
 - Run core tests without `jido_ai`, and run the optional integration lane with `jido_ai`.
+- Run transcript parity tests for SQL-bounded pages, nullable timestamps, and nested projection scope checks.
 - Confirm that the durable delivery RFC has accepted follow-up issues or an explicit deferred decision.
 - Confirm that each pull request above has merged and that the corrected guarantees remain true on `main`.
