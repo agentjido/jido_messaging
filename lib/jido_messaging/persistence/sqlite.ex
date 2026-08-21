@@ -10,6 +10,9 @@ defmodule Jido.Messaging.Persistence.SQLite do
   ## Options
 
     * `:path` - SQLite database path. Defaults to `"data/jido_messaging.sqlite3"`.
+    * `:instance_id` - stable namespace for all records. Direct adapter use
+      defaults to `"default"`. A `Jido.Messaging` runtime supplies its module
+      name when this option is absent.
 
   """
 
@@ -29,23 +32,28 @@ defmodule Jido.Messaging.Persistence.SQLite do
   }
 
   @table "jido_messaging_records"
+  @default_instance_id "default"
 
-  defstruct [:db, :path]
+  defstruct [:db, :path, :instance_id]
 
   @type t :: %__MODULE__{
           db: reference(),
-          path: String.t()
+          path: String.t(),
+          instance_id: String.t()
         }
 
   @impl true
   def init(opts) do
     path = opts |> Keyword.get(:path, "data/jido_messaging.sqlite3") |> to_string()
+    instance_id = opts |> Keyword.get(:instance_id, @default_instance_id) |> normalize_instance_id()
     :ok = ensure_parent_dir(path)
 
     with {:ok, db} <- Sqlite3.open(path) do
-      case migrate(db) do
+      :ok = Sqlite3.set_busy_timeout(db, 5_000)
+
+      case with_migration_lock(path, fn -> migrate(db, instance_id) end) do
         :ok ->
-          {:ok, %__MODULE__{db: db, path: path}}
+          {:ok, %__MODULE__{db: db, path: path, instance_id: instance_id}}
 
         {:error, _reason} = error ->
           _ = Sqlite3.close(db)
@@ -68,10 +76,11 @@ defmodule Jido.Messaging.Persistence.SQLite do
       state.db,
       """
       DELETE FROM #{@table}
-      WHERE (kind = 'room' AND id = ?1)
-         OR (kind IN ('message', 'thread', 'room_binding', 'routing_policy') AND room_id = ?1)
+      WHERE instance_id = ?1
+        AND ((kind = 'room' AND id = ?2)
+         OR (kind IN ('message', 'thread', 'room_binding', 'routing_policy') AND room_id = ?2))
       """,
-      [room_id]
+      [state.instance_id, room_id]
     )
   end
 
@@ -116,7 +125,8 @@ defmodule Jido.Messaging.Persistence.SQLite do
     thread_id = Keyword.get(opts, :thread_id)
 
     with {:ok, direction} <- cursor_direction(opts),
-         {where, params} <- message_scope(room_id, thread_id),
+         {scope_where, scope_params} <- message_scope(room_id, thread_id),
+         {where, params} <- with_instance_scope(state, scope_where, scope_params),
          {:ok, cursor} <- resolve_message_cursor(state, where, params, direction),
          {where, params, order, reverse?} <- apply_message_cursor(where, params, direction, cursor),
          {:ok, rows} <- query_message_page(state, where, params, order, limit) do
@@ -470,12 +480,82 @@ defmodule Jido.Messaging.Persistence.SQLite do
     |> File.mkdir_p()
   end
 
-  defp migrate(db) do
-    exec(db, """
-    PRAGMA journal_mode = WAL;
-    PRAGMA synchronous = NORMAL;
+  defp migrate(db, instance_id) do
+    with :ok <-
+           exec(db, """
+           PRAGMA journal_mode = WAL;
+           PRAGMA synchronous = NORMAL;
+           """),
+         {:ok, columns} <- query_all(db, "PRAGMA table_info(#{@table})", []) do
+      cond do
+        columns == [] ->
+          with :ok <- exec(db, create_table_sql()), do: create_indexes(db)
+
+        Enum.any?(columns, fn [_cid, name | _rest] -> name == "instance_id" end) ->
+          create_indexes(db)
+
+        true ->
+          migrate_legacy_table(db, instance_id)
+      end
+    end
+  end
+
+  defp with_migration_lock(path, fun) do
+    resource = {__MODULE__, Path.expand(path), :schema_migration}
+
+    case :global.trans({resource, self()}, fun) do
+      :aborted -> {:error, :migration_lock_aborted}
+      result -> result
+    end
+  end
+
+  defp migrate_legacy_table(db, instance_id) do
+    result =
+      with :ok <- exec(db, "BEGIN IMMEDIATE"),
+           {:ok, columns} <- query_all(db, "PRAGMA table_info(#{@table})", []),
+           :ok <- migrate_legacy_table_locked(db, columns, instance_id),
+           :ok <- exec(db, "COMMIT") do
+        :ok
+      end
+
+    case result do
+      :ok ->
+        :ok
+
+      {:error, _reason} = error ->
+        _ = exec(db, "ROLLBACK")
+        error
+    end
+  end
+
+  defp migrate_legacy_table_locked(db, columns, instance_id) do
+    if Enum.any?(columns, fn [_cid, name | _rest] -> name == "instance_id" end) do
+      create_indexes(db)
+    else
+      with :ok <- exec(db, "ALTER TABLE #{@table} RENAME TO #{@table}_legacy"),
+           :ok <- exec(db, create_table_sql()),
+           :ok <-
+             run(
+               db,
+               """
+               INSERT INTO #{@table}
+                 (instance_id, kind, id, room_id, thread_id, inserted_at, channel, bridge_id, external_id, payload)
+               SELECT ?1, kind, id, room_id, thread_id, inserted_at, channel, bridge_id, external_id, payload
+               FROM #{@table}_legacy
+               """,
+               [instance_id]
+             ),
+           :ok <- exec(db, "DROP TABLE #{@table}_legacy") do
+        create_indexes(db)
+      end
+    end
+  end
+
+  defp create_table_sql do
+    """
 
     CREATE TABLE IF NOT EXISTS #{@table} (
+      instance_id TEXT NOT NULL,
       kind TEXT NOT NULL,
       id TEXT NOT NULL,
       room_id TEXT,
@@ -485,17 +565,21 @@ defmodule Jido.Messaging.Persistence.SQLite do
       bridge_id TEXT,
       external_id TEXT,
       payload BLOB NOT NULL,
-      PRIMARY KEY (kind, id)
+      PRIMARY KEY (instance_id, kind, id)
     );
+    """
+  end
 
+  defp create_indexes(db) do
+    exec(db, """
     CREATE INDEX IF NOT EXISTS #{@table}_room_idx
-      ON #{@table} (kind, room_id);
+      ON #{@table} (instance_id, kind, room_id);
 
     CREATE INDEX IF NOT EXISTS #{@table}_thread_idx
-      ON #{@table} (kind, thread_id);
+      ON #{@table} (instance_id, kind, thread_id);
 
     CREATE INDEX IF NOT EXISTS #{@table}_external_idx
-      ON #{@table} (kind, channel, bridge_id, external_id);
+      ON #{@table} (instance_id, kind, channel, bridge_id, external_id);
     """)
   end
 
@@ -510,9 +594,9 @@ defmodule Jido.Messaging.Persistence.SQLite do
       state.db,
       """
       INSERT INTO #{@table}
-        (kind, id, room_id, thread_id, inserted_at, channel, bridge_id, external_id, payload)
-      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
-      ON CONFLICT(kind, id) DO UPDATE SET
+        (instance_id, kind, id, room_id, thread_id, inserted_at, channel, bridge_id, external_id, payload)
+      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+      ON CONFLICT(instance_id, kind, id) DO UPDATE SET
         room_id = excluded.room_id,
         thread_id = excluded.thread_id,
         inserted_at = excluded.inserted_at,
@@ -522,6 +606,7 @@ defmodule Jido.Messaging.Persistence.SQLite do
         payload = excluded.payload
       """,
       [
+        state.instance_id,
         kind,
         id,
         Keyword.get(opts, :room_id),
@@ -540,7 +625,7 @@ defmodule Jido.Messaging.Persistence.SQLite do
   end
 
   defp fetch_one(state, kind, filters) do
-    {where, params} = where_clause([{"kind", kind} | filters])
+    {where, params} = where_clause([{"instance_id", state.instance_id}, {"kind", kind} | filters])
 
     with {:ok, rows} <-
            query_all(
@@ -567,6 +652,7 @@ defmodule Jido.Messaging.Persistence.SQLite do
   defp query_records(state, where, params, opts) do
     limit = Keyword.fetch!(opts, :limit)
     order = Keyword.get(opts, :order, "inserted_at ASC, id ASC")
+    {where, params} = with_instance_scope(state, where, params)
 
     with {:ok, rows} <-
            query_all(
@@ -585,7 +671,16 @@ defmodule Jido.Messaging.Persistence.SQLite do
   end
 
   defp delete_record(state, kind, id) do
-    run(state.db, "DELETE FROM #{@table} WHERE kind = ?1 AND id = ?2", [kind, id])
+    run(
+      state.db,
+      "DELETE FROM #{@table} WHERE instance_id = ?1 AND kind = ?2 AND id = ?3",
+      [state.instance_id, kind, id]
+    )
+  end
+
+  defp with_instance_scope(state, where, params) do
+    instance_param = length(params) + 1
+    {"(#{where}) AND instance_id = ?#{instance_param}", params ++ [state.instance_id]}
   end
 
   defp find_record({:ok, records}, predicate) do
@@ -803,4 +898,11 @@ defmodule Jido.Messaging.Persistence.SQLite do
   defp normalize_term(value) when is_atom(value), do: Atom.to_string(value)
   defp normalize_term(value) when is_integer(value), do: Integer.to_string(value)
   defp normalize_term(value), do: inspect(value)
+
+  defp normalize_instance_id(value) do
+    case value |> to_string() |> String.trim() do
+      "" -> @default_instance_id
+      instance_id -> instance_id
+    end
+  end
 end

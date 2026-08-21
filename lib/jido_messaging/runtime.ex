@@ -44,7 +44,11 @@ defmodule Jido.Messaging.Runtime do
   def init(opts) do
     instance_module = Keyword.fetch!(opts, :instance_module)
     persistence = Keyword.fetch!(opts, :persistence)
-    persistence_opts = Keyword.get(opts, :persistence_opts, [])
+
+    persistence_opts =
+      opts
+      |> Keyword.get(:persistence_opts, [])
+      |> maybe_add_instance_scope(persistence, instance_module)
 
     case persistence.init(persistence_opts) do
       {:ok, persistence_state} ->
@@ -71,4 +75,10 @@ defmodule Jido.Messaging.Runtime do
   def handle_call(:get_persistence, _from, state) do
     {:reply, {state.persistence, state.persistence_state}, state}
   end
+
+  defp maybe_add_instance_scope(opts, Jido.Messaging.Persistence.SQLite, instance_module) do
+    Keyword.put_new(opts, :instance_id, Atom.to_string(instance_module))
+  end
+
+  defp maybe_add_instance_scope(opts, _persistence, _instance_module), do: opts
 end

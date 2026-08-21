@@ -120,6 +120,13 @@ bridge bindings, routing policies, bridge configs, and ingress subscriptions.
 `room_timeline/2` returns top-level messages, grouped thread replies, and reply
 counts from the persisted message records.
 
+Each `Jido.Messaging` runtime uses its module name as a SQLite instance
+namespace. Different runtimes can therefore share one database path without
+reading or replacing each other's records. Set `persistence_opts: [instance_id:
+"stable-name"]` when a namespace must remain stable across a module rename.
+Direct calls to `Jido.Messaging.Persistence.SQLite.init/1` use the explicit
+default namespace `"default"` unless `:instance_id` is supplied.
+
 ### Presence Signals
 
 `Jido.Messaging.Presence` bridges transport-specific presence state, such as

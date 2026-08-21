@@ -9,6 +9,14 @@ defmodule Jido.Messaging.Persistence.SQLiteTest do
     use Jido.Messaging, persistence: SQLite
   end
 
+  defmodule SQLiteMessagingOne do
+    use Jido.Messaging, persistence: SQLite
+  end
+
+  defmodule SQLiteMessagingTwo do
+    use Jido.Messaging, persistence: SQLite
+  end
+
   test "persists rooms, participants, threads, and messages across adapter restarts" do
     path = tmp_path("sqlite-durable")
     {:ok, state} = SQLite.init(path: path)
@@ -103,6 +111,81 @@ defmodule Jido.Messaging.Persistence.SQLiteTest do
     assert {:ok, ^message} = SQLite.get_message_by_external_id(state, :slack, "workspace-1", "166000.100")
 
     :ok = Sqlite3.close(state.db)
+  end
+
+  test "isolates direct adapter instances that share one database" do
+    path = tmp_path("sqlite-instance-isolation")
+    {:ok, first} = SQLite.init(path: path, instance_id: "instance-one")
+    {:ok, second} = SQLite.init(path: path, instance_id: "instance-two")
+
+    first_room = Room.new(%{id: "room:shared-id", type: :channel, name: "first"})
+    second_room = Room.new(%{id: "room:shared-id", type: :channel, name: "second"})
+
+    assert {:ok, ^first_room} = SQLite.save_room(first, first_room)
+    assert {:error, :not_found} = SQLite.get_room(second, first_room.id)
+    assert {:ok, ^second_room} = SQLite.save_room(second, second_room)
+
+    assert {:ok, ^first_room} = SQLite.get_room(first, first_room.id)
+    assert {:ok, ^second_room} = SQLite.get_room(second, second_room.id)
+
+    assert :ok = SQLite.delete_room(first, first_room.id)
+    assert {:error, :not_found} = SQLite.get_room(first, first_room.id)
+    assert {:ok, ^second_room} = SQLite.get_room(second, second_room.id)
+
+    :ok = Sqlite3.close(first.db)
+    :ok = Sqlite3.close(second.db)
+  end
+
+  test "runtime modules receive separate default namespaces" do
+    path = tmp_path("sqlite-runtime-isolation")
+
+    start_supervised!({SQLiteMessagingOne, persistence_opts: [path: path]})
+    start_supervised!({SQLiteMessagingTwo, persistence_opts: [path: path]})
+
+    first_room = Room.new(%{id: "room:runtime-shared", type: :group, name: "runtime-one"})
+    second_room = Room.new(%{id: "room:runtime-shared", type: :group, name: "runtime-two"})
+
+    assert {:ok, ^first_room} = SQLiteMessagingOne.save_room(first_room)
+    assert {:error, :not_found} = SQLiteMessagingTwo.get_room(first_room.id)
+    assert {:ok, ^second_room} = SQLiteMessagingTwo.save_room(second_room)
+
+    assert {:ok, ^first_room} = SQLiteMessagingOne.get_room(first_room.id)
+    assert {:ok, ^second_room} = SQLiteMessagingTwo.get_room(second_room.id)
+  end
+
+  test "migrates legacy records into the opening instance namespace" do
+    path = tmp_path("sqlite-instance-migration")
+    room = Room.new(%{id: "room:legacy", type: :channel, name: "legacy"})
+    create_legacy_database(path, room)
+
+    {:ok, migrated} = SQLite.init(path: path, instance_id: "migrated-instance")
+    assert {:ok, ^room} = SQLite.get_room(migrated, room.id)
+    :ok = Sqlite3.close(migrated.db)
+
+    {:ok, isolated} = SQLite.init(path: path, instance_id: "other-instance")
+    assert {:error, :not_found} = SQLite.get_room(isolated, room.id)
+    :ok = Sqlite3.close(isolated.db)
+  end
+
+  test "serializes concurrent legacy migration and keeps the first namespace owner" do
+    path = tmp_path("sqlite-concurrent-instance-migration")
+    room = Room.new(%{id: "room:legacy-race", type: :channel, name: "legacy-race"})
+    create_legacy_database(path, room)
+
+    states =
+      ["migration-one", "migration-two"]
+      |> Task.async_stream(fn instance_id -> SQLite.init(path: path, instance_id: instance_id) end,
+        ordered: false,
+        timeout: 10_000
+      )
+      |> Enum.map(fn {:ok, {:ok, state}} -> state end)
+
+    assert length(states) == 2
+
+    owners = Enum.filter(states, fn state -> match?({:ok, ^room}, SQLite.get_room(state, room.id)) end)
+    assert [_single_owner] = owners
+
+    Enum.each(states, fn state -> :ok = Sqlite3.close(state.db) end)
   end
 
   test "normalizes non-string external binding values without crashing" do
@@ -301,5 +384,40 @@ defmodule Jido.Messaging.Persistence.SQLiteTest do
       inserted_at: inserted_at,
       thread_id: thread_id
     })
+  end
+
+  defp create_legacy_database(path, room) do
+    {:ok, db} = Sqlite3.open(path)
+
+    :ok =
+      Sqlite3.execute(db, """
+      CREATE TABLE jido_messaging_records (
+        kind TEXT NOT NULL,
+        id TEXT NOT NULL,
+        room_id TEXT,
+        thread_id TEXT,
+        inserted_at TEXT,
+        channel TEXT,
+        bridge_id TEXT,
+        external_id TEXT,
+        payload BLOB NOT NULL,
+        PRIMARY KEY (kind, id)
+      )
+      """)
+
+    {:ok, statement} =
+      Sqlite3.prepare(
+        db,
+        """
+        INSERT INTO jido_messaging_records
+          (kind, id, room_id, payload)
+        VALUES (?1, ?2, ?3, ?4)
+        """
+      )
+
+    :ok = Sqlite3.bind(statement, ["room", room.id, room.id, {:blob, :erlang.term_to_binary(room)}])
+    :done = Sqlite3.step(db, statement)
+    :ok = Sqlite3.release(db, statement)
+    :ok = Sqlite3.close(db)
   end
 end
