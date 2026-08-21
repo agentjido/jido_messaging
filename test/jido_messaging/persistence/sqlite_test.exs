@@ -513,6 +513,7 @@ defmodule Jido.Messaging.Persistence.SQLiteTest do
 
   defp tmp_path(prefix) do
     path = Path.join(["tmp", "#{prefix}-#{System.unique_integer([:positive])}.sqlite3"])
+    File.mkdir_p!(Path.dirname(path))
     File.rm(path)
     path
   end
