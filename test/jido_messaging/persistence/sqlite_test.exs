@@ -167,6 +167,27 @@ defmodule Jido.Messaging.Persistence.SQLiteTest do
     :ok = Sqlite3.close(isolated.db)
   end
 
+  test "serializes concurrent legacy migration and keeps the first namespace owner" do
+    path = tmp_path("sqlite-concurrent-instance-migration")
+    room = Room.new(%{id: "room:legacy-race", type: :channel, name: "legacy-race"})
+    create_legacy_database(path, room)
+
+    states =
+      ["migration-one", "migration-two"]
+      |> Task.async_stream(fn instance_id -> SQLite.init(path: path, instance_id: instance_id) end,
+        ordered: false,
+        timeout: 10_000
+      )
+      |> Enum.map(fn {:ok, {:ok, state}} -> state end)
+
+    assert length(states) == 2
+
+    owners = Enum.filter(states, fn state -> match?({:ok, ^room}, SQLite.get_room(state, room.id)) end)
+    assert [_single_owner] = owners
+
+    Enum.each(states, fn state -> :ok = Sqlite3.close(state.db) end)
+  end
+
   test "normalizes non-string external binding values without crashing" do
     path = tmp_path("sqlite-normalized-bindings")
     {:ok, state} = SQLite.init(path: path)

@@ -49,7 +49,9 @@ defmodule Jido.Messaging.Persistence.SQLite do
     :ok = ensure_parent_dir(path)
 
     with {:ok, db} <- Sqlite3.open(path) do
-      case migrate(db, instance_id) do
+      :ok = Sqlite3.set_busy_timeout(db, 5_000)
+
+      case with_migration_lock(path, fn -> migrate(db, instance_id) end) do
         :ok ->
           {:ok, %__MODULE__{db: db, path: path, instance_id: instance_id}}
 
@@ -498,10 +500,39 @@ defmodule Jido.Messaging.Persistence.SQLite do
     end
   end
 
+  defp with_migration_lock(path, fun) do
+    resource = {__MODULE__, Path.expand(path), :schema_migration}
+
+    case :global.trans({resource, self()}, fun) do
+      :aborted -> {:error, :migration_lock_aborted}
+      result -> result
+    end
+  end
+
   defp migrate_legacy_table(db, instance_id) do
     result =
       with :ok <- exec(db, "BEGIN IMMEDIATE"),
-           :ok <- exec(db, "ALTER TABLE #{@table} RENAME TO #{@table}_legacy"),
+           {:ok, columns} <- query_all(db, "PRAGMA table_info(#{@table})", []),
+           :ok <- migrate_legacy_table_locked(db, columns, instance_id),
+           :ok <- exec(db, "COMMIT") do
+        :ok
+      end
+
+    case result do
+      :ok ->
+        :ok
+
+      {:error, _reason} = error ->
+        _ = exec(db, "ROLLBACK")
+        error
+    end
+  end
+
+  defp migrate_legacy_table_locked(db, columns, instance_id) do
+    if Enum.any?(columns, fn [_cid, name | _rest] -> name == "instance_id" end) do
+      create_indexes(db)
+    else
+      with :ok <- exec(db, "ALTER TABLE #{@table} RENAME TO #{@table}_legacy"),
            :ok <- exec(db, create_table_sql()),
            :ok <-
              run(
@@ -514,19 +545,9 @@ defmodule Jido.Messaging.Persistence.SQLite do
                """,
                [instance_id]
              ),
-           :ok <- exec(db, "DROP TABLE #{@table}_legacy"),
-           :ok <- create_indexes(db),
-           :ok <- exec(db, "COMMIT") do
-        :ok
+           :ok <- exec(db, "DROP TABLE #{@table}_legacy") do
+        create_indexes(db)
       end
-
-    case result do
-      :ok ->
-        :ok
-
-      {:error, _reason} = error ->
-        _ = exec(db, "ROLLBACK")
-        error
     end
   end
 

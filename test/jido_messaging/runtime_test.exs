@@ -4,6 +4,10 @@ defmodule Jido.Messaging.RuntimeTest do
   alias Jido.Messaging.Runtime
   alias Jido.Messaging.Persistence.ETS
 
+  defmodule StrictOptionsPersistence do
+    def init(opts), do: {:ok, opts}
+  end
+
   describe "Runtime" do
     test "get_state/1 returns full runtime state" do
       {:ok, pid} =
@@ -35,6 +39,18 @@ defmodule Jido.Messaging.RuntimeTest do
 
       assert persistence == ETS
       assert is_struct(persistence_state, ETS)
+    end
+
+    test "does not add SQLite namespace options to custom persistence adapters" do
+      {:ok, pid} =
+        Runtime.start_link(
+          name: :test_runtime_strict_options,
+          instance_module: TestModule3,
+          persistence: StrictOptionsPersistence,
+          persistence_opts: [allowed: true]
+        )
+
+      assert {StrictOptionsPersistence, [allowed: true]} = Runtime.get_persistence(pid)
     end
   end
 end
