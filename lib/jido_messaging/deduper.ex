@@ -64,6 +64,10 @@ defmodule Jido.Messaging.Deduper do
   Returns `{:ok, token}` for a new or expired key and `:duplicate` while a
   current claim or completed mark exists. The caller must pass the token to
   `commit/4` after successful processing or to `release/3` after a failure.
+
+  Claims and completed marks are process-local ETS data. They are lost when
+  the messaging runtime restarts, so this module does not provide durable or
+  cross-node deduplication.
   """
   @spec claim(module(), key(), non_neg_integer() | nil) :: {:ok, claim_token()} | :duplicate
   def claim(messaging_module, key, ttl_ms \\ nil) do
