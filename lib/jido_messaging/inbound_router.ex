@@ -5,15 +5,32 @@ defmodule Jido.Messaging.InboundRouter do
   This module resolves adapter modules from bridge configuration, then:
   1. verifies/parses webhook requests via `Jido.Chat.Adapter`
   2. canonicalizes routing via `Jido.Chat.process_event/4`
-  3. persists message events through `Jido.Messaging.Ingest`
+  3. persists new messages through `Jido.Messaging.Ingest`
+  4. applies update and delete events to existing persisted messages
+
+  Lifecycle results use `:message_updated` and `:message_deleted` tuples. If
+  the provider message ID is unknown, routing returns `:message_not_found`
+  without creating a message or failing ingress.
   """
 
   alias Jido.Chat
   alias Jido.Chat.{Adapter, EventEnvelope, Incoming, WebhookRequest, WebhookResponse}
-  alias Jido.Messaging.{BridgeConfig, BridgeServer, ConfigStore, Ingest, IngressOutcome, SecretResolver}
+
+  alias Jido.Messaging.{
+    BridgeConfig,
+    BridgeServer,
+    ConfigStore,
+    Ingest,
+    IngressOutcome,
+    MessageLifecycle,
+    SecretResolver
+  }
 
   @type ingest_result ::
           {:ok, {:message, Jido.Messaging.Message.t(), Ingest.context(), EventEnvelope.t()}}
+          | {:ok, {:message_updated, Jido.Messaging.Message.t(), EventEnvelope.t()}}
+          | {:ok, {:message_deleted, Jido.Messaging.Message.t(), EventEnvelope.t()}}
+          | {:ok, {:message_not_found, EventEnvelope.t()}}
           | {:ok, {:duplicate, EventEnvelope.t()}}
           | {:ok, {:event, EventEnvelope.t()}}
           | {:ok, :noop}
@@ -197,6 +214,33 @@ defmodule Jido.Messaging.InboundRouter do
     })
   end
 
+  defp normalize_outcome(
+         mode,
+         bridge_id,
+         {:ok, {:message_updated, message, %EventEnvelope{} = event}},
+         response
+       ) do
+    lifecycle_outcome(mode, bridge_id, :message_updated, message, event, response)
+  end
+
+  defp normalize_outcome(
+         mode,
+         bridge_id,
+         {:ok, {:message_deleted, message, %EventEnvelope{} = event}},
+         response
+       ) do
+    lifecycle_outcome(mode, bridge_id, :message_deleted, message, event, response)
+  end
+
+  defp normalize_outcome(
+         mode,
+         bridge_id,
+         {:ok, {:message_not_found, %EventEnvelope{} = event}},
+         response
+       ) do
+    lifecycle_outcome(mode, bridge_id, :message_not_found, nil, event, response)
+  end
+
   defp normalize_outcome(mode, bridge_id, {:ok, {:duplicate, %EventEnvelope{} = event}}, response) do
     IngressOutcome.new(%{
       mode: mode,
@@ -240,6 +284,26 @@ defmodule Jido.Messaging.InboundRouter do
 
   defp ingest_result_from_outcome(%IngressOutcome{status: :event, envelope: %EventEnvelope{} = event}),
     do: {:ok, {:event, event}}
+
+  defp ingest_result_from_outcome(%IngressOutcome{
+         status: :message_updated,
+         message: message,
+         envelope: %EventEnvelope{} = event
+       }),
+       do: {:ok, {:message_updated, message, event}}
+
+  defp ingest_result_from_outcome(%IngressOutcome{
+         status: :message_deleted,
+         message: message,
+         envelope: %EventEnvelope{} = event
+       }),
+       do: {:ok, {:message_deleted, message, event}}
+
+  defp ingest_result_from_outcome(%IngressOutcome{
+         status: :message_not_found,
+         envelope: %EventEnvelope{} = event
+       }),
+       do: {:ok, {:message_not_found, event}}
 
   defp ingest_result_from_outcome(%IngressOutcome{status: :duplicate, envelope: %EventEnvelope{} = event}),
     do: {:ok, {:duplicate, event}}
@@ -312,9 +376,36 @@ defmodule Jido.Messaging.InboundRouter do
           end
         end
 
+      event_type when event_type in [:message_updated, :message_deleted] ->
+        apply_message_lifecycle(instance_module, adapter_module, bridge_id, routed_event)
+
       _other ->
         {:ok, {:event, routed_event}}
     end
+  end
+
+  defp apply_message_lifecycle(instance_module, adapter_module, bridge_id, %EventEnvelope{} = event) do
+    channel_type = Jido.Messaging.AdapterBridge.channel_type(adapter_module)
+
+    case MessageLifecycle.apply(instance_module, channel_type, bridge_id, event.payload) do
+      {:ok, {:updated, message}} -> {:ok, {:message_updated, message, event}}
+      {:ok, {:deleted, message}} -> {:ok, {:message_deleted, message, event}}
+      {:ok, :not_found} -> {:ok, {:message_not_found, event}}
+      {:error, _reason} = error -> error
+    end
+  end
+
+  defp lifecycle_outcome(mode, bridge_id, status, message, event, response) do
+    IngressOutcome.new(%{
+      mode: mode,
+      bridge_id: bridge_id,
+      status: status,
+      envelope: event,
+      message: message,
+      context: nil,
+      response: response,
+      error: nil
+    })
   end
 
   defp to_incoming(%Incoming{} = incoming), do: {:ok, incoming}
@@ -364,7 +455,6 @@ defmodule Jido.Messaging.InboundRouter do
   defp stringify(value), do: to_string(value)
 
   defp normalize_incoming_for_ingest(%Incoming{} = incoming), do: Map.from_struct(incoming)
-  defp normalize_incoming_for_ingest(incoming) when is_map(incoming), do: incoming
 
   defp normalize_payload_event(_adapter_module, %EventEnvelope{} = envelope, _opts),
     do: {:ok, envelope}
@@ -443,6 +533,9 @@ defmodule Jido.Messaging.InboundRouter do
 
   defp webhook_format_result({:ok, :noop}), do: {:ok, nil, :noop}
   defp webhook_format_result({:ok, {:event, event}}), do: {:ok, nil, event}
+  defp webhook_format_result({:ok, {:message_updated, _message, event}}), do: {:ok, nil, event}
+  defp webhook_format_result({:ok, {:message_deleted, _message, event}}), do: {:ok, nil, event}
+  defp webhook_format_result({:ok, {:message_not_found, event}}), do: {:ok, nil, event}
   defp webhook_format_result({:ok, {:message, _message, _context, event}}), do: {:ok, nil, event}
   defp webhook_format_result({:ok, {:duplicate, event}}), do: {:ok, nil, event}
   defp webhook_format_result({:error, _reason} = error), do: error

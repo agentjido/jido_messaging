@@ -69,7 +69,13 @@ defmodule Jido.Messaging.AdapterBridgeTest do
     assert AdapterBridge.capabilities(LegacyListAdapter) == [:text, :image, :threads, :custom_capability]
   end
 
-  test "capabilities/1 falls back to text when no capability declaration exists" do
-    assert AdapterBridge.capabilities(NoCapabilitiesAdapter) == [:text, :streaming]
+  test "capabilities/1 uses core fallbacks when no capability declaration exists" do
+    assert AdapterBridge.capabilities(NoCapabilitiesAdapter) == [
+             :text,
+             :streaming,
+             :card_charts,
+             :card_tables,
+             :link_action_ids
+           ]
   end
 end
