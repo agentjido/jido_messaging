@@ -111,10 +111,13 @@ defmodule Jido.Messaging.Persistence.ETS do
   @impl true
   def delete_room(state, room_id) do
     true = :ets.delete(state.rooms, room_id)
-    # Also delete associated messages
+
     message_ids = :ets.lookup(state.room_messages, room_id) |> Enum.map(&elem(&1, 1))
-    Enum.each(message_ids, fn msg_id -> :ets.delete(state.messages, msg_id) end)
-    true = :ets.delete(state.room_messages, room_id)
+    Enum.each(message_ids, &delete_message(state, &1))
+
+    {:ok, bindings} = list_room_bindings(state, room_id)
+    Enum.each(bindings, &delete_room_binding(state, &1.id))
+
     delete_threads_for_room(state, room_id)
     :ok
   end
@@ -263,6 +266,7 @@ defmodule Jido.Messaging.Persistence.ETS do
   def delete_message(state, message_id) do
     case :ets.lookup(state.messages, message_id) do
       [{^message_id, message}] ->
+        delete_external_id_index(state, message)
         true = :ets.delete(state.messages, message_id)
         # Remove from room_messages index (bag table - need to delete specific object)
         true = :ets.delete_object(state.room_messages, {message.room_id, message_id})
@@ -371,6 +375,9 @@ defmodule Jido.Messaging.Persistence.ETS do
 
         case :ets.insert_new(state.room_bindings, {binding_key, room.id}) do
           true ->
+            {:ok, _binding} =
+              create_room_binding(state, room.id, channel, bridge_id, external_id, %{})
+
             {:ok, room}
 
           false ->
@@ -459,6 +466,7 @@ defmodule Jido.Messaging.Persistence.ETS do
         channel = get_in(message.metadata, [:channel])
         bridge_id = get_in(message.metadata, [:bridge_id])
 
+        delete_external_id_index(state, message)
         updated_message = %{message | external_id: external_id}
         true = :ets.insert(state.messages, {message_id, updated_message})
 
@@ -530,7 +538,7 @@ defmodule Jido.Messaging.Persistence.ETS do
     case :ets.lookup(state.room_bindings_by_id, binding_id) do
       [{^binding_id, binding}] ->
         key = binding_key(binding.channel, binding.bridge_id, binding.external_room_id)
-        true = :ets.delete(state.room_bindings, key)
+        true = :ets.delete_object(state.room_bindings, {key, binding.room_id})
         true = :ets.delete(state.room_bindings_by_id, binding_id)
         true = :ets.delete_object(state.room_bindings_by_room, {binding.room_id, binding_id})
         :ok
@@ -828,6 +836,20 @@ defmodule Jido.Messaging.Persistence.ETS do
   defp maybe_delete_thread_message(state, %Message{thread_id: thread_id, id: message_id})
        when is_binary(thread_id) do
     true = :ets.delete_object(state.thread_messages, {thread_id, message_id})
+    :ok
+  end
+
+  defp delete_external_id_index(_state, %Message{external_id: nil}), do: :ok
+
+  defp delete_external_id_index(state, %Message{} = message) do
+    channel = get_in(message.metadata, [:channel])
+    bridge_id = get_in(message.metadata, [:bridge_id])
+
+    if channel && bridge_id do
+      key = {channel, bridge_id, message.external_id}
+      true = :ets.delete_object(state.message_external_ids, {key, message.id})
+    end
+
     :ok
   end
 
