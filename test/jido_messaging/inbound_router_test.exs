@@ -118,11 +118,29 @@ defmodule Jido.Messaging.InboundRouterTest do
     end
   end
 
+  defmodule BridgeSecretResolver do
+    @behaviour Jido.Messaging.SecretResolver
+
+    @impl true
+    def resolve(:bridge_secret, _context), do: {:ok, "bridge-secret"}
+  end
+
   defmodule TestMessaging do
     use Jido.Messaging, persistence: Jido.Messaging.Persistence.ETS
   end
 
   setup do
+    original_resolver = Application.get_env(TestMessaging, :secret_resolver)
+    Application.put_env(TestMessaging, :secret_resolver, BridgeSecretResolver)
+
+    on_exit(fn ->
+      if is_nil(original_resolver) do
+        Application.delete_env(TestMessaging, :secret_resolver)
+      else
+        Application.put_env(TestMessaging, :secret_resolver, original_resolver)
+      end
+    end)
+
     start_supervised!(TestMessaging)
     {:ok, _bridge} = TestMessaging.put_bridge_config(%{id: "bridge_tg", adapter_module: RouterAdapter})
     :ok
@@ -191,7 +209,7 @@ defmodule Jido.Messaging.InboundRouterTest do
         TestMessaging.put_bridge_config(%{
           id: "bridge_config_aware",
           adapter_module: ConfigAwareAdapter,
-          credentials: %{token: "bridge-secret"},
+          secret_refs: %{token: :bridge_secret},
           opts: %{parse_result: :noop}
         })
 
