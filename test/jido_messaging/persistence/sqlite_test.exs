@@ -3,7 +3,7 @@ defmodule Jido.Messaging.Persistence.SQLiteTest do
 
   alias Exqlite.Sqlite3
   alias Jido.Chat.{Participant, Room}
-  alias Jido.Messaging.{CommandResult, Message, Persistence.SQLite, Thread}
+  alias Jido.Messaging.{CommandResult, Message, Persistence.SQLite, RoomBinding, Thread}
 
   defmodule SQLiteMessaging do
     use Jido.Messaging, persistence: SQLite
@@ -186,6 +186,62 @@ defmodule Jido.Messaging.Persistence.SQLiteTest do
     assert [_single_owner] = owners
 
     Enum.each(states, fn state -> :ok = Sqlite3.close(state.db) end)
+  end
+
+  test "creates one canonical room during concurrent external binding calls" do
+    path = tmp_path("sqlite-concurrent-room-binding")
+    {:ok, state} = SQLite.init(path: path)
+
+    results =
+      1..40
+      |> Task.async_stream(
+        fn _index ->
+          SQLite.get_or_create_room_by_external_binding(
+            state,
+            :slack,
+            "workspace-atomic",
+            "channel-atomic",
+            %{type: :channel, name: "atomic-room"}
+          )
+        end,
+        max_concurrency: 40,
+        ordered: false,
+        timeout: 5_000
+      )
+      |> Enum.to_list()
+
+    room_ids = Enum.map(results, fn {:ok, {:ok, room}} -> room.id end)
+    assert length(room_ids) == 40
+    assert room_ids |> Enum.uniq() |> length() == 1
+
+    assert {:ok, rooms} = SQLite.list_rooms(state)
+    assert length(rooms) == 1
+    assert {:ok, [binding]} = SQLite.list_room_bindings(state, hd(room_ids))
+    assert binding.external_room_id == "channel-atomic"
+
+    :ok = Sqlite3.close(state.db)
+  end
+
+  test "removes duplicate bindings before it creates unique indexes" do
+    path = tmp_path("sqlite-duplicate-binding-migration")
+    {first_room, second_room} = create_database_with_duplicate_bindings(path)
+
+    {:ok, state} = SQLite.init(path: path)
+
+    assert {:ok, canonical_room} =
+             SQLite.get_room_by_external_binding(
+               state,
+               :slack,
+               "workspace-duplicate",
+               "channel-duplicate"
+             )
+
+    assert canonical_room.id in [first_room.id, second_room.id]
+    assert {:ok, first_bindings} = SQLite.list_room_bindings(state, first_room.id)
+    assert {:ok, second_bindings} = SQLite.list_room_bindings(state, second_room.id)
+    assert length(first_bindings) + length(second_bindings) == 1
+
+    :ok = Sqlite3.close(state.db)
   end
 
   test "scopes provider identities by bridge and supports explicit links" do
@@ -574,5 +630,87 @@ defmodule Jido.Messaging.Persistence.SQLiteTest do
     :done = Sqlite3.step(db, statement)
     :ok = Sqlite3.release(db, statement)
     :ok = Sqlite3.close(db)
+  end
+
+  defp create_database_with_duplicate_bindings(path) do
+    {:ok, db} = Sqlite3.open(path)
+
+    :ok =
+      Sqlite3.execute(db, """
+      CREATE TABLE jido_messaging_records (
+        kind TEXT NOT NULL,
+        id TEXT NOT NULL,
+        room_id TEXT,
+        thread_id TEXT,
+        inserted_at TEXT,
+        channel TEXT,
+        bridge_id TEXT,
+        external_id TEXT,
+        payload BLOB NOT NULL,
+        PRIMARY KEY (kind, id)
+      )
+      """)
+
+    first_room = Room.new(%{id: "room:duplicate-one", type: :channel, name: "first"})
+    second_room = Room.new(%{id: "room:duplicate-two", type: :channel, name: "second"})
+
+    first_binding =
+      RoomBinding.new(%{
+        id: "binding:duplicate-one",
+        room_id: first_room.id,
+        channel: :slack,
+        bridge_id: "workspace-duplicate",
+        external_room_id: "channel-duplicate"
+      })
+
+    second_binding = %{first_binding | id: "binding:duplicate-two", room_id: second_room.id}
+
+    raw_insert(db, "room", first_room.id, first_room, room_id: first_room.id)
+    raw_insert(db, "room", second_room.id, second_room, room_id: second_room.id)
+
+    raw_insert(db, "room_binding", first_binding.id, first_binding,
+      room_id: first_room.id,
+      channel: :slack,
+      bridge_id: "workspace-duplicate",
+      external_id: "channel-duplicate"
+    )
+
+    raw_insert(db, "room_binding", second_binding.id, second_binding,
+      room_id: second_room.id,
+      channel: :slack,
+      bridge_id: "workspace-duplicate",
+      external_id: "channel-duplicate"
+    )
+
+    :ok = Sqlite3.close(db)
+    {first_room, second_room}
+  end
+
+  defp raw_insert(db, kind, id, record, opts) do
+    {:ok, statement} =
+      Sqlite3.prepare(
+        db,
+        """
+        INSERT INTO jido_messaging_records
+          (kind, id, room_id, thread_id, inserted_at, channel, bridge_id, external_id, payload)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+        """
+      )
+
+    :ok =
+      Sqlite3.bind(statement, [
+        kind,
+        id,
+        Keyword.get(opts, :room_id),
+        Keyword.get(opts, :thread_id),
+        nil,
+        opts |> Keyword.get(:channel) |> then(&if(&1, do: to_string(&1), else: nil)),
+        Keyword.get(opts, :bridge_id),
+        Keyword.get(opts, :external_id),
+        {:blob, :erlang.term_to_binary(record)}
+      ])
+
+    :done = Sqlite3.step(db, statement)
+    :ok = Sqlite3.release(db, statement)
   end
 end

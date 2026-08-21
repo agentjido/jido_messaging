@@ -253,18 +253,24 @@ defmodule Jido.Messaging.Persistence.SQLite do
 
   @impl true
   def get_or_create_room_by_external_binding(state, channel, bridge_id, external_id, attrs) do
-    case get_room_by_external_binding(state, channel, bridge_id, external_id) do
-      {:ok, room} ->
-        {:ok, room}
+    binding_lock(state, {:room, channel, bridge_id, external_id}, fn ->
+      transaction(state, fn transaction_state ->
+        case get_room_by_external_binding(transaction_state, channel, bridge_id, external_id) do
+          {:ok, room} ->
+            {:ok, room}
 
-      {:error, :not_found} ->
-        room = build_bound_room(channel, bridge_id, external_id, attrs)
+          {:error, :not_found} ->
+            room = build_bound_room(channel, bridge_id, external_id, attrs)
 
-        with {:ok, room} <- save_room(state, room),
-             {:ok, _binding} <- create_room_binding(state, room.id, channel, bridge_id, external_id, %{}) do
-          {:ok, room}
+            with {:ok, room} <- save_room(transaction_state, room),
+                 {:ok, _binding} <-
+                   create_room_binding(transaction_state, room.id, channel, bridge_id, external_id, %{}) do
+              {:ok, room}
+            end
         end
-    end
+      end)
+    end)
+    |> resolve_room_binding_conflict(state, channel, bridge_id, external_id)
   end
 
   @impl true
@@ -275,22 +281,45 @@ defmodule Jido.Messaging.Persistence.SQLite do
   @impl true
   def get_or_create_participant_by_external_binding(state, channel, bridge_id, external_id, attrs) do
     participant_binding_lock(state, channel, external_id, fn ->
-      case find_participant_binding(state, channel, bridge_id, external_id) do
-        {:ok, participant} ->
-          {:ok, participant}
+      transaction(state, fn transaction_state ->
+        case find_participant_binding(transaction_state, channel, bridge_id, external_id) do
+          {:ok, participant} ->
+            {:ok, participant}
 
-        {:error, :not_found} ->
-          claim_legacy_or_create_participant(state, channel, bridge_id, external_id, attrs)
-      end
+          {:error, :not_found} ->
+            claim_legacy_or_create_participant(
+              transaction_state,
+              channel,
+              bridge_id,
+              external_id,
+              attrs
+            )
+        end
+      end)
     end)
   end
 
   @impl true
   def bind_participant_external_id(state, participant_id, channel, bridge_id, external_id) do
+    participant_binding_lock(state, channel, external_id, fn ->
+      transaction(state, fn transaction_state ->
+        do_bind_participant_external_id(
+          transaction_state,
+          participant_id,
+          channel,
+          bridge_id,
+          external_id
+        )
+      end)
+    end)
+    |> public_binding_result()
+  end
+
+  defp do_bind_participant_external_id(state, participant_id, channel, bridge_id, external_id) do
     with {:ok, _participant} <- get_participant(state, participant_id) do
       case find_participant_binding_record(state, channel, bridge_id, external_id) do
         {:ok, %{participant_id: ^participant_id}} ->
-          :ok
+          {:ok, :bound}
 
         {:ok, %{participant_id: existing_participant_id}} ->
           case get_participant(state, existing_participant_id) do
@@ -299,14 +328,27 @@ defmodule Jido.Messaging.Persistence.SQLite do
 
             {:error, :not_found} ->
               :ok = delete_participant_binding_record(state, channel, bridge_id, external_id)
-              bind_participant_external_id(state, participant_id, channel, bridge_id, external_id)
+
+              do_bind_participant_external_id(
+                state,
+                participant_id,
+                channel,
+                bridge_id,
+                external_id
+              )
           end
 
         {:error, :not_found} ->
-          save_participant_binding(state, participant_id, channel, bridge_id, external_id)
+          case save_participant_binding(state, participant_id, channel, bridge_id, external_id) do
+            :ok -> {:ok, :bound}
+            {:error, _reason} = error -> error
+          end
       end
     end
   end
+
+  defp public_binding_result({:ok, :bound}), do: :ok
+  defp public_binding_result({:error, _reason} = error), do: error
 
   @impl true
   def get_message_by_external_id(state, channel, bridge_id, external_id) do
@@ -527,10 +569,10 @@ defmodule Jido.Messaging.Persistence.SQLite do
          {:ok, columns} <- query_all(db, "PRAGMA table_info(#{@table})", []) do
       cond do
         columns == [] ->
-          with :ok <- exec(db, create_table_sql()), do: create_indexes(db)
+          with :ok <- exec(db, create_table_sql()), do: migrate_binding_indexes(db)
 
         Enum.any?(columns, fn [_cid, name | _rest] -> name == "instance_id" end) ->
-          create_indexes(db)
+          migrate_binding_indexes(db)
 
         true ->
           migrate_legacy_table(db, instance_id)
@@ -568,7 +610,7 @@ defmodule Jido.Messaging.Persistence.SQLite do
 
   defp migrate_legacy_table_locked(db, columns, instance_id) do
     if Enum.any?(columns, fn [_cid, name | _rest] -> name == "instance_id" end) do
-      create_indexes(db)
+      with :ok <- dedupe_external_bindings(db), do: create_indexes_locked(db)
     else
       with :ok <- exec(db, "ALTER TABLE #{@table} RENAME TO #{@table}_legacy"),
            :ok <- exec(db, create_table_sql()),
@@ -584,7 +626,7 @@ defmodule Jido.Messaging.Persistence.SQLite do
                [instance_id]
              ),
            :ok <- exec(db, "DROP TABLE #{@table}_legacy") do
-        create_indexes(db)
+        with :ok <- dedupe_external_bindings(db), do: create_indexes_locked(db)
       end
     end
   end
@@ -608,7 +650,48 @@ defmodule Jido.Messaging.Persistence.SQLite do
     """
   end
 
-  defp create_indexes(db) do
+  defp migrate_binding_indexes(db) do
+    result =
+      with :ok <- exec(db, "BEGIN IMMEDIATE"),
+           :ok <- dedupe_external_bindings(db),
+           :ok <- create_indexes_locked(db),
+           :ok <- exec(db, "COMMIT") do
+        :ok
+      end
+
+    case result do
+      :ok ->
+        :ok
+
+      {:error, _reason} = error ->
+        _ = exec(db, "ROLLBACK")
+        error
+    end
+  end
+
+  defp dedupe_external_bindings(db) do
+    exec(db, """
+    DELETE FROM #{@table}
+    WHERE kind = 'room_binding'
+      AND rowid NOT IN (
+        SELECT MIN(rowid)
+        FROM #{@table}
+        WHERE kind = 'room_binding'
+        GROUP BY instance_id, channel, bridge_id, external_id
+      );
+
+    DELETE FROM #{@table}
+    WHERE kind = 'participant_binding'
+      AND rowid NOT IN (
+        SELECT MIN(rowid)
+        FROM #{@table}
+        WHERE kind = 'participant_binding'
+        GROUP BY instance_id, channel, bridge_id, external_id
+      );
+    """)
+  end
+
+  defp create_indexes_locked(db) do
     exec(db, """
     CREATE INDEX IF NOT EXISTS #{@table}_room_idx
       ON #{@table} (instance_id, kind, room_id);
@@ -618,6 +701,10 @@ defmodule Jido.Messaging.Persistence.SQLite do
 
     CREATE INDEX IF NOT EXISTS #{@table}_external_idx
       ON #{@table} (instance_id, kind, channel, bridge_id, external_id);
+
+    CREATE UNIQUE INDEX IF NOT EXISTS #{@table}_room_binding_unique_idx
+      ON #{@table} (instance_id, channel, bridge_id, external_id)
+      WHERE kind = 'room_binding';
 
     CREATE UNIQUE INDEX IF NOT EXISTS #{@table}_participant_binding_unique_idx
       ON #{@table} (instance_id, channel, bridge_id, external_id)
@@ -734,6 +821,88 @@ defmodule Jido.Messaging.Persistence.SQLite do
 
   defp find_record({:error, _reason} = error, _predicate), do: error
 
+  defp binding_lock(state, key, fun) do
+    resource = {__MODULE__, Path.expand(state.path), state.instance_id, :binding, key}
+
+    case :global.trans({resource, self()}, fun) do
+      :aborted -> {:error, :binding_lock_aborted}
+      result -> result
+    end
+  end
+
+  defp transaction(state, fun) do
+    case transaction_connection(state) do
+      {:ok, transaction_db, close?} ->
+        transaction_state = %{state | db: transaction_db}
+
+        try do
+          with :ok <- Sqlite3.set_busy_timeout(transaction_db, 5_000),
+               :ok <- exec(transaction_db, "BEGIN IMMEDIATE") do
+            finish_transaction(transaction_state, fn -> fun.(transaction_state) end)
+          end
+        after
+          if close?, do: Sqlite3.close(transaction_db)
+        end
+
+      {:error, _reason} = error ->
+        error
+    end
+  end
+
+  # A second connection to ":memory:" points at a separate database. The
+  # binding lock serializes transactions that use this test-only path. A
+  # file-backed database uses a dedicated connection so that an unrelated
+  # operation cannot be committed or rolled back with the binding operation.
+  defp transaction_connection(%{path: ":memory:", db: db}), do: {:ok, db, false}
+
+  defp transaction_connection(state) do
+    case Sqlite3.open(state.path) do
+      {:ok, db} -> {:ok, db, true}
+      {:error, _reason} = error -> error
+    end
+  end
+
+  defp finish_transaction(state, fun) do
+    result = fun.()
+
+    case result do
+      {:ok, _value} ->
+        case exec(state.db, "COMMIT") do
+          :ok -> result
+          {:error, _reason} = error -> rollback(state, error)
+        end
+
+      {:error, _reason} = error ->
+        rollback(state, error)
+    end
+  rescue
+    exception -> rollback(state, {:error, exception})
+  catch
+    kind, reason -> rollback(state, {:error, {kind, reason}})
+  end
+
+  defp rollback(state, result) do
+    _ = exec(state.db, "ROLLBACK")
+    result
+  end
+
+  defp resolve_room_binding_conflict({:error, reason} = error, state, channel, bridge_id, external_id) do
+    if unique_constraint_error?(reason) do
+      get_room_by_external_binding(state, channel, bridge_id, external_id)
+    else
+      error
+    end
+  end
+
+  defp resolve_room_binding_conflict(result, _state, _channel, _bridge_id, _external_id), do: result
+
+  defp unique_constraint_error?(reason) do
+    reason
+    |> inspect()
+    |> String.downcase()
+    |> String.contains?("unique constraint")
+  end
+
   defp find_room_binding(state, channel, bridge_id, external_id) do
     fetch_one(state, "room_binding", [
       {"channel", normalize_term(channel)},
@@ -836,8 +1005,8 @@ defmodule Jido.Messaging.Persistence.SQLite do
   end
 
   defp bind_or_resolve_participant(state, participant, channel, bridge_id, external_id, created?) do
-    case bind_participant_external_id(state, participant.id, channel, bridge_id, external_id) do
-      :ok ->
+    case do_bind_participant_external_id(state, participant.id, channel, bridge_id, external_id) do
+      {:ok, :bound} ->
         {:ok, participant}
 
       {:error, {:external_identity_conflict, winner_id}} ->
