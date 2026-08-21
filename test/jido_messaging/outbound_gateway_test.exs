@@ -486,58 +486,82 @@ defmodule Jido.Messaging.OutboundGatewayTest do
     assert outbound_error.attempt == 1
   end
 
-  test "passes selected bridge credentials and settings to the adapter" do
-    start_messaging(partition_count: 1, queue_capacity: 8, max_attempts: 1)
+  describe "bridge adapter options" do
+    test "passes selected bridge credentials and settings to the adapter" do
+      start_messaging(partition_count: 1, queue_capacity: 8, max_attempts: 1)
 
-    {:ok, bridge_config} =
-      TestMessaging.put_bridge_config(%{
-        id: "config_bridge",
-        adapter_module: BridgeConfigChannel,
-        credentials: %{token: "bridge-token"},
-        opts: %{tenant: "tenant-one"}
-      })
+      {:ok, bridge_config} =
+        TestMessaging.put_bridge_config(%{
+          id: "config_bridge",
+          adapter_module: BridgeConfigChannel,
+          credentials: %{token: "bridge-token"},
+          opts: %{tenant: "tenant-one"}
+        })
 
-    context = %{
-      channel: BridgeConfigChannel,
-      bridge_id: "config_bridge",
-      external_room_id: "config_room"
-    }
+      context = %{
+        channel: BridgeConfigChannel,
+        bridge_id: "config_bridge",
+        external_room_id: "config_room"
+      }
 
-    assert {:ok, _result} =
-             OutboundGateway.send_message(TestMessaging, context, "hello", test_pid: self())
+      assert {:ok, _result} =
+               OutboundGateway.send_message(TestMessaging, context, "hello", test_pid: self())
 
-    assert_receive {:bridge_adapter_opts, adapter_opts}
-    assert adapter_opts[:bridge_config] == bridge_config
-    assert adapter_opts[:credentials] == bridge_config.credentials
-    assert adapter_opts[:settings] == bridge_config.opts
-  end
+      assert_receive {:bridge_adapter_opts, adapter_opts}
+      assert adapter_opts[:bridge_config] == bridge_config
+      assert adapter_opts[:credentials] == bridge_config.credentials
+      assert adapter_opts[:settings] == bridge_config.opts
+    end
 
-  test "call-specific adapter options override bridge defaults" do
-    start_messaging(partition_count: 1, queue_capacity: 8, max_attempts: 1)
+    test "call-specific adapter options override bridge defaults" do
+      start_messaging(partition_count: 1, queue_capacity: 8, max_attempts: 1)
 
-    {:ok, _bridge_config} =
-      TestMessaging.put_bridge_config(%{
-        id: "override_bridge",
-        adapter_module: BridgeConfigChannel,
-        credentials: %{token: "stored-token"},
-        opts: %{tenant: "stored-tenant"}
-      })
+      {:ok, _bridge_config} =
+        TestMessaging.put_bridge_config(%{
+          id: "override_bridge",
+          adapter_module: BridgeConfigChannel,
+          credentials: %{token: "stored-token"},
+          opts: %{tenant: "stored-tenant"}
+        })
 
-    context = %{
-      channel: BridgeConfigChannel,
-      bridge_id: "override_bridge",
-      external_room_id: "config_room"
-    }
+      context = %{
+        channel: BridgeConfigChannel,
+        bridge_id: "override_bridge",
+        external_room_id: "config_room"
+      }
 
-    assert {:ok, _result} =
-             OutboundGateway.send_message(TestMessaging, context, "hello",
-               test_pid: self(),
-               credentials: %{token: "override-token"}
-             )
+      assert {:ok, _result} =
+               OutboundGateway.send_message(TestMessaging, context, "hello",
+                 test_pid: self(),
+                 credentials: %{token: "override-token"}
+               )
 
-    assert_receive {:bridge_adapter_opts, adapter_opts}
-    assert adapter_opts[:credentials] == %{token: "override-token"}
-    assert adapter_opts[:settings] == %{tenant: "stored-tenant"}
+      assert_receive {:bridge_adapter_opts, adapter_opts}
+      assert adapter_opts[:credentials] == %{token: "override-token"}
+      assert adapter_opts[:settings] == %{tenant: "stored-tenant"}
+    end
+
+    test "rejects a bridge config for a different adapter" do
+      start_messaging(partition_count: 1, queue_capacity: 8, max_attempts: 1)
+
+      assert {:ok, _bridge_config} =
+               TestMessaging.put_bridge_config(%{
+                 id: "mismatch_bridge",
+                 adapter_module: BridgeConfigChannel,
+                 credentials: %{token: "must-not-leak"}
+               })
+
+      context = %{
+        channel: PartitionChannel,
+        bridge_id: "mismatch_bridge",
+        external_room_id: "config_room"
+      }
+
+      assert {:error, error} = OutboundGateway.send_message(TestMessaging, context, "hello")
+
+      assert error.reason ==
+               {:bridge_adapter_mismatch, "mismatch_bridge", BridgeConfigChannel, PartitionChannel}
+    end
   end
 
   defp start_messaging(opts) do
