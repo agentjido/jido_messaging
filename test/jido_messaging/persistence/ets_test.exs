@@ -136,6 +136,47 @@ defmodule Jido.Messaging.Persistence.ETSTest do
                ETS.get_messages(state, room.id, before: "message:3", after: "message:2")
     end
 
+    test "get_messages/3 traverses boundaries without repeats and rejects stale or out-of-scope cursors", %{
+      state: state
+    } do
+      room = persist_room!(state)
+      messages = pagination_messages(room.id)
+      Enum.each(messages, &ETS.save_message(state, &1))
+
+      assert {:ok, first_page} = ETS.get_messages(state, room.id, limit: 2)
+      assert {:ok, second_page} = ETS.get_messages(state, room.id, before: hd(first_page).id, limit: 2)
+      assert Enum.map(second_page ++ first_page, & &1.id) == Enum.map(messages, & &1.id)
+
+      assert {:ok, []} = ETS.get_messages(state, room.id, before: hd(messages).id, limit: 2)
+      assert {:ok, []} = ETS.get_messages(state, room.id, after: List.last(messages).id, limit: 2)
+
+      assert :ok = ETS.delete_message(state, "message:2")
+      assert {:error, :cursor_not_found} = ETS.get_messages(state, room.id, after: "message:2")
+
+      thread_cursor = pagination_message("message:thread-cursor", room.id, hd(messages).inserted_at, "thread:one")
+      thread_message = pagination_message("message:thread", room.id, List.last(messages).inserted_at, "thread:one")
+      assert {:ok, _message} = ETS.save_message(state, thread_cursor)
+      assert {:ok, _message} = ETS.save_message(state, thread_message)
+
+      assert {:ok, [^thread_message]} =
+               ETS.get_messages(state, room.id, thread_id: "thread:one", after: thread_cursor.id)
+
+      assert {:error, :cursor_not_found} =
+               ETS.get_messages(state, room.id, thread_id: "thread:other", after: thread_cursor.id)
+    end
+
+    test "get_messages/3 gives deterministic order to imported messages without timestamps", %{state: state} do
+      room = persist_room!(state)
+      missing_timestamp = pagination_message("message:missing-time", room.id, nil)
+      timestamped = pagination_message("message:timestamped", room.id, ~U[2026-01-01 00:00:00Z])
+
+      assert {:ok, _message} = ETS.save_message(state, timestamped)
+      assert {:ok, _message} = ETS.save_message(state, missing_timestamp)
+
+      assert {:ok, [^missing_timestamp, ^timestamped]} = ETS.get_messages(state, room.id)
+      assert {:ok, [^timestamped]} = ETS.get_messages(state, room.id, after: missing_timestamp.id)
+    end
+
     test "delete_message/2 removes the room and thread indexes", %{state: state} do
       room = persist_room!(state)
       thread = persist_thread!(state, %{room_id: room.id, external_thread_id: "thread-1"})
@@ -223,14 +264,15 @@ defmodule Jido.Messaging.Persistence.ETSTest do
     ]
   end
 
-  defp pagination_message(id, room_id, inserted_at) do
+  defp pagination_message(id, room_id, inserted_at, thread_id \\ nil) do
     Message.new(%{
       id: id,
       room_id: room_id,
       sender_id: "user:cursor",
       role: :user,
       content: [%{type: :text, text: id}],
-      inserted_at: inserted_at
+      inserted_at: inserted_at,
+      thread_id: thread_id
     })
   end
 end

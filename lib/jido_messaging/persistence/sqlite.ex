@@ -148,7 +148,7 @@ defmodule Jido.Messaging.Persistence.SQLite do
     with {:ok, rows} <-
            query_all(
              state.db,
-             "SELECT inserted_at, id FROM #{@table} WHERE #{where} AND id = ?#{cursor_param} LIMIT 1",
+             "SELECT COALESCE(inserted_at, ''), id FROM #{@table} WHERE #{where} AND id = ?#{cursor_param} LIMIT 1",
              params ++ [cursor_id]
            ) do
       case rows do
@@ -166,8 +166,8 @@ defmodule Jido.Messaging.Persistence.SQLite do
     id_param = timestamp_param + 1
 
     cursor_where =
-      "#{where} AND (inserted_at #{operator} ?#{timestamp_param} OR " <>
-        "(inserted_at = ?#{timestamp_param} AND id #{operator} ?#{id_param}))"
+      "#{where} AND (COALESCE(inserted_at, '') #{operator} ?#{timestamp_param} OR " <>
+        "(COALESCE(inserted_at, '') = ?#{timestamp_param} AND id #{operator} ?#{id_param}))"
 
     order = if direction == :before, do: "DESC", else: "ASC"
     {cursor_where, params ++ [inserted_at, id], order, direction == :before}
@@ -180,7 +180,7 @@ defmodule Jido.Messaging.Persistence.SQLite do
       SELECT payload
       FROM #{@table}
       WHERE #{where}
-      ORDER BY inserted_at #{order}, id #{order}
+      ORDER BY COALESCE(inserted_at, '') #{order}, id #{order}
       LIMIT ?#{length(params) + 1}
       """,
       params ++ [limit]

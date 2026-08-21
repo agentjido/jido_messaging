@@ -253,8 +253,11 @@ defmodule Jido.Messaging.Persistence.ETS do
   end
 
   defp message_order_key(message) do
-    {DateTime.to_unix(message.inserted_at, :microsecond), message.id}
+    {message_timestamp_key(message.inserted_at), message.id}
   end
+
+  defp message_timestamp_key(%DateTime{} = inserted_at), do: DateTime.to_iso8601(inserted_at)
+  defp message_timestamp_key(nil), do: ""
 
   @impl true
   def delete_message(state, message_id) do

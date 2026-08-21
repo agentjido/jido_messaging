@@ -189,6 +189,56 @@ defmodule Jido.Messaging.Persistence.SQLiteTest do
     :ok = Sqlite3.close(state.db)
   end
 
+  test "traverses cursor boundaries and rejects stale or out-of-scope cursors" do
+    path = tmp_path("sqlite-cursor-boundaries")
+    {:ok, state} = SQLite.init(path: path)
+    room = Room.new(%{id: "room:cursor-boundaries", type: :channel, name: "cursor-boundaries"})
+    assert {:ok, ^room} = SQLite.save_room(state, room)
+
+    messages = pagination_messages(room.id)
+    Enum.each(messages, &SQLite.save_message(state, &1))
+
+    assert {:ok, first_page} = SQLite.get_messages(state, room.id, limit: 2)
+    assert {:ok, second_page} = SQLite.get_messages(state, room.id, before: hd(first_page).id, limit: 2)
+    assert Enum.map(second_page ++ first_page, & &1.id) == Enum.map(messages, & &1.id)
+
+    assert {:ok, []} = SQLite.get_messages(state, room.id, before: hd(messages).id, limit: 2)
+    assert {:ok, []} = SQLite.get_messages(state, room.id, after: List.last(messages).id, limit: 2)
+
+    assert :ok = SQLite.delete_message(state, "message:2")
+    assert {:error, :cursor_not_found} = SQLite.get_messages(state, room.id, after: "message:2")
+
+    thread_cursor = pagination_message("message:thread-cursor", room.id, hd(messages).inserted_at, "thread:one")
+    thread_message = pagination_message("message:thread", room.id, List.last(messages).inserted_at, "thread:one")
+    assert {:ok, _message} = SQLite.save_message(state, thread_cursor)
+    assert {:ok, _message} = SQLite.save_message(state, thread_message)
+
+    assert {:ok, [^thread_message]} =
+             SQLite.get_messages(state, room.id, thread_id: "thread:one", after: thread_cursor.id)
+
+    assert {:error, :cursor_not_found} =
+             SQLite.get_messages(state, room.id, thread_id: "thread:other", after: thread_cursor.id)
+
+    :ok = Sqlite3.close(state.db)
+  end
+
+  test "orders imported messages without timestamps consistently with ETS" do
+    path = tmp_path("sqlite-cursor-null-time")
+    {:ok, state} = SQLite.init(path: path)
+    room = Room.new(%{id: "room:cursor-null-time", type: :channel, name: "cursor-null-time"})
+    assert {:ok, ^room} = SQLite.save_room(state, room)
+
+    missing_timestamp = pagination_message("message:missing-time", room.id, nil)
+    timestamped = pagination_message("message:timestamped", room.id, ~U[2026-01-01 00:00:00Z])
+    assert {:ok, _message} = SQLite.save_message(state, timestamped)
+    assert {:ok, _message} = SQLite.save_message(state, missing_timestamp)
+
+    assert {:ok, [^missing_timestamp, ^timestamped]} = SQLite.get_messages(state, room.id)
+    assert {:ok, [^timestamped]} = SQLite.get_messages(state, room.id, after: missing_timestamp.id)
+
+    :ok = Sqlite3.close(state.db)
+  end
+
   test "room_timeline returns raw timeline messages and thread replies" do
     path = tmp_path("sqlite-query")
     start_supervised!({SQLiteMessaging, persistence_opts: [path: path]})
@@ -241,14 +291,15 @@ defmodule Jido.Messaging.Persistence.SQLiteTest do
     ]
   end
 
-  defp pagination_message(id, room_id, inserted_at) do
+  defp pagination_message(id, room_id, inserted_at, thread_id \\ nil) do
     Message.new(%{
       id: id,
       room_id: room_id,
       sender_id: "user:cursor",
       role: :user,
       content: [%{type: :text, text: id}],
-      inserted_at: inserted_at
+      inserted_at: inserted_at,
+      thread_id: thread_id
     })
   end
 end
