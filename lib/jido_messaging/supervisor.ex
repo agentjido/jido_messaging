@@ -74,9 +74,9 @@ defmodule Jido.Messaging.Supervisor do
           {Jido.Messaging.OutboundGateway.Supervisor,
            name: outbound_gateway_supervisor_name, instance_module: instance_module},
           {Jido.Messaging.ConfigStore, name: config_store_name, instance_module: instance_module},
+          {Jido.Messaging.Deduper, name: deduper_name, instance_module: instance_module},
           {Jido.Messaging.InstanceSupervisor, name: instance_supervisor_name, instance_module: instance_module},
-          {Jido.Messaging.BridgeSupervisor, name: bridge_supervisor_name, instance_module: instance_module},
-          {Jido.Messaging.Deduper, name: deduper_name, instance_module: instance_module}
+          {Jido.Messaging.BridgeSupervisor, name: bridge_supervisor_name, instance_module: instance_module}
         ]
 
         onboarding_children =
