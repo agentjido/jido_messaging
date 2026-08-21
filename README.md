@@ -17,7 +17,7 @@ This package is being prepared for the Jido 1.x messaging release line.
 aligned to the Vercel Chat SDK ([chat-sdk.dev/docs](https://www.chat-sdk.dev/docs)).
 
 See [Message Correctness Hardening](docs/message-correctness-hardening.md) for
-the current correctness work, compatibility notes, and merge gates.
+the current guarantees, compatibility notes, and verification gates.
 
 ## Features
 

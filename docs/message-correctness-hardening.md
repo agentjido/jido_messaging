@@ -1,11 +1,11 @@
 # Message Correctness Hardening
 
-This document tracks the message correctness work for the release after 1.1.1.
-The guarantees in this document apply only after all linked pull requests merge.
+This document records the message correctness work for the release after 1.1.1.
+All prerequisite pull requests are merged.
 
 ## Corrected guarantees
 
-After this work merges, `jido_messaging` will give these guarantees:
+`jido_messaging` now gives these guarantees:
 
 - An ingest deduplication key is committed only when the message write succeeds.
 - A bridge uses the configured adapter module and adapter options.
@@ -17,6 +17,7 @@ After this work merges, `jido_messaging` will give these guarantees:
 - Bridge configuration stores secret references, not raw credentials. A configured resolver reads each secret at the operation boundary.
 - `jido_ai` is optional. The core package can compile and run without it.
 - Participant transcript queries use an explicit scope and stable identity rules.
+- Ingest maps stable provider author data to canonical participants.
 
 Durable inbox and outbox delivery is not part of these guarantees. The durable delivery RFC defines that later work. Human approval durability stays outside this package.
 
@@ -36,21 +37,18 @@ Durable inbox and outbox delivery is not part of these guarantees. The durable d
 | P2 | [#51](https://github.com/agentjido/jido_messaging/issues/51) | [#67](https://github.com/agentjido/jido_messaging/pull/67) | Optional `jido_ai` integration |
 | P2 | [#55](https://github.com/agentjido/jido_messaging/issues/55) | [#68](https://github.com/agentjido/jido_messaging/pull/68) | Scoped participant transcripts |
 | P2 | [#56](https://github.com/agentjido/jido_messaging/issues/56) | [#69](https://github.com/agentjido/jido_messaging/pull/69) | Durable inbox and outbox RFC |
+| Follow-up | — | [#71](https://github.com/agentjido/jido_messaging/pull/71) | Stable author identity during ingest |
 
-## Merge plan
+## Merge record
 
-Each pull request starts from the same `origin/main` commit. Merge the focused changes first. Then rebase the dependent and conformance changes.
+The work merged in this order:
 
-1. Merge #58 and #59.
-2. Merge #60 and #61.
-3. Merge #62 and #64.
-4. Rebase and merge #63. Keep the instance and participant scopes from #62 and #64 during conflict resolution.
-5. Rebase and merge #66. Keep the adapter selection rules from #59.
-6. Merge #67.
-7. Rebase and merge #68 on #61, #62, and #64.
-8. Merge #69.
-9. Rebase #65 last. Remove duplicate implementation changes from #61, #62, and #63. Keep the public conformance module and the adapter contract tests.
-10. Merge this release-note change after all child work passes.
+1. Focused correctness changes: #58, #59, #60, #61, #62, and #64.
+2. Dependent SQLite and runtime changes: #63, #66, #67, and #68.
+3. The durable delivery RFC: #69.
+4. The stable author follow-up: #71.
+5. The persistence conformance contract: #65.
+6. These release notes: #70.
 
 ## Compatibility notes
 
@@ -63,7 +61,7 @@ Each pull request starts from the same `origin/main` commit. Merge the focused c
 
 ## Verification gates
 
-Before the tracker closes:
+The release must continue to pass these gates:
 
 - Run the persistence conformance contract against ETS and SQLite.
 - Run the restart reconciliation tests in CI.
@@ -74,4 +72,4 @@ Before the tracker closes:
 - Run core tests without `jido_ai`, and run the optional integration lane with `jido_ai`.
 - Run transcript parity tests for SQL-bounded pages, nullable timestamps, and nested projection scope checks.
 - Confirm that the durable delivery RFC has accepted follow-up issues or an explicit deferred decision.
-- Confirm that each pull request above has merged and that the corrected guarantees remain true on `main`.
+- Confirm that the corrected guarantees remain true on `main`.
