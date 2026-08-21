@@ -49,6 +49,35 @@ defmodule Jido.Messaging.DeduperTest do
     end
   end
 
+  describe "claim lifecycle" do
+    test "blocks a concurrent claim until the first claim is released" do
+      key = {:claim, "release"}
+
+      assert {:ok, token} = Deduper.claim(TestMessaging, key)
+      assert :duplicate = Deduper.claim(TestMessaging, key)
+      assert :ok = Deduper.release(TestMessaging, key, token)
+      assert {:ok, _new_token} = Deduper.claim(TestMessaging, key)
+    end
+
+    test "keeps a committed claim as a duplicate" do
+      key = {:claim, "commit"}
+
+      assert {:ok, token} = Deduper.claim(TestMessaging, key)
+      assert :ok = Deduper.commit(TestMessaging, key, token)
+      assert :duplicate = Deduper.claim(TestMessaging, key)
+    end
+
+    test "does not let an old token release a newer claim" do
+      key = {:claim, "stale"}
+
+      assert {:ok, old_token} = Deduper.claim(TestMessaging, key, 1)
+      Process.sleep(2)
+      assert {:ok, new_token} = Deduper.claim(TestMessaging, key)
+      assert {:error, :stale_claim} = Deduper.release(TestMessaging, key, old_token)
+      assert :ok = Deduper.commit(TestMessaging, key, new_token)
+    end
+  end
+
   describe "mark_seen/3" do
     test "marks a key as seen" do
       key = {:mark, "test"}

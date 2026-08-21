@@ -2,8 +2,9 @@ defmodule Jido.Messaging.Deduper do
   @moduledoc """
   Central message deduplication using ETS with TTL.
 
-  Prevents duplicate processing of inbound messages by tracking seen message keys.
-  Keys expire after a configurable TTL and are periodically swept.
+  Prevents duplicate processing of inbound messages by tracking claimed and
+  completed message keys. Keys expire after a configurable TTL and are
+  periodically swept.
 
   ## Usage
 
@@ -37,6 +38,7 @@ defmodule Jido.Messaging.Deduper do
   def schema, do: @schema
 
   @type key :: term()
+  @type claim_token :: reference()
 
   # Client API
 
@@ -54,6 +56,37 @@ defmodule Jido.Messaging.Deduper do
   def check_and_mark(messaging_module, key, ttl_ms \\ nil) do
     deduper = deduper_name(messaging_module)
     GenServer.call(deduper, {:check_and_mark, key, ttl_ms})
+  end
+
+  @doc """
+  Atomically claim a key before processing starts.
+
+  Returns `{:ok, token}` for a new or expired key and `:duplicate` while a
+  current claim or completed mark exists. The caller must pass the token to
+  `commit/4` after successful processing or to `release/3` after a failure.
+
+  Claims and completed marks are process-local ETS data. They are lost when
+  the messaging runtime restarts, so this module does not provide durable or
+  cross-node deduplication.
+  """
+  @spec claim(module(), key(), non_neg_integer() | nil) :: {:ok, claim_token()} | :duplicate
+  def claim(messaging_module, key, ttl_ms \\ nil) do
+    deduper = deduper_name(messaging_module)
+    GenServer.call(deduper, {:claim, key, ttl_ms})
+  end
+
+  @doc "Commit a claimed key as completed."
+  @spec commit(module(), key(), claim_token(), non_neg_integer() | nil) :: :ok | {:error, :stale_claim}
+  def commit(messaging_module, key, token, ttl_ms \\ nil) when is_reference(token) do
+    deduper = deduper_name(messaging_module)
+    GenServer.call(deduper, {:commit, key, token, ttl_ms})
+  end
+
+  @doc "Release a failed claim so that the key can be retried."
+  @spec release(module(), key(), claim_token()) :: :ok | {:error, :stale_claim}
+  def release(messaging_module, key, token) when is_reference(token) do
+    deduper = deduper_name(messaging_module)
+    GenServer.call(deduper, {:release, key, token})
   end
 
   @doc """
@@ -123,13 +156,54 @@ defmodule Jido.Messaging.Deduper do
     ttl = custom_ttl || state.ttl_ms
     expires_at = now + ttl
 
-    case :ets.lookup(state.table, key) do
-      [{^key, exp}] when exp > now ->
+    case lookup_current(state.table, key, now) do
+      {:current, _entry} ->
         {:reply, :duplicate, state}
 
-      _ ->
-        :ets.insert(state.table, {key, expires_at})
+      :expired_or_missing ->
+        :ets.insert(state.table, {key, :seen, expires_at})
         {:reply, :new, state}
+    end
+  end
+
+  @impl true
+  def handle_call({:claim, key, custom_ttl}, _from, state) do
+    now = System.monotonic_time(:millisecond)
+    ttl = custom_ttl || state.ttl_ms
+
+    case lookup_current(state.table, key, now) do
+      {:current, _entry} ->
+        {:reply, :duplicate, state}
+
+      :expired_or_missing ->
+        token = make_ref()
+        :ets.insert(state.table, {key, :claimed, token, now + ttl})
+        {:reply, {:ok, token}, state}
+    end
+  end
+
+  @impl true
+  def handle_call({:commit, key, token, custom_ttl}, _from, state) do
+    case :ets.lookup(state.table, key) do
+      [{^key, :claimed, ^token, _expires_at}] ->
+        ttl = custom_ttl || state.ttl_ms
+        :ets.insert(state.table, {key, :seen, System.monotonic_time(:millisecond) + ttl})
+        {:reply, :ok, state}
+
+      _ ->
+        {:reply, {:error, :stale_claim}, state}
+    end
+  end
+
+  @impl true
+  def handle_call({:release, key, token}, _from, state) do
+    case :ets.lookup(state.table, key) do
+      [{^key, :claimed, ^token, _expires_at}] ->
+        :ets.delete(state.table, key)
+        {:reply, :ok, state}
+
+      _ ->
+        {:reply, {:error, :stale_claim}, state}
     end
   end
 
@@ -138,10 +212,7 @@ defmodule Jido.Messaging.Deduper do
     now = System.monotonic_time(:millisecond)
 
     result =
-      case :ets.lookup(state.table, key) do
-        [{^key, exp}] when exp > now -> true
-        _ -> false
-      end
+      match?({:current, _entry}, lookup_current(state.table, key, now))
 
     {:reply, result, state}
   end
@@ -152,7 +223,7 @@ defmodule Jido.Messaging.Deduper do
     ttl = custom_ttl || state.ttl_ms
     expires_at = now + ttl
 
-    :ets.insert(state.table, {key, expires_at})
+    :ets.insert(state.table, {key, :seen, expires_at})
     {:reply, :ok, state}
   end
 
@@ -182,8 +253,9 @@ defmodule Jido.Messaging.Deduper do
     now = System.monotonic_time(:millisecond)
 
     :ets.foldl(
-      fn {key, expires_at}, acc ->
-        if expires_at <= now do
+      fn entry, acc ->
+        if entry_expires_at(entry) <= now do
+          key = elem(entry, 0)
           :ets.delete(table, key)
         end
 
@@ -193,4 +265,15 @@ defmodule Jido.Messaging.Deduper do
       table
     )
   end
+
+  defp lookup_current(table, key, now) do
+    case :ets.lookup(table, key) do
+      [{^key, :seen, expires_at} = entry] when expires_at > now -> {:current, entry}
+      [{^key, :claimed, _token, expires_at} = entry] when expires_at > now -> {:current, entry}
+      _ -> :expired_or_missing
+    end
+  end
+
+  defp entry_expires_at({_key, :seen, expires_at}), do: expires_at
+  defp entry_expires_at({_key, :claimed, _token, expires_at}), do: expires_at
 end

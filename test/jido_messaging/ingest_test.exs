@@ -7,6 +7,33 @@ defmodule Jido.Messaging.IngestTest do
     use Jido.Messaging, persistence: Jido.Messaging.Persistence.ETS
   end
 
+  defmodule FailOncePersistence do
+    alias Jido.Messaging.Persistence.ETS
+
+    def init(opts), do: ETS.init(opts)
+    def list_bridge_configs(state, opts), do: ETS.list_bridge_configs(state, opts)
+
+    def get_or_create_room_by_external_binding(state, channel, bridge_id, external_id, attrs),
+      do: ETS.get_or_create_room_by_external_binding(state, channel, bridge_id, external_id, attrs)
+
+    def get_or_create_participant_by_external_id(state, channel, external_id, attrs),
+      do: ETS.get_or_create_participant_by_external_id(state, channel, external_id, attrs)
+
+    def get_message_by_external_id(state, channel, bridge_id, external_id),
+      do: ETS.get_message_by_external_id(state, channel, bridge_id, external_id)
+
+    def save_message(state, message) do
+      Agent.get_and_update(__MODULE__.Switch, fn
+        :fail -> {{:error, :temporary_storage_failure}, :pass}
+        :pass -> {ETS.save_message(state, message), :pass}
+      end)
+    end
+  end
+
+  defmodule FailureMessaging do
+    use Jido.Messaging, persistence: FailOncePersistence
+  end
+
   defmodule MockChannel do
     @behaviour Jido.Chat.Adapter
 
@@ -217,6 +244,113 @@ defmodule Jido.Messaging.IngestTest do
       # instance_module is required for Signal.emit_received to find the Signal Bus
       assert context.instance_module == TestMessaging
       assert is_atom(context.instance_module)
+    end
+
+    test "accepts different messages when the provider does not supply message IDs" do
+      first = %{
+        external_room_id: "chat_without_message_ids",
+        external_user_id: "user_without_message_ids",
+        text: "First",
+        external_message_id: nil
+      }
+
+      second = %{first | text: "Second"}
+
+      assert {:ok, first_message, _context} =
+               Ingest.ingest_incoming(TestMessaging, MockChannel, "no_id_inst", first)
+
+      assert {:ok, second_message, context} =
+               Ingest.ingest_incoming(TestMessaging, MockChannel, "no_id_inst", second)
+
+      refute first_message.id == second_message.id
+      assert {:ok, messages} = TestMessaging.list_messages(context.room.id)
+      assert Enum.map(messages, &hd(&1.content).text) == ["First", "Second"]
+    end
+
+    test "does not dedupe empty or whitespace-only provider message IDs" do
+      base = %{
+        external_room_id: "chat_with_empty_message_ids",
+        external_user_id: "user_with_empty_message_ids",
+        text: "Empty ID",
+        external_message_id: ""
+      }
+
+      assert {:ok, first_message, _context} =
+               Ingest.ingest_incoming(TestMessaging, MockChannel, "empty_id_inst", base)
+
+      assert {:ok, second_message, _context} =
+               Ingest.ingest_incoming(TestMessaging, MockChannel, "empty_id_inst", %{
+                 base
+                 | text: "Whitespace ID",
+                   external_message_id: "   "
+               })
+
+      refute first_message.id == second_message.id
+    end
+
+    test "releases the dedupe claim after a temporary ingest failure" do
+      incoming = %{
+        external_room_id: "chat_retry_after_failure",
+        external_user_id: "user_retry_after_failure",
+        text: "Retry me",
+        external_message_id: "provider-message-1"
+      }
+
+      assert {:error, {:policy_denied, :gating, :denied, "Denied by gater"}} =
+               Ingest.ingest_incoming(TestMessaging, MockChannel, "retry_inst", incoming, gaters: [DenyGater])
+
+      assert {:ok, message, _context} =
+               Ingest.ingest_incoming(TestMessaging, MockChannel, "retry_inst", incoming)
+
+      assert message.external_id == "provider-message-1"
+
+      assert {:ok, :duplicate} =
+               Ingest.ingest_incoming(TestMessaging, MockChannel, "retry_inst", incoming)
+    end
+
+    test "releases the dedupe claim after a persistence failure" do
+      start_supervised!(%{
+        id: FailOncePersistence.Switch,
+        start: {Agent, :start_link, [fn -> :fail end, [name: FailOncePersistence.Switch]]}
+      })
+
+      start_supervised!(FailureMessaging)
+
+      incoming = %{
+        external_room_id: "chat_retry_storage_failure",
+        external_user_id: "user_retry_storage_failure",
+        text: "Retry storage",
+        external_message_id: "provider-storage-message-1"
+      }
+
+      assert {:error, :temporary_storage_failure} =
+               Ingest.ingest_incoming(FailureMessaging, MockChannel, "storage_retry_inst", incoming)
+
+      assert {:ok, message, _context} =
+               Ingest.ingest_incoming(FailureMessaging, MockChannel, "storage_retry_inst", incoming)
+
+      assert message.external_id == "provider-storage-message-1"
+    end
+
+    test "accepts one copy during concurrent delivery of one provider event" do
+      incoming = %{
+        external_room_id: "chat_concurrent_dedupe",
+        external_user_id: "user_concurrent_dedupe",
+        text: "Only once",
+        external_message_id: "provider-concurrent-message-1"
+      }
+
+      results =
+        1..20
+        |> Task.async_stream(
+          fn _index -> Ingest.ingest_incoming(TestMessaging, MockChannel, "concurrent_inst", incoming) end,
+          ordered: false,
+          timeout: 5_000
+        )
+        |> Enum.map(fn {:ok, result} -> result end)
+
+      assert Enum.count(results, &match?({:ok, %Jido.Messaging.Message{}, _context}, &1)) == 1
+      assert Enum.count(results, &(&1 == {:ok, :duplicate})) == 19
     end
 
     test "reuses existing room for same external binding" do

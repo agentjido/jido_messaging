@@ -95,14 +95,8 @@ defmodule Jido.Messaging.Ingest do
     bridge_id = to_string(bridge_id)
     external_room_id = incoming.external_room_id
 
-    dedupe_key = build_dedupe_key(channel_type, bridge_id, incoming)
-
-    case Jido.Messaging.Deduper.check_and_mark(messaging_module, dedupe_key) do
-      :duplicate ->
-        Logger.debug("[Jido.Messaging.Ingest] Duplicate message ignored: #{inspect(dedupe_key)}")
-        {:ok, :duplicate}
-
-      :new ->
+    case build_dedupe_key(channel_type, bridge_id, incoming) do
+      :skip ->
         do_ingest(
           messaging_module,
           channel_module,
@@ -112,7 +106,64 @@ defmodule Jido.Messaging.Ingest do
           incoming,
           opts
         )
+
+      {:ok, dedupe_key} ->
+        ingest_with_dedupe_claim(
+          messaging_module,
+          channel_module,
+          channel_type,
+          bridge_id,
+          external_room_id,
+          incoming,
+          opts,
+          dedupe_key
+        )
     end
+  end
+
+  defp ingest_with_dedupe_claim(
+         messaging_module,
+         channel_module,
+         channel_type,
+         bridge_id,
+         external_room_id,
+         incoming,
+         opts,
+         dedupe_key
+       ) do
+    case Jido.Messaging.Deduper.claim(messaging_module, dedupe_key) do
+      :duplicate ->
+        Logger.debug("[Jido.Messaging.Ingest] Duplicate message ignored: #{inspect(dedupe_key)}")
+        {:ok, :duplicate}
+
+      {:ok, claim_token} ->
+        result =
+          do_ingest(
+            messaging_module,
+            channel_module,
+            channel_type,
+            bridge_id,
+            external_room_id,
+            incoming,
+            opts
+          )
+
+        finalize_dedupe_claim(messaging_module, dedupe_key, claim_token, result)
+    end
+  end
+
+  defp finalize_dedupe_claim(messaging_module, dedupe_key, claim_token, {:ok, _message, _context} = result) do
+    case Jido.Messaging.Deduper.commit(messaging_module, dedupe_key, claim_token) do
+      :ok -> :ok
+      {:error, :stale_claim} -> Logger.warning("[Jido.Messaging.Ingest] Dedupe claim expired before commit")
+    end
+
+    result
+  end
+
+  defp finalize_dedupe_claim(messaging_module, dedupe_key, claim_token, {:error, _reason} = result) do
+    _ = Jido.Messaging.Deduper.release(messaging_module, dedupe_key, claim_token)
+    result
   end
 
   @doc """
@@ -262,8 +313,15 @@ defmodule Jido.Messaging.Ingest do
     external_message_id = Map.get(incoming, :external_message_id)
     external_room_id = Map.get(incoming, :external_room_id)
 
-    {channel_type, bridge_id, external_room_id, external_message_id}
+    if usable_external_id?(external_message_id) do
+      {:ok, {channel_type, bridge_id, to_string(external_room_id), to_string(external_message_id)}}
+    else
+      :skip
+    end
   end
+
+  defp usable_external_id?(external_id) when is_binary(external_id), do: String.trim(external_id) != ""
+  defp usable_external_id?(external_id), do: not is_nil(external_id)
 
   # Private helpers
 
