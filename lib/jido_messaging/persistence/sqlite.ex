@@ -103,10 +103,11 @@ defmodule Jido.Messaging.Persistence.SQLite do
       state.db,
       """
       DELETE FROM #{@table}
-      WHERE (kind = 'participant' AND id = ?1)
-         OR (kind = 'participant_binding' AND room_id = ?1)
+      WHERE instance_id = ?1
+        AND ((kind = 'participant' AND id = ?2)
+          OR (kind = 'participant_binding' AND room_id = ?2))
       """,
-      [participant_id]
+      [state.instance_id, participant_id]
     )
   end
 
@@ -797,11 +798,12 @@ defmodule Jido.Messaging.Persistence.SQLite do
              state.db,
              """
              INSERT INTO #{@table}
-               (kind, id, room_id, channel, bridge_id, external_id, payload)
-             VALUES ('participant_binding', ?1, ?2, ?3, ?4, ?5, ?6)
+               (instance_id, kind, id, room_id, channel, bridge_id, external_id, payload)
+             VALUES (?1, 'participant_binding', ?2, ?3, ?4, ?5, ?6, ?7)
              ON CONFLICT DO NOTHING
              """,
              [
+               state.instance_id,
                id,
                participant_id,
                normalized_channel,
@@ -860,6 +862,7 @@ defmodule Jido.Messaging.Persistence.SQLite do
     resource = {
       __MODULE__,
       Path.expand(state.path),
+      state.instance_id,
       :participant_binding,
       normalize_term(channel),
       normalize_term(external_id)
