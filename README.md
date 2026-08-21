@@ -135,6 +135,40 @@ use the explicit `"default"` bridge scope. SQLite assigns an unclaimed legacy
 participant record to the first matching scoped identity; applications can use
 the binding API before traffic starts when a different migration is required.
 
+### Participant Transcripts and Search Projections
+
+Participant history requires an instance-bound list of rooms that the caller
+is allowed to read:
+
+```elixir
+{:ok, scope} = MyApp.Messaging.history_scope(allowed_room_ids, %{policy: "support-agent"})
+
+{:ok, entries} =
+  MyApp.Messaging.participant_transcript("participant-123", scope,
+    limit: 50,
+    before: cursor_message_id
+  )
+```
+
+Each entry contains stable canonical message and participant IDs, the room ID,
+provider message and participant IDs, channel, bridge, timestamp, and the
+canonical message record. ETS and SQLite apply the same stable message cursor
+contract. A cursor outside the allowed rooms is reported as not found. A scope
+from one messaging instance cannot be used by another instance.
+
+Full-text search is optional. Configure a module that implements
+`Jido.Messaging.SearchProjection`, or pass it as the `:projection` option. The
+projection always receives the instance and `HistoryScope`. Canonical messages
+remain the source of truth. Use `rebuild_transcript_search/3` to page through
+canonical history and replace the projection after data loss or a projection
+schema change. The core does not call projection `upsert/3` or `delete/3`
+callbacks from low-level persistence writes. Applications that maintain an
+incremental index call `upsert_transcript_search/3` and
+`delete_transcript_search/4` from their committed message event consumer. The
+helpers enforce the same instance and room scope before they invoke the
+projection. This keeps a failed optional index from changing canonical message
+commit behavior. Small deployments can omit a projection.
+
 ### Presence Signals
 
 `Jido.Messaging.Presence` bridges transport-specific presence state, such as

@@ -532,6 +532,78 @@ defmodule Jido.Messaging.Persistence.SQLiteTest do
     :ok = Sqlite3.close(state.db)
   end
 
+  test "backfills sender IDs for participant transcript queries" do
+    path = tmp_path("sqlite-participant-sender-migration")
+    File.mkdir_p!(Path.dirname(path))
+    {:ok, db} = Sqlite3.open(path)
+
+    :ok =
+      Sqlite3.execute(db, """
+      CREATE TABLE jido_messaging_records (
+        kind TEXT NOT NULL,
+        id TEXT NOT NULL,
+        room_id TEXT,
+        thread_id TEXT,
+        inserted_at TEXT,
+        channel TEXT,
+        bridge_id TEXT,
+        external_id TEXT,
+        payload BLOB NOT NULL,
+        PRIMARY KEY (kind, id)
+      );
+      """)
+
+    legacy_message =
+      Message.new(%{
+        id: "message:legacy-sender",
+        room_id: "room:legacy-sender",
+        sender_id: "participant:legacy-sender",
+        role: :user,
+        content: [%{type: "text", text: "legacy"}],
+        inserted_at: DateTime.from_unix!(1_700_000_000),
+        status: :sent
+      })
+
+    {:ok, statement} =
+      Sqlite3.prepare(
+        db,
+        """
+        INSERT INTO jido_messaging_records
+          (kind, id, room_id, thread_id, inserted_at, channel, bridge_id, external_id, payload)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+        """
+      )
+
+    :ok =
+      Sqlite3.bind(statement, [
+        "message",
+        legacy_message.id,
+        legacy_message.room_id,
+        nil,
+        DateTime.to_iso8601(legacy_message.inserted_at),
+        nil,
+        nil,
+        nil,
+        {:blob, :erlang.term_to_binary(legacy_message)}
+      ])
+
+    :done = Sqlite3.step(db, statement)
+    :ok = Sqlite3.release(db, statement)
+    :ok = Sqlite3.close(db)
+
+    {:ok, state} = SQLite.init(path: path)
+
+    assert {:ok, [^legacy_message]} =
+             SQLite.get_participant_messages(
+               state,
+               legacy_message.sender_id,
+               [legacy_message.room_id],
+               limit: 10
+             )
+
+    :ok = Sqlite3.close(state.db)
+  end
+
   test "room_timeline returns raw timeline messages and thread replies" do
     path = tmp_path("sqlite-query")
     start_supervised!({SQLiteMessaging, persistence_opts: [path: path]})

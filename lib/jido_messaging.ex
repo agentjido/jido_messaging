@@ -196,6 +196,54 @@ defmodule Jido.Messaging do
         Jido.Messaging.room_timeline(__jido_messaging__(:runtime), room_id, opts)
       end
 
+      @doc "Build an instance-bound authorization scope for history queries"
+      def history_scope(room_ids, metadata \\ %{}) do
+        Jido.Messaging.HistoryScope.new(__MODULE__, room_ids, metadata)
+      end
+
+      @doc "Return messages sent by one canonical participant in the allowed history scope"
+      def participant_transcript(participant_id, scope, opts \\ []) do
+        Jido.Messaging.participant_transcript(
+          __MODULE__,
+          __jido_messaging__(:runtime),
+          participant_id,
+          scope,
+          opts
+        )
+      end
+
+      @doc "Search an optional transcript projection within the allowed history scope"
+      def search_transcript(query, scope, opts \\ []) do
+        Jido.Messaging.search_transcript(__MODULE__, query, scope, opts)
+      end
+
+      @doc "Upsert one committed canonical message into the optional search projection"
+      def upsert_transcript_search(message_id, scope, opts \\ []) do
+        Jido.Messaging.upsert_transcript_search(
+          __MODULE__,
+          __jido_messaging__(:runtime),
+          message_id,
+          scope,
+          opts
+        )
+      end
+
+      @doc "Delete one committed canonical message from the optional search projection"
+      def delete_transcript_search(message_id, room_id, scope, opts \\ []) do
+        Jido.Messaging.delete_transcript_search(__MODULE__, message_id, room_id, scope, opts)
+      end
+
+      @doc "Rebuild the optional search projection from canonical participant history"
+      def rebuild_transcript_search(participant_id, scope, opts \\ []) do
+        Jido.Messaging.rebuild_transcript_search(
+          __MODULE__,
+          __jido_messaging__(:runtime),
+          participant_id,
+          scope,
+          opts
+        )
+      end
+
       @doc "Delete a message"
       def delete_message(message_id) do
         Jido.Messaging.delete_message(__jido_messaging__(:runtime), message_id)
@@ -838,6 +886,79 @@ defmodule Jido.Messaging do
   def room_timeline(runtime, room_id, opts \\ []) do
     with {:ok, messages} <- list_messages(runtime, room_id, opts) do
       {:ok, Jido.Messaging.Query.room_timeline(messages)}
+    end
+  end
+
+  @doc """
+  Return participant-scoped canonical history within an explicit room scope.
+
+  The scope must belong to `instance_module`. The persistence query receives
+  only the allowed room IDs, so cursors from other rooms return
+  `{:error, :cursor_not_found}`.
+  """
+  def participant_transcript(instance_module, runtime, participant_id, scope, opts \\ [])
+      when is_atom(instance_module) and is_binary(participant_id) and is_list(opts) do
+    with :ok <- validate_history_scope(instance_module, scope),
+         {persistence, persistence_state} <- Runtime.get_persistence(runtime),
+         {:ok, participant} <- persistence.get_participant(persistence_state, participant_id),
+         {:ok, messages} <-
+           persistence.get_participant_messages(persistence_state, participant_id, scope.room_ids, opts) do
+      {:ok, Enum.map(messages, &Jido.Messaging.TranscriptEntry.new(instance_module, participant, &1))}
+    end
+  end
+
+  @doc "Search a configured optional transcript projection."
+  def search_transcript(instance_module, query, scope, opts \\ [])
+      when is_atom(instance_module) and is_binary(query) and is_list(opts) do
+    with :ok <- validate_history_scope(instance_module, scope),
+         {:ok, projection} <- search_projection(instance_module, opts),
+         :ok <- validate_projection(projection) do
+      context = %{instance_module: instance_module, scope: scope}
+
+      with {:ok, entries} <- projection.search(query, context, Keyword.delete(opts, :projection)),
+           :ok <- validate_projection_results(entries, instance_module, scope) do
+        {:ok, entries}
+      end
+    end
+  end
+
+  @doc "Upsert one committed canonical message into a configured search projection."
+  def upsert_transcript_search(instance_module, runtime, message_id, scope, opts \\ [])
+      when is_atom(instance_module) and is_binary(message_id) and is_list(opts) do
+    with :ok <- validate_history_scope(instance_module, scope),
+         {:ok, projection} <- search_projection(instance_module, opts),
+         :ok <- validate_projection(projection),
+         {persistence, persistence_state} <- Runtime.get_persistence(runtime),
+         {:ok, message} <- persistence.get_message(persistence_state, message_id),
+         :ok <- validate_history_room(scope, message.room_id),
+         {:ok, participant} <- persistence.get_participant(persistence_state, message.sender_id) do
+      entry = Jido.Messaging.TranscriptEntry.new(instance_module, participant, message)
+      context = %{instance_module: instance_module, scope: scope}
+      projection.upsert(entry, context, Keyword.delete(opts, :projection))
+    end
+  end
+
+  @doc "Delete one committed canonical message from a configured search projection."
+  def delete_transcript_search(instance_module, message_id, room_id, scope, opts \\ [])
+      when is_atom(instance_module) and is_binary(message_id) and is_binary(room_id) and is_list(opts) do
+    with :ok <- validate_history_scope(instance_module, scope),
+         :ok <- validate_history_room(scope, room_id),
+         {:ok, projection} <- search_projection(instance_module, opts),
+         :ok <- validate_projection(projection) do
+      context = %{instance_module: instance_module, scope: scope}
+      projection.delete(message_id, context, Keyword.delete(opts, :projection))
+    end
+  end
+
+  @doc "Rebuild a configured search projection from canonical participant history."
+  def rebuild_transcript_search(instance_module, runtime, participant_id, scope, opts \\ [])
+      when is_atom(instance_module) and is_binary(participant_id) and is_list(opts) do
+    with :ok <- validate_history_scope(instance_module, scope),
+         {:ok, projection} <- search_projection(instance_module, opts),
+         :ok <- validate_projection(projection),
+         {:ok, entries} <- collect_transcript(instance_module, runtime, participant_id, scope, opts) do
+      context = %{instance_module: instance_module, scope: scope}
+      projection.rebuild(entries, context, Keyword.drop(opts, [:projection, :batch_size]))
     end
   end
 
@@ -2161,6 +2282,120 @@ defmodule Jido.Messaging do
   end
 
   defp runtime_name(instance_module), do: Module.concat(instance_module, :Runtime)
+
+  defp validate_history_scope(
+         instance_module,
+         %Jido.Messaging.HistoryScope{instance_module: instance_module, room_ids: room_ids}
+       )
+       when is_list(room_ids),
+       do: :ok
+
+  defp validate_history_scope(_instance_module, %Jido.Messaging.HistoryScope{}) do
+    {:error, :history_scope_instance_mismatch}
+  end
+
+  defp validate_history_scope(_instance_module, _scope), do: {:error, :history_scope_required}
+
+  defp validate_history_room(scope, room_id) do
+    if room_id in scope.room_ids, do: :ok, else: {:error, :history_scope_violation}
+  end
+
+  defp search_projection(instance_module, opts) do
+    projection =
+      Keyword.get(opts, :projection) ||
+        Application.get_env(instance_module, :search_projection) ||
+        Application.get_env(:jido_messaging, :search_projection)
+
+    if is_atom(projection) and not is_nil(projection) do
+      {:ok, projection}
+    else
+      {:error, :search_projection_not_configured}
+    end
+  end
+
+  defp validate_projection(projection) do
+    callbacks = [upsert: 3, delete: 3, search: 3, rebuild: 3]
+
+    if Code.ensure_loaded?(projection) and
+         Enum.all?(callbacks, fn {name, arity} -> function_exported?(projection, name, arity) end) do
+      :ok
+    else
+      {:error, :invalid_search_projection}
+    end
+  end
+
+  defp validate_projection_results(entries, instance_module, scope) when is_list(entries) do
+    allowed_rooms = MapSet.new(scope.room_ids)
+
+    if Enum.all?(entries, fn
+         %Jido.Messaging.TranscriptEntry{instance_module: ^instance_module, room_id: room_id} = entry ->
+           MapSet.member?(allowed_rooms, room_id) and projection_entry_consistent?(entry)
+
+         _other ->
+           false
+       end) do
+      :ok
+    else
+      {:error, :search_projection_scope_violation}
+    end
+  end
+
+  defp validate_projection_results(_entries, _instance_module, _scope) do
+    {:error, :invalid_search_projection_result}
+  end
+
+  defp projection_entry_consistent?(%Jido.Messaging.TranscriptEntry{
+         canonical_message_id: canonical_message_id,
+         canonical_participant_id: canonical_participant_id,
+         room_id: room_id,
+         provider_message_id: provider_message_id,
+         inserted_at: inserted_at,
+         message: %Message{} = message
+       }) do
+    message.id == canonical_message_id and
+      message.sender_id == canonical_participant_id and
+      message.room_id == room_id and
+      message.external_id == provider_message_id and
+      message.inserted_at == inserted_at
+  end
+
+  defp projection_entry_consistent?(_entry), do: false
+
+  defp collect_transcript(instance_module, runtime, participant_id, scope, opts) do
+    batch_size = opts |> Keyword.get(:batch_size, 500) |> normalize_transcript_batch_size()
+
+    page_opts =
+      opts
+      |> Keyword.drop([:projection, :batch_size, :before, :after])
+      |> Keyword.put(:limit, batch_size)
+
+    with {:ok, latest} <- participant_transcript(instance_module, runtime, participant_id, scope, page_opts) do
+      collect_older_transcript(instance_module, runtime, participant_id, scope, page_opts, latest)
+    end
+  end
+
+  defp collect_older_transcript(_instance_module, _runtime, _participant_id, _scope, _opts, []), do: {:ok, []}
+
+  defp collect_older_transcript(instance_module, runtime, participant_id, scope, opts, entries) do
+    before = entries |> List.first() |> Map.fetch!(:canonical_message_id)
+
+    case participant_transcript(instance_module, runtime, participant_id, scope, Keyword.put(opts, :before, before)) do
+      {:ok, []} ->
+        {:ok, entries}
+
+      {:ok, older} ->
+        with {:ok, all_older} <-
+               collect_older_transcript(instance_module, runtime, participant_id, scope, opts, older) do
+          {:ok, all_older ++ entries}
+        end
+
+      {:error, _reason} = error ->
+        error
+    end
+  end
+
+  defp normalize_transcript_batch_size(value) when is_integer(value) and value > 0, do: min(value, 1_000)
+  defp normalize_transcript_batch_size(_value), do: 500
 
   @doc "List running bridge workers for an instance module."
   def list_bridges(instance_module) when is_atom(instance_module) do

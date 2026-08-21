@@ -84,6 +84,14 @@ defmodule Jido.Messaging.Persistence do
   @doc "Delete a message by ID"
   @callback delete_message(state, message_id) :: :ok | {:error, term()}
 
+  @doc "Get messages sent by one canonical participant within explicit room scope"
+  @callback get_participant_messages(
+              state,
+              participant_id,
+              room_ids :: [room_id],
+              opts :: keyword()
+            ) :: {:ok, [Message.t()]} | {:error, term()}
+
   # Thread operations
   @doc "Save a thread"
   @callback save_thread(state, Thread.t()) :: {:ok, Thread.t()} | {:error, term()}
