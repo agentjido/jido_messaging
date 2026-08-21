@@ -245,6 +245,103 @@ defmodule Jido.Messaging.Persistence.SQLiteTest do
     :ok = Sqlite3.close(state.db)
   end
 
+  test "claims a matching legacy participant for a scoped provider identity" do
+    path = tmp_path("sqlite-participant-legacy-claim")
+    {:ok, state} = SQLite.init(path: path)
+
+    legacy =
+      Participant.new(%{
+        id: "participant:legacy",
+        type: :human,
+        identity: %{name: "Legacy User"},
+        external_ids: %{slack: "user-legacy"}
+      })
+
+    assert {:ok, ^legacy} = SQLite.save_participant(state, legacy)
+
+    assert {:ok, claimed} =
+             SQLite.get_or_create_participant_by_external_binding(
+               state,
+               :slack,
+               "workspace-one",
+               "user-legacy",
+               %{type: :human, identity: %{name: "Replacement"}}
+             )
+
+    assert claimed.id == legacy.id
+
+    assert {:ok, same_participant} =
+             SQLite.get_or_create_participant_by_external_binding(
+               state,
+               :slack,
+               "workspace-one",
+               "user-legacy",
+               %{}
+             )
+
+    assert same_participant.id == legacy.id
+    :ok = Sqlite3.close(state.db)
+  end
+
+  test "creates one participant during concurrent scoped identity claims" do
+    path = tmp_path("sqlite-participant-concurrent-claim")
+    {:ok, state} = SQLite.init(path: path)
+
+    results =
+      1..40
+      |> Task.async_stream(
+        fn _index ->
+          SQLite.get_or_create_participant_by_external_binding(
+            state,
+            :slack,
+            "workspace-one",
+            "user-concurrent",
+            %{type: :human, identity: %{name: "Concurrent User"}}
+          )
+        end,
+        max_concurrency: 40,
+        ordered: false,
+        timeout: 5_000
+      )
+      |> Enum.to_list()
+
+    participant_ids = Enum.map(results, fn {:ok, {:ok, participant}} -> participant.id end)
+    assert length(participant_ids) == 40
+    assert participant_ids |> Enum.uniq() |> length() == 1
+
+    assert {:ok, participants} = SQLite.directory_search(state, :participant, %{}, [])
+    assert length(participants) == 1
+    :ok = Sqlite3.close(state.db)
+  end
+
+  test "deleting a participant releases its scoped identity" do
+    path = tmp_path("sqlite-participant-delete-binding")
+    {:ok, state} = SQLite.init(path: path)
+
+    assert {:ok, original} =
+             SQLite.get_or_create_participant_by_external_binding(
+               state,
+               :slack,
+               "workspace-one",
+               "user-replaced",
+               %{type: :human, identity: %{name: "Original"}}
+             )
+
+    assert :ok = SQLite.delete_participant(state, original.id)
+
+    assert {:ok, replacement} =
+             SQLite.get_or_create_participant_by_external_binding(
+               state,
+               :slack,
+               "workspace-one",
+               "user-replaced",
+               %{type: :human, identity: %{name: "Replacement"}}
+             )
+
+    refute replacement.id == original.id
+    :ok = Sqlite3.close(state.db)
+  end
+
   test "normalizes non-string external binding values without crashing" do
     path = tmp_path("sqlite-normalized-bindings")
     {:ok, state} = SQLite.init(path: path)
