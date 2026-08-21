@@ -538,7 +538,7 @@ defmodule Jido.Messaging.Persistence.ETS do
     case :ets.lookup(state.room_bindings_by_id, binding_id) do
       [{^binding_id, binding}] ->
         key = binding_key(binding.channel, binding.bridge_id, binding.external_room_id)
-        true = :ets.delete(state.room_bindings, key)
+        true = :ets.delete_object(state.room_bindings, {key, binding.room_id})
         true = :ets.delete(state.room_bindings_by_id, binding_id)
         true = :ets.delete_object(state.room_bindings_by_room, {binding.room_id, binding_id})
         :ok
