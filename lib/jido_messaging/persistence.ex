@@ -92,6 +92,10 @@ defmodule Jido.Messaging.Persistence do
               opts :: keyword()
             ) :: {:ok, [Message.t()]} | {:error, term()}
 
+  @doc "Atomically add a provider-confirmed read receipt to a message"
+  @callback mark_message_read(state, message_id, participant_id, receipt :: map()) ::
+              {:ok, Message.t(), :updated | :unchanged} | {:error, term()}
+
   # Thread operations
   @doc "Save a thread"
   @callback save_thread(state, Thread.t()) :: {:ok, Thread.t()} | {:error, term()}
@@ -255,7 +259,8 @@ defmodule Jido.Messaging.Persistence do
                       bind_participant_external_id: 5,
                       save_ingress_subscription: 2,
                       list_ingress_subscriptions: 3,
-                      delete_ingress_subscription: 3
+                      delete_ingress_subscription: 3,
+                      mark_message_read: 4
 
   @doc "Persist routing policy."
   @callback save_routing_policy(state, RoutingPolicy.t()) :: {:ok, RoutingPolicy.t()} | {:error, term()}
