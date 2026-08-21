@@ -172,20 +172,60 @@ The durable states are:
 - `dead`: retry policy ended or a terminal failure occurred.
 - `cancelled`: an operator or a superseding edit stopped work before success.
 
-The canonical message and first outbox record are inserted in one transaction.
+The canonical message and its delivery group and outbox records are inserted in one transaction.
 The canonical message starts as `:sending`. Success updates the message to
 `:sent` and stores its provider message ID in the same transaction that marks
 the outbox record `succeeded`. Terminal failure updates the message to
 `:failed` and creates the durable dead-letter record in one transaction.
 
+### Multi-route delivery groups
+
+Each routing decision creates one delivery group and one outbox record for
+each selected route. The group stores the routing policy revision, delivery
+mode, failover order, and route set. A later routing policy change does not
+change in-flight work.
+
+For `:primary` and `:best_effort`, only the current route is active. A retryable
+failure retries that route. A terminal failure activates the next route only
+when the stored failover policy permits it. Success cancels routes that were
+not activated. For `:broadcast`, all routes are active.
+
+The canonical message stays `:sending` while an active route can still change
+the group result. When all active routes are terminal, the message is `:sent`
+if at least one route succeeded and `:failed` if no route succeeded. This
+matches the current outbound router contract. Per-route provider message IDs
+and failures stay on their outbox records. `Message.external_id` keeps the
+first successful route ID only for compatibility; it is not the source of
+truth for a multi-route delivery.
+
 ## Claims, leases, and fencing
 
-A worker claim must atomically:
+An inbox worker claim must atomically:
 
-1. Select a due record in `pending`, `retry_wait`, or expired `leased` state.
-2. Set `state = leased`.
+1. Select a due record in `accepted` or `retry_wait`.
+2. Set `state = processing`.
 3. Set `lease_owner`, `lease_expires_at`, and a new `fencing_token`.
-4. Increment `attempt_count` only when a provider call starts.
+4. Increment `attempt_count` when processing starts.
+
+An expired `processing` inbox record becomes claimable by the same atomic
+operation. Inbound canonical effects are committed only with the inbox
+completion, so an expired inbound lease does not create an ambiguous external
+effect.
+
+An outbox worker claim must atomically:
+
+1. Select a due record in `pending` or `retry_wait`.
+2. Set `state = leased`.
+3. Set the lease owner, expiry, and a new fencing token.
+4. Create a reserved attempt record. It does not increment `attempt_count` yet.
+
+Immediately before the provider call, one transaction marks the attempt
+`started`, records `provider_call_started_at`, and increments `attempt_count`.
+This durable marker separates safe pre-call recovery from an ambiguous result.
+An expired `leased` record with only a reserved attempt returns to its prior
+due state. An expired `leased` record with a started attempt moves to
+`ambiguous`; it must follow the ambiguous policy before another provider call.
+It must not be claimed and sent again directly.
 
 The owner ID is `{node_id, runtime_id, worker_id}`. `runtime_id` is a random ID
 created for each runtime start. Node name alone is not sufficient.
@@ -278,8 +318,9 @@ attempt starts and must not enter persisted payloads or diagnostics. See
 
 - outbox or inbox record ID
 - attempt number
+- state: `reserved`, `started`, or `finished`
 - worker and fencing identity
-- start and finish timestamps
+- reservation, provider-call start, and finish timestamps
 - safe request hash
 - result classification and duration
 - provider request ID and retry-after value when available
@@ -321,7 +362,9 @@ Startup recovery starts after persistence and before ingress listeners accept
 new work.
 
 1. Generate a new runtime owner ID.
-2. Mark expired leases claimable. Do not change active leases.
+2. Make expired inbox leases and pre-call outbox leases claimable. Move an
+   expired outbox lease with a started provider attempt to `ambiguous`. Do not
+   change active leases.
 3. Scan due inbox and outbox records in bounded pages.
 4. Requeue records through the normal partition function.
 5. Find canonical messages in `:sending` with no active outbox record.
