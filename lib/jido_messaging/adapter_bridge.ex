@@ -78,6 +78,13 @@ defmodule Jido.Messaging.AdapterBridge do
     end
   end
 
+  @doc "Marks a provider message as read through the canonical adapter boundary."
+  @spec mark_as_read(module(), term(), term(), keyword()) :: :ok | {:error, term()}
+  def mark_as_read(adapter_module, external_room_id, external_message_id, opts \\ [])
+      when is_atom(adapter_module) and is_list(opts) do
+    Adapter.mark_as_read(adapter_module, external_room_id, external_message_id, opts)
+  end
+
   @doc """
   Sends media payload through the canonical adapter boundary.
 

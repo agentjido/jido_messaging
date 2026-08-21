@@ -292,6 +292,19 @@ defmodule Jido.Messaging.Persistence.SQLite do
     end
   end
 
+  @impl true
+  def mark_message_read(state, message_id, participant_id, receipt) do
+    with {:ok, message, payload} <- fetch_message_payload(state, message_id) do
+      case Jido.Messaging.ReadReceipt.apply_to_message(message, participant_id, receipt) do
+        {updated, :updated} ->
+          compare_and_swap_message(state, message_id, participant_id, receipt, payload, updated)
+
+        {unchanged, :unchanged} ->
+          {:ok, unchanged, :unchanged}
+      end
+    end
+  end
+
   defp query_participant_page(db, where, params, direction, limit, reverse?) do
     limit_param = length(params) + 1
 
@@ -1356,6 +1369,47 @@ defmodule Jido.Messaging.Persistence.SQLite do
           end
         end
       end)
+    end
+  end
+
+  defp fetch_message_payload(state, message_id) do
+    with {:ok, rows} <-
+           query_all(
+             state.db,
+             "SELECT payload FROM #{@table} WHERE instance_id = ?1 AND kind = 'message' AND id = ?2 LIMIT 1",
+             [state.instance_id, message_id]
+           ) do
+      case rows do
+        [[payload]] -> {:ok, :erlang.binary_to_term(payload), payload}
+        [] -> {:error, :not_found}
+      end
+    end
+  end
+
+  defp compare_and_swap_message(state, message_id, participant_id, receipt, old_payload, updated) do
+    with {:ok, rows} <-
+           query_all(
+             state.db,
+             """
+             UPDATE #{@table}
+             SET payload = ?1
+             WHERE instance_id = ?2 AND kind = 'message' AND id = ?3 AND payload = ?4
+             RETURNING id
+             """,
+             [
+               {:blob, :erlang.term_to_binary(updated)},
+               state.instance_id,
+               message_id,
+               {:blob, old_payload}
+             ]
+           ) do
+      case rows do
+        [[_payload]] ->
+          {:ok, updated, :updated}
+
+        [] ->
+          mark_message_read(state, message_id, participant_id, receipt)
+      end
     end
   end
 

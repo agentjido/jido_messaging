@@ -292,6 +292,16 @@ defmodule Jido.Messaging.Persistence.ETS do
     Jido.Messaging.Transcript.paginate(messages, opts)
   end
 
+  @impl true
+  def mark_message_read(state, message_id, participant_id, receipt) do
+    # Global lock IDs are {resource, requester}; the shared resource serializes callers.
+    lock_id = {{__MODULE__, state.messages, message_id}, self()}
+
+    :global.trans(lock_id, fn ->
+      update_message_receipt(state.messages, message_id, participant_id, receipt)
+    end)
+  end
+
   # Thread operations
 
   @impl true
@@ -829,6 +839,23 @@ defmodule Jido.Messaging.Persistence.ETS do
        when is_binary(thread_id) do
     true = :ets.insert(state.thread_messages, {thread_id, message_id})
     :ok
+  end
+
+  defp update_message_receipt(table, message_id, participant_id, receipt) do
+    case :ets.lookup(table, message_id) do
+      [{^message_id, message}] ->
+        case Jido.Messaging.ReadReceipt.apply_to_message(message, participant_id, receipt) do
+          {updated, :updated} ->
+            true = :ets.insert(table, {message_id, updated})
+            {:ok, updated, :updated}
+
+          {unchanged, :unchanged} ->
+            {:ok, unchanged, :unchanged}
+        end
+
+      [] ->
+        {:error, :not_found}
+    end
   end
 
   defp maybe_delete_thread_message(_state, %Message{thread_id: nil}), do: :ok

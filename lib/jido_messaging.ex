@@ -182,6 +182,27 @@ defmodule Jido.Messaging do
       end
 
       @doc """
+      Mark a provider message as read and persist its normalized receipt.
+
+      ## Example
+
+          iex> defmodule ReceiptExample do
+          ...>   use Jido.Messaging, persistence: Jido.Messaging.Persistence.ETS
+          ...> end
+          iex> function_exported?(ReceiptExample, :mark_message_as_read, 3)
+          true
+      """
+      def mark_message_as_read(message_id, participant_id, opts \\ []) do
+        Jido.Messaging.mark_message_as_read(
+          __MODULE__,
+          __jido_messaging__(:runtime),
+          message_id,
+          participant_id,
+          opts
+        )
+      end
+
+      @doc """
       List messages for a room.
 
       Use a message ID with `:before` or `:after` for cursor pagination. The
@@ -863,6 +884,19 @@ defmodule Jido.Messaging do
   def get_message(runtime, message_id) do
     {persistence, persistence_state} = Runtime.get_persistence(runtime)
     persistence.get_message(persistence_state, message_id)
+  end
+
+  @doc "Mark a provider message as read and persist its normalized receipt."
+  def mark_message_as_read(instance_module, runtime, message_id, participant_id, opts \\ [])
+      when is_atom(instance_module) and is_binary(message_id) and is_binary(participant_id) and
+             is_list(opts) do
+    Jido.Messaging.ReadReceipt.mark_as_read(
+      instance_module,
+      runtime,
+      message_id,
+      participant_id,
+      opts
+    )
   end
 
   @doc """
