@@ -35,12 +35,13 @@ agent_config = %{
 children = [
   {Jido.Messaging.AgentRunner,
    room_id: "support",
+   thread_id: "support:main",
    agent_id: "support-agent",
    agent_config: agent_config,
    instance_module: MyApp.Messaging}
 ]
 ```
 
-The handler returns `{:reply, text}`, `{:ok, text}`, `:ignore`, or an error.
+The handler returns `{:reply, text}`, `:noreply`, or `{:error, reason}`.
 This function contract is the supported integration boundary. Agent ownership,
 model calls, tools, and durable state remain outside the messaging core.

@@ -40,6 +40,7 @@ defmodule Jido.Messaging.Demo.Supervisor do
   require Logger
 
   @shared_room_id "demo:lobby"
+  @shared_thread_id "demo:lobby"
 
   def start_link(opts \\ []) do
     Supervisor.start_link(__MODULE__, opts, name: __MODULE__)
@@ -142,6 +143,7 @@ defmodule Jido.Messaging.Demo.Supervisor do
       # AgentRunner connects the ChatAgent to the messaging system
       {Jido.Messaging.AgentRunner,
        room_id: @shared_room_id,
+       thread_id: @shared_thread_id,
        agent_id: "chat_agent",
        agent_config: apply(chat_agent_runner, :agent_config, []),
        instance_module: Jido.Messaging.Demo.Messaging},

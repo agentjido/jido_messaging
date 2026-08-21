@@ -340,7 +340,8 @@ not put the token in the stored bridge configuration.
 The messaging core does not own an agent implementation. `Jido.Messaging.AgentRunner`
 connects an agent process through an `agent_config.handler` function. The handler
 receives the canonical message and context and returns a reply or ignores the
-message. This boundary supports Jido agents and other agent runtimes.
+message. It returns `{:reply, text}`, `:noreply`, or `{:error, reason}`. This
+boundary supports Jido agents and other agent runtimes.
 
 The ReAct demo uses the optional `jido_ai` dependency. Add
 `{:jido_ai, "~> 2.2"}` to the host application to use

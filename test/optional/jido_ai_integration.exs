@@ -30,4 +30,18 @@ defmodule Jido.Messaging.OptionalJidoAIIntegrationTest do
     assert config.trigger == :mention
     assert is_function(config.handler, 2)
   end
+
+  test "builds a complete agent demo child specification" do
+    assert {:ok, {_flags, children}} =
+             Jido.Messaging.Demo.Supervisor.init(
+               mode: :agent,
+               telegram_chat_id: "telegram-room",
+               discord_channel_id: "discord-room"
+             )
+
+    agent_runner = Enum.find(children, &(&1.id == Jido.Messaging.AgentRunner))
+    assert %{start: {Jido.Messaging.AgentRunner, :start_link, [opts]}} = agent_runner
+    assert opts[:room_id] == "demo:lobby"
+    assert opts[:thread_id] == "demo:lobby"
+  end
 end
