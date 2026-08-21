@@ -129,7 +129,7 @@ defmodule Jido.Messaging.MixProject do
       files: [
         "lib",
         "examples/jido_ai",
-        "docs/rfcs",
+        "docs",
         "mix.exs",
         "README.md",
         "LICENSE",
@@ -157,7 +157,8 @@ defmodule Jido.Messaging.MixProject do
         "README.md",
         "CHANGELOG.md",
         "CONTRIBUTING.md",
-        "docs/rfcs/0001-durable-delivery.md"
+        "docs/rfcs/0001-durable-delivery.md",
+        "docs/message-correctness-hardening.md"
       ]
     ]
   end
