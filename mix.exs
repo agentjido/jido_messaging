@@ -14,6 +14,7 @@ defmodule Jido.Messaging.MixProject do
       start_permanent: Mix.env() == :prod,
       deps: deps(),
       aliases: aliases(),
+      test_ignore_filters: [~r{(^test/support/|_helper\.exs$|^test/optional/jido_ai_integration\.exs$)}],
 
       # Documentation
       name: "Jido Messaging",
@@ -46,6 +47,7 @@ defmodule Jido.Messaging.MixProject do
         "test.core": :test,
         "test.integration": :test,
         "test.story": :test,
+        "test.optional_jido_ai": :test,
         "test.all": :test,
         quality: :test,
         q: :test,
@@ -73,7 +75,7 @@ defmodule Jido.Messaging.MixProject do
       {:zoi, "~> 0.14"},
       {:jido, "~> 2.3"},
       {:jido_signal, "~> 2.2"},
-      {:jido_ai, "~> 2.2"},
+      {:jido_ai, "~> 2.2", optional: true},
       {:yaml_elixir, "~> 2.12"},
       {:plug, "~> 1.16"},
       {:exqlite, "~> 0.39.0"},
@@ -103,6 +105,7 @@ defmodule Jido.Messaging.MixProject do
       "test.core": "test --exclude flaky --exclude integration --exclude story",
       "test.integration": "test --only integration --exclude flaky",
       "test.story": "test --only story --exclude flaky",
+      "test.optional_jido_ai": "run test/optional/jido_ai_integration.exs",
       "test.all": "test --exclude flaky --include integration --include story",
       q: ["quality"],
       cover: ["coveralls"],
@@ -123,7 +126,16 @@ defmodule Jido.Messaging.MixProject do
 
   defp package do
     [
-      files: ["lib", "mix.exs", "README.md", "LICENSE", "CHANGELOG.md", "CONTRIBUTING.md", "usage-rules.md"],
+      files: [
+        "lib",
+        "examples/jido_ai",
+        "mix.exs",
+        "README.md",
+        "LICENSE",
+        "CHANGELOG.md",
+        "CONTRIBUTING.md",
+        "usage-rules.md"
+      ],
       maintainers: ["Mike Hostetler"],
       licenses: ["Apache-2.0"],
       links: %{

@@ -335,6 +335,20 @@ For live bridge ingress with Telegram polling + Discord gateway, use
 the Telegram token from its environment reference at operation time. It does
 not put the token in the stored bridge configuration.
 
+### Agent Integration Boundary
+
+The messaging core does not own an agent implementation. `Jido.Messaging.AgentRunner`
+connects an agent process through an `agent_config.handler` function. The handler
+receives the canonical message and context and returns a reply or ignores the
+message. It returns `{:reply, text}`, `:noreply`, or `{:error, reason}`. This
+boundary supports Jido agents and other agent runtimes.
+
+The ReAct demo uses the optional `jido_ai` dependency. Add
+`{:jido_ai, "~> 2.2"}` to the host application to use
+`mix jido.messaging.demo --agent`. See
+[`examples/jido_ai/README.md`](examples/jido_ai/README.md) for the example and
+the handler contract. Echo and bridge modes do not load `jido_ai`.
+
 ## Architecture
 
 ```

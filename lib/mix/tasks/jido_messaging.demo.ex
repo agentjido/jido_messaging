@@ -57,6 +57,8 @@ defmodule Mix.Tasks.Jido.Messaging.Demo do
 
   alias Jido.Messaging.Demo.Topology
 
+  @optional_agent_example_dir Path.expand("../../../examples/jido_ai", __DIR__)
+
   @impl Mix.Task
   def run(args) do
     {opts, _, _} =
@@ -84,6 +86,7 @@ defmodule Mix.Tasks.Jido.Messaging.Demo do
     Logger.info("[Demo] Press Ctrl+C twice to stop")
 
     start_applications!(mode, adapter_modules)
+    if mode == :agent, do: load_optional_agent_demo!()
 
     supervisor_opts =
       case mode do
@@ -336,8 +339,36 @@ defmodule Mix.Tasks.Jido.Messaging.Demo do
 
   defp start_applications!(:agent, adapter_modules) do
     start_applications!(:bridge, adapter_modules)
-    Application.ensure_all_started(:jido)
-    Application.ensure_all_started(:jido_ai)
+    ensure_started!(:jido)
+    ensure_started!(:jido_ai)
+  end
+
+  defp ensure_started!(application) do
+    case Application.ensure_all_started(application) do
+      {:ok, _applications} -> :ok
+      {:error, reason} -> Mix.raise("Failed to start #{application}: #{inspect(reason)}")
+    end
+  end
+
+  defp load_optional_agent_demo! do
+    unless Code.ensure_loaded?(Jido.AI.Agent) do
+      Mix.raise("""
+      Agent mode requires the optional jido_ai package.
+
+      Add `{:jido_ai, "~> 2.2"}` to the host application dependencies,
+      run `mix deps.get`, and start agent mode again.
+      """)
+    end
+
+    @optional_agent_example_dir
+    |> Path.join("chat_agent.ex")
+    |> Code.require_file()
+
+    @optional_agent_example_dir
+    |> Path.join("chat_agent_runner.ex")
+    |> Code.require_file()
+
+    :ok
   end
 
   defp maybe_start_nostrum(adapter_modules) when is_list(adapter_modules) do

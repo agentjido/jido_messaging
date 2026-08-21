@@ -39,9 +39,8 @@ defmodule Jido.Messaging.Demo.Supervisor do
 
   require Logger
 
-  alias Jido.Messaging.Demo.ChatAgentRunner
-
   @shared_room_id "demo:lobby"
+  @shared_thread_id "demo:lobby"
 
   def start_link(opts \\ []) do
     Supervisor.start_link(__MODULE__, opts, name: __MODULE__)
@@ -118,6 +117,13 @@ defmodule Jido.Messaging.Demo.Supervisor do
          telegram_bridge_id,
          discord_bridge_id
        ) do
+    chat_agent_runner = Module.concat(Jido.Messaging.Demo, ChatAgentRunner)
+
+    unless Code.ensure_loaded?(chat_agent_runner) do
+      raise ArgumentError,
+            "agent demo is not loaded; install jido_ai and start it through mix jido.messaging.demo --agent"
+    end
+
     # Start bridge components first, then add the ChatAgent
     bridge_children =
       build_children(
@@ -132,13 +138,14 @@ defmodule Jido.Messaging.Demo.Supervisor do
 
     agent_children = [
       # ChatAgentRunner manages the ChatAgent lifecycle
-      {ChatAgentRunner, room_id: @shared_room_id, instance_module: Jido.Messaging.Demo.Messaging},
+      {chat_agent_runner, room_id: @shared_room_id, instance_module: Jido.Messaging.Demo.Messaging},
 
       # AgentRunner connects the ChatAgent to the messaging system
       {Jido.Messaging.AgentRunner,
        room_id: @shared_room_id,
+       thread_id: @shared_thread_id,
        agent_id: "chat_agent",
-       agent_config: ChatAgentRunner.agent_config(),
+       agent_config: apply(chat_agent_runner, :agent_config, []),
        instance_module: Jido.Messaging.Demo.Messaging},
 
       # HeartbeatSensor sends periodic messages every minute

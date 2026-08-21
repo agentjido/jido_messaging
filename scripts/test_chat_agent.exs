@@ -5,6 +5,9 @@
 #
 # Or set the key in your .env file
 
+Path.expand("../examples/jido_ai/chat_agent.ex", __DIR__)
+|> Code.require_file()
+
 alias Jido.Messaging.Demo.ChatAgent
 
 IO.puts("\n" <> String.duplicate("=", 60))
