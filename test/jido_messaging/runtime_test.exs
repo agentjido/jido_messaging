@@ -8,6 +8,15 @@ defmodule Jido.Messaging.RuntimeTest do
     def init(opts), do: {:ok, opts}
   end
 
+  defmodule ClosePersistence do
+    def init(opts), do: {:ok, Keyword.fetch!(opts, :test_pid)}
+
+    def close(test_pid) do
+      send(test_pid, :persistence_closed)
+      :ok
+    end
+  end
+
   describe "Runtime" do
     test "get_state/1 returns full runtime state" do
       {:ok, pid} =
@@ -41,6 +50,19 @@ defmodule Jido.Messaging.RuntimeTest do
       assert is_struct(persistence_state, ETS)
     end
 
+    test "reports persistence capabilities and health" do
+      {:ok, pid} =
+        Runtime.start_link(
+          name: :test_runtime_persistence_health,
+          instance_module: TestModule4,
+          persistence: ETS,
+          persistence_opts: []
+        )
+
+      assert Runtime.persistence_capabilities(pid) == [:memory]
+      assert Runtime.persistence_health(pid) == :ok
+    end
+
     test "does not add SQLite namespace options to custom persistence adapters" do
       {:ok, pid} =
         Runtime.start_link(
@@ -51,6 +73,21 @@ defmodule Jido.Messaging.RuntimeTest do
         )
 
       assert {StrictOptionsPersistence, [allowed: true]} = Runtime.get_persistence(pid)
+      assert Runtime.persistence_capabilities(pid) == []
+      assert Runtime.persistence_health(pid) == {:error, :health_check_not_supported}
+    end
+
+    test "closes adapter-owned resources when the runtime stops" do
+      {:ok, pid} =
+        Runtime.start_link(
+          name: :test_runtime_close,
+          instance_module: TestModule5,
+          persistence: ClosePersistence,
+          persistence_opts: [test_pid: self()]
+        )
+
+      assert :ok = GenServer.stop(pid)
+      assert_receive :persistence_closed
     end
   end
 end

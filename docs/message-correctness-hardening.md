@@ -12,6 +12,8 @@ All prerequisite pull requests are merged.
 - The runtime restores enabled bridge workers from persistence after a restart.
 - SQLite records are isolated by messaging instance when instances share one database file.
 - SQLite creates an external binding as one atomic operation.
+- PostgreSQL is the production persistence recommendation. Its instance-scoped
+  keys, transactions, and binding constraints support concurrent writers.
 - Canonical participant identities are scoped by bridge.
 - Message pagination uses stable opaque cursors with defined invalid-cursor errors.
 - Bridge configuration stores secret references, not raw credentials. A configured resolver reads each secret at the operation boundary.
@@ -63,10 +65,12 @@ The work merged in this order:
 
 The release must continue to pass these gates:
 
-- Run the persistence conformance contract against ETS and SQLite.
+- Run the persistence conformance contract against ETS, SQLite, and PostgreSQL.
 - Run the restart reconciliation tests in CI.
 - Run the SQLite concurrency and shared-file isolation tests in CI.
 - Run legacy SQLite migration races and participant binding claim races in CI.
+- Run PostgreSQL migration, cross-pool binding, receipt concurrency, restart,
+  and instance-isolation tests in CI.
 - Confirm that adapter mismatch tests stop credentials before provider code runs.
 - Confirm that secret migration tests find no resolved marker values in durable storage or diagnostics.
 - Run core tests without `jido_ai`, and run the optional integration lane with `jido_ai`.
