@@ -22,7 +22,15 @@ defmodule Jido.Messaging.Persistence do
   """
 
   alias Jido.Chat.{Participant, Room}
-  alias Jido.Messaging.{BridgeConfig, IngressSubscription, Message, RoutingPolicy, Thread}
+
+  alias Jido.Messaging.{
+    BridgeConfig,
+    IdentityCredential,
+    IngressSubscription,
+    Message,
+    RoutingPolicy,
+    Thread
+  }
 
   @type state :: term()
   @type room_id :: String.t()
@@ -255,12 +263,47 @@ defmodule Jido.Messaging.Persistence do
   @doc "Delete stored ingress subscription metadata."
   @callback delete_ingress_subscription(state, bridge_id(), String.t()) :: :ok | {:error, :not_found}
 
+  # Optional identity credential operations
+
+  @doc "Persist a revisioned controller credential."
+  @callback save_identity_credential(state, IdentityCredential.t()) ::
+              {:ok, IdentityCredential.t()} | {:error, term()}
+
+  @doc "Fetch a controller credential by ID."
+  @callback get_identity_credential(state, String.t()) ::
+              {:ok, IdentityCredential.t()} | {:error, :not_found}
+
+  @doc "List controller credentials for one subject principal."
+  @callback list_identity_credentials(state, participant_id(), keyword()) ::
+              {:ok, [IdentityCredential.t()]} | {:error, term()}
+
+  @doc "Atomically revoke an old credential and insert its rotation replacement."
+  @callback rotate_identity_credential(
+              state,
+              revoked :: IdentityCredential.t(),
+              replacement :: IdentityCredential.t()
+            ) ::
+              {:ok, IdentityCredential.t(), IdentityCredential.t()} | {:error, term()}
+
+  @doc "Consume a hashed proof assertion once until its credential expires."
+  @callback consume_identity_assertion(
+              state,
+              credential_id :: String.t(),
+              assertion_key :: String.t(),
+              expires_at :: DateTime.t()
+            ) :: :ok | {:error, term()}
+
   @optional_callbacks get_or_create_participant_by_external_binding: 5,
                       bind_participant_external_id: 5,
                       save_ingress_subscription: 2,
                       list_ingress_subscriptions: 3,
                       delete_ingress_subscription: 3,
-                      mark_message_read: 4
+                      mark_message_read: 4,
+                      save_identity_credential: 2,
+                      get_identity_credential: 2,
+                      list_identity_credentials: 3,
+                      rotate_identity_credential: 3,
+                      consume_identity_assertion: 4
 
   @doc "Persist routing policy."
   @callback save_routing_policy(state, RoutingPolicy.t()) :: {:ok, RoutingPolicy.t()} | {:error, term()}
