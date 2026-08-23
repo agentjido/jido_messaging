@@ -23,8 +23,12 @@ defmodule Jido.Messaging.Persistence.SQLite do
   alias Jido.Chat.{Participant, Room}
 
   alias Jido.Messaging.{
+    AuthorizationScope,
     BridgeConfig,
+    Grant,
     IngressSubscription,
+    InvocationPolicy,
+    Membership,
     Message,
     RoomBinding,
     RoutingPolicy,
@@ -78,7 +82,15 @@ defmodule Jido.Messaging.Persistence.SQLite do
       DELETE FROM #{@table}
       WHERE instance_id = ?1
         AND ((kind = 'room' AND id = ?2)
-         OR (kind IN ('message', 'thread', 'room_binding', 'routing_policy') AND room_id = ?2))
+         OR (kind IN (
+           'message',
+           'thread',
+           'room_binding',
+           'routing_policy',
+           'membership',
+           'principal_grant',
+           'invocation_policy'
+         ) AND room_id = ?2))
       """,
       [state.instance_id, room_id]
     )
@@ -105,7 +117,8 @@ defmodule Jido.Messaging.Persistence.SQLite do
       DELETE FROM #{@table}
       WHERE instance_id = ?1
         AND ((kind = 'participant' AND id = ?2)
-          OR (kind = 'participant_binding' AND room_id = ?2))
+          OR (kind = 'participant_binding' AND room_id = ?2)
+          OR (kind IN ('membership', 'principal_grant', 'invocation_policy') AND sender_id = ?2))
       """,
       [state.instance_id, participant_id]
     )
@@ -372,6 +385,158 @@ defmodule Jido.Messaging.Persistence.SQLite do
       order: "inserted_at ASC, id ASC",
       limit: limit
     )
+  end
+
+  # Principal authorization operations
+
+  @impl true
+  def save_membership(state, %Membership{} = membership) do
+    binding_lock(state, {:membership, membership.room_id, membership.principal_id}, fn ->
+      transaction(state, fn transaction_state ->
+        with :ok <-
+               validate_sqlite_revision(
+                 transaction_state,
+                 "membership",
+                 membership,
+                 &membership_identity?/2
+               ),
+             :ok <- validate_sqlite_membership_scope(transaction_state, membership) do
+          persist(transaction_state, "membership", membership.id, membership,
+            room_id: membership.room_id,
+            sender_id: membership.principal_id,
+            inserted_at: membership.inserted_at,
+            external_id: membership.principal_id
+          )
+        end
+      end)
+    end)
+  end
+
+  @impl true
+  def get_membership(state, membership_id), do: fetch_record(state, "membership", membership_id)
+
+  @impl true
+  def get_membership_by_scope(state, room_id, principal_id) do
+    fetch_one(state, "membership", [{"room_id", room_id}, {"sender_id", principal_id}])
+  end
+
+  @impl true
+  def list_memberships(state, room_id, opts \\ []) do
+    with {:ok, records} <-
+           query_records(
+             state,
+             "kind = ?1 AND room_id = ?2",
+             ["membership", room_id],
+             order: "inserted_at ASC, id ASC",
+             limit: 500
+           ) do
+      {:ok,
+       records
+       |> filter_authorization_record(:principal_id, Keyword.get(opts, :principal_id))
+       |> filter_authorization_record(:status, Keyword.get(opts, :status))
+       |> take_authorization_records(opts)}
+    end
+  end
+
+  @impl true
+  def save_principal_grant(state, %Grant{} = grant) do
+    binding_lock(state, {:principal_grant, grant.id}, fn ->
+      transaction(state, fn transaction_state ->
+        with :ok <-
+               validate_sqlite_revision(
+                 transaction_state,
+                 "principal_grant",
+                 grant,
+                 &grant_identity?/2
+               ) do
+          persist(transaction_state, "principal_grant", grant.id, grant,
+            room_id: grant.scope.room_id,
+            thread_id: grant.scope.thread_id,
+            sender_id: grant.principal_id,
+            inserted_at: grant.inserted_at,
+            bridge_id: grant.scope.bridge_id,
+            external_id: AuthorizationScope.key(grant.scope)
+          )
+        end
+      end)
+    end)
+  end
+
+  @impl true
+  def get_principal_grant(state, grant_id), do: fetch_record(state, "principal_grant", grant_id)
+
+  @impl true
+  def list_principal_grants(state, principal_id, opts \\ []) do
+    with {:ok, records} <-
+           query_records(
+             state,
+             "kind = ?1 AND sender_id = ?2",
+             ["principal_grant", principal_id],
+             order: "inserted_at ASC, id ASC",
+             limit: 501
+           ) do
+      {:ok,
+       records
+       |> filter_authorization_record(:status, Keyword.get(opts, :status))
+       |> filter_authorization_action(Keyword.get(opts, :action))
+       |> take_authorization_records(opts)}
+    end
+  end
+
+  @impl true
+  def save_invocation_policy(state, %InvocationPolicy{} = policy) do
+    scope_key = AuthorizationScope.key(policy.scope)
+
+    binding_lock(state, {:invocation_policy, policy.target_principal_id, scope_key}, fn ->
+      transaction(state, fn transaction_state ->
+        with :ok <-
+               validate_sqlite_revision(
+                 transaction_state,
+                 "invocation_policy",
+                 policy,
+                 &policy_identity?/2
+               ),
+             :ok <- validate_sqlite_policy_scope(transaction_state, policy, scope_key) do
+          persist(transaction_state, "invocation_policy", policy.id, policy,
+            room_id: policy.scope.room_id,
+            thread_id: policy.scope.thread_id,
+            sender_id: policy.target_principal_id,
+            inserted_at: policy.inserted_at,
+            bridge_id: policy.scope.bridge_id,
+            external_id: scope_key
+          )
+        end
+      end)
+    end)
+  end
+
+  @impl true
+  def get_invocation_policy(state, policy_id),
+    do: fetch_record(state, "invocation_policy", policy_id)
+
+  @impl true
+  def get_invocation_policy_by_scope(state, target_principal_id, scope_key) do
+    fetch_one(state, "invocation_policy", [
+      {"sender_id", target_principal_id},
+      {"external_id", scope_key}
+    ])
+  end
+
+  @impl true
+  def list_invocation_policies(state, target_principal_id, opts \\ []) do
+    with {:ok, records} <-
+           query_records(
+             state,
+             "kind = ?1 AND sender_id = ?2",
+             ["invocation_policy", target_principal_id],
+             order: "inserted_at ASC, id ASC",
+             limit: 501
+           ) do
+      {:ok,
+       records
+       |> filter_authorization_record(:status, Keyword.get(opts, :status))
+       |> take_authorization_records(opts)}
+    end
   end
 
   @impl true
@@ -677,6 +842,79 @@ defmodule Jido.Messaging.Persistence.SQLite do
     end
   end
 
+  defp validate_sqlite_revision(state, kind, record, identity?) do
+    case fetch_record(state, kind, record.id) do
+      {:error, :not_found} when record.revision == 1 ->
+        :ok
+
+      {:error, :not_found} ->
+        {:error, {:invalid_initial_revision, record.revision}}
+
+      {:ok, stored} when stored == record ->
+        :ok
+
+      {:ok, stored} ->
+        cond do
+          not identity?.(stored, record) ->
+            {:error, :authorization_identity_immutable}
+
+          stored.status == :revoked and record.status != :revoked ->
+            {:error, :authorization_revocation_terminal}
+
+          record.revision == stored.revision + 1 ->
+            :ok
+
+          true ->
+            {:error, {:stale_revision, stored.revision}}
+        end
+    end
+  end
+
+  defp validate_sqlite_membership_scope(state, membership) do
+    case get_membership_by_scope(state, membership.room_id, membership.principal_id) do
+      {:ok, %{id: membership_id}} when membership_id == membership.id -> :ok
+      {:ok, %{id: membership_id}} -> {:error, {:membership_scope_conflict, membership_id}}
+      {:error, :not_found} -> :ok
+    end
+  end
+
+  defp validate_sqlite_policy_scope(state, policy, scope_key) do
+    case get_invocation_policy_by_scope(state, policy.target_principal_id, scope_key) do
+      {:ok, %{id: policy_id}} when policy_id == policy.id -> :ok
+      {:ok, %{id: policy_id}} -> {:error, {:invocation_policy_scope_conflict, policy_id}}
+      {:error, :not_found} -> :ok
+    end
+  end
+
+  defp membership_identity?(stored, record) do
+    stored.principal_id == record.principal_id and stored.room_id == record.room_id and
+      stored.issuer_principal_id == record.issuer_principal_id
+  end
+
+  defp grant_identity?(stored, record) do
+    stored.principal_id == record.principal_id and
+      stored.issuer_principal_id == record.issuer_principal_id
+  end
+
+  defp policy_identity?(stored, record) do
+    stored.target_principal_id == record.target_principal_id and
+      stored.issuer_principal_id == record.issuer_principal_id and stored.scope == record.scope
+  end
+
+  defp filter_authorization_record(records, _field, nil), do: records
+
+  defp filter_authorization_record(records, field, value),
+    do: Enum.filter(records, &(Map.get(&1, field) == value))
+
+  defp filter_authorization_action(records, nil), do: records
+  defp filter_authorization_action(records, action), do: Enum.filter(records, &(action in &1.actions))
+
+  defp take_authorization_records(records, opts) do
+    limit = Keyword.get(opts, :limit, 100)
+    limit = if is_integer(limit) and limit > 0, do: min(limit, 501), else: 100
+    Enum.take(records, limit)
+  end
+
   defp ensure_parent_dir(":memory:"), do: :ok
 
   defp ensure_parent_dir(path) do
@@ -841,6 +1079,14 @@ defmodule Jido.Messaging.Persistence.SQLite do
     CREATE UNIQUE INDEX IF NOT EXISTS #{@table}_participant_binding_unique_idx
       ON #{@table} (instance_id, channel, bridge_id, external_id)
       WHERE kind = 'participant_binding';
+
+    CREATE UNIQUE INDEX IF NOT EXISTS #{@table}_membership_unique_idx
+      ON #{@table} (instance_id, room_id, sender_id)
+      WHERE kind = 'membership';
+
+    CREATE UNIQUE INDEX IF NOT EXISTS #{@table}_invocation_policy_unique_idx
+      ON #{@table} (instance_id, sender_id, external_id)
+      WHERE kind = 'invocation_policy';
     """)
   end
 

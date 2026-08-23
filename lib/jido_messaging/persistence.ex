@@ -22,7 +22,17 @@ defmodule Jido.Messaging.Persistence do
   """
 
   alias Jido.Chat.{Participant, Room}
-  alias Jido.Messaging.{BridgeConfig, IngressSubscription, Message, RoutingPolicy, Thread}
+
+  alias Jido.Messaging.{
+    BridgeConfig,
+    Grant,
+    IngressSubscription,
+    InvocationPolicy,
+    Membership,
+    Message,
+    RoutingPolicy,
+    Thread
+  }
 
   @type state :: term()
   @type room_id :: String.t()
@@ -113,6 +123,47 @@ defmodule Jido.Messaging.Persistence do
 
   @doc "List threads for a room"
   @callback list_threads(state, room_id(), opts :: keyword()) :: {:ok, [Thread.t()]}
+
+  # Principal authorization operations
+  @doc "Persist a revisioned principal room membership."
+  @callback save_membership(state, Membership.t()) ::
+              {:ok, Membership.t()} | {:error, term()}
+
+  @doc "Get a principal membership by record ID."
+  @callback get_membership(state, String.t()) ::
+              {:ok, Membership.t()} | {:error, :not_found}
+
+  @doc "Get a principal membership by canonical room and principal."
+  @callback get_membership_by_scope(state, room_id(), participant_id()) ::
+              {:ok, Membership.t()} | {:error, :not_found}
+
+  @doc "List principal memberships for a canonical room."
+  @callback list_memberships(state, room_id(), keyword()) :: {:ok, [Membership.t()]}
+
+  @doc "Persist a revisioned principal messaging grant."
+  @callback save_principal_grant(state, Grant.t()) :: {:ok, Grant.t()} | {:error, term()}
+
+  @doc "Get a principal messaging grant by record ID."
+  @callback get_principal_grant(state, String.t()) :: {:ok, Grant.t()} | {:error, :not_found}
+
+  @doc "List messaging grants for a canonical principal."
+  @callback list_principal_grants(state, participant_id(), keyword()) :: {:ok, [Grant.t()]}
+
+  @doc "Persist a revisioned agent invocation policy."
+  @callback save_invocation_policy(state, InvocationPolicy.t()) ::
+              {:ok, InvocationPolicy.t()} | {:error, term()}
+
+  @doc "Get an agent invocation policy by record ID."
+  @callback get_invocation_policy(state, String.t()) ::
+              {:ok, InvocationPolicy.t()} | {:error, :not_found}
+
+  @doc "Get an invocation policy by target principal and stable scope key."
+  @callback get_invocation_policy_by_scope(state, participant_id(), String.t()) ::
+              {:ok, InvocationPolicy.t()} | {:error, :not_found}
+
+  @doc "List invocation policies for an agent principal."
+  @callback list_invocation_policies(state, participant_id(), keyword()) ::
+              {:ok, [InvocationPolicy.t()]}
 
   # External ID resolution (for channel mapping)
   @doc """
@@ -257,6 +308,17 @@ defmodule Jido.Messaging.Persistence do
 
   @optional_callbacks get_or_create_participant_by_external_binding: 5,
                       bind_participant_external_id: 5,
+                      save_membership: 2,
+                      get_membership: 2,
+                      get_membership_by_scope: 3,
+                      list_memberships: 3,
+                      save_principal_grant: 2,
+                      get_principal_grant: 2,
+                      list_principal_grants: 3,
+                      save_invocation_policy: 2,
+                      get_invocation_policy: 2,
+                      get_invocation_policy_by_scope: 3,
+                      list_invocation_policies: 3,
                       save_ingress_subscription: 2,
                       list_ingress_subscriptions: 3,
                       delete_ingress_subscription: 3,

@@ -24,6 +24,9 @@ defmodule Jido.Messaging.Persistence.ETS do
   - `:participant_bindings` - External ID to participant_id mapping
   - `:onboarding_flows` - Onboarding flow records keyed by onboarding_id
   - `:ingress_subscriptions` - Bridge/provider subscription metadata
+  - `:memberships` - Canonical principal room memberships
+  - `:principal_grants` - Revisioned messaging grants
+  - `:invocation_policies` - Revisioned agent invocation policies
   """
 
   @behaviour Jido.Messaging.Persistence
@@ -49,7 +52,12 @@ defmodule Jido.Messaging.Persistence.ETS do
               onboarding_flows: Zoi.any(),
               bridge_configs: Zoi.any(),
               ingress_subscriptions: Zoi.any(),
-              routing_policies: Zoi.any()
+              routing_policies: Zoi.any(),
+              memberships: Zoi.any(),
+              memberships_by_scope: Zoi.any(),
+              principal_grants: Zoi.any(),
+              invocation_policies: Zoi.any(),
+              invocation_policies_by_scope: Zoi.any()
             },
             coerce: false
           )
@@ -63,7 +71,18 @@ defmodule Jido.Messaging.Persistence.ETS do
   def schema, do: @schema
 
   alias Jido.Chat.{Participant, Room}
-  alias Jido.Messaging.{BridgeConfig, IngressSubscription, Message, RoomBinding, Thread}
+
+  alias Jido.Messaging.{
+    AuthorizationScope,
+    BridgeConfig,
+    Grant,
+    IngressSubscription,
+    InvocationPolicy,
+    Membership,
+    Message,
+    RoomBinding,
+    Thread
+  }
 
   @impl true
   def init(_opts) do
@@ -86,7 +105,12 @@ defmodule Jido.Messaging.Persistence.ETS do
         onboarding_flows: :ets.new(:onboarding_flows, [:set, :public]),
         bridge_configs: :ets.new(:bridge_configs, [:set, :public]),
         ingress_subscriptions: :ets.new(:ingress_subscriptions, [:set, :public]),
-        routing_policies: :ets.new(:routing_policies, [:set, :public])
+        routing_policies: :ets.new(:routing_policies, [:set, :public]),
+        memberships: :ets.new(:memberships, [:set, :public]),
+        memberships_by_scope: :ets.new(:memberships_by_scope, [:set, :public]),
+        principal_grants: :ets.new(:principal_grants, [:set, :public]),
+        invocation_policies: :ets.new(:invocation_policies, [:set, :public]),
+        invocation_policies_by_scope: :ets.new(:invocation_policies_by_scope, [:set, :public])
       })
 
     {:ok, state}
@@ -119,6 +143,7 @@ defmodule Jido.Messaging.Persistence.ETS do
     Enum.each(bindings, &delete_room_binding(state, &1.id))
 
     delete_threads_for_room(state, room_id)
+    delete_room_authorization_records(state, room_id)
     :ok
   end
 
@@ -153,6 +178,7 @@ defmodule Jido.Messaging.Persistence.ETS do
   @impl true
   def delete_participant(state, participant_id) do
     true = :ets.delete(state.participants, participant_id)
+    delete_principal_authorization_records(state, participant_id)
     :ok
   end
 
@@ -359,6 +385,126 @@ defmodule Jido.Messaging.Persistence.ETS do
       |> Enum.take(limit)
 
     {:ok, threads}
+  end
+
+  # Principal authorization operations
+
+  @impl true
+  def save_membership(state, %Membership{} = membership) do
+    scope = {membership.room_id, membership.principal_id}
+
+    authorization_lock(state.memberships, :memberships, fn ->
+      with :ok <- validate_revisioned_record(state.memberships, membership, &membership_identity?/2),
+           :ok <- validate_scope_index(state.memberships_by_scope, state.memberships, scope, membership.id) do
+        true = :ets.insert(state.memberships, {membership.id, membership})
+        true = :ets.insert(state.memberships_by_scope, {scope, membership.id})
+        {:ok, membership}
+      end
+    end)
+  end
+
+  @impl true
+  def get_membership(state, membership_id) do
+    fetch_authorization_record(state.memberships, membership_id)
+  end
+
+  @impl true
+  def get_membership_by_scope(state, room_id, principal_id) do
+    scope = {room_id, principal_id}
+
+    case :ets.lookup(state.memberships_by_scope, scope) do
+      [{^scope, membership_id}] -> get_membership(state, membership_id)
+      [] -> {:error, :not_found}
+    end
+  end
+
+  @impl true
+  def list_memberships(state, room_id, opts \\ []) do
+    records =
+      state.memberships
+      |> authorization_records()
+      |> Enum.filter(&(&1.room_id == room_id))
+      |> filter_authorization_record(:principal_id, Keyword.get(opts, :principal_id))
+      |> filter_authorization_record(:status, Keyword.get(opts, :status))
+      |> take_authorization_records(opts)
+
+    {:ok, records}
+  end
+
+  @impl true
+  def save_principal_grant(state, %Grant{} = grant) do
+    authorization_lock(state.principal_grants, grant.id, fn ->
+      with :ok <- validate_revisioned_record(state.principal_grants, grant, &grant_identity?/2) do
+        true = :ets.insert(state.principal_grants, {grant.id, grant})
+        {:ok, grant}
+      end
+    end)
+  end
+
+  @impl true
+  def get_principal_grant(state, grant_id) do
+    fetch_authorization_record(state.principal_grants, grant_id)
+  end
+
+  @impl true
+  def list_principal_grants(state, principal_id, opts \\ []) do
+    records =
+      state.principal_grants
+      |> authorization_records()
+      |> Enum.filter(&(&1.principal_id == principal_id))
+      |> filter_authorization_record(:status, Keyword.get(opts, :status))
+      |> filter_authorization_action(Keyword.get(opts, :action))
+      |> take_authorization_records(opts)
+
+    {:ok, records}
+  end
+
+  @impl true
+  def save_invocation_policy(state, %InvocationPolicy{} = policy) do
+    scope = {policy.target_principal_id, AuthorizationScope.key(policy.scope)}
+
+    authorization_lock(state.invocation_policies, :policies, fn ->
+      with :ok <- validate_revisioned_record(state.invocation_policies, policy, &policy_identity?/2),
+           :ok <-
+             validate_scope_index(
+               state.invocation_policies_by_scope,
+               state.invocation_policies,
+               scope,
+               policy.id,
+               :invocation_policy_scope_conflict
+             ) do
+        true = :ets.insert(state.invocation_policies, {policy.id, policy})
+        true = :ets.insert(state.invocation_policies_by_scope, {scope, policy.id})
+        {:ok, policy}
+      end
+    end)
+  end
+
+  @impl true
+  def get_invocation_policy(state, policy_id) do
+    fetch_authorization_record(state.invocation_policies, policy_id)
+  end
+
+  @impl true
+  def get_invocation_policy_by_scope(state, target_principal_id, scope_key) do
+    scope = {target_principal_id, scope_key}
+
+    case :ets.lookup(state.invocation_policies_by_scope, scope) do
+      [{^scope, policy_id}] -> get_invocation_policy(state, policy_id)
+      [] -> {:error, :not_found}
+    end
+  end
+
+  @impl true
+  def list_invocation_policies(state, target_principal_id, opts \\ []) do
+    records =
+      state.invocation_policies
+      |> authorization_records()
+      |> Enum.filter(&(&1.target_principal_id == target_principal_id))
+      |> filter_authorization_record(:status, Keyword.get(opts, :status))
+      |> take_authorization_records(opts)
+
+    {:ok, records}
   end
 
   # External binding operations
@@ -1002,5 +1148,162 @@ defmodule Jido.Messaging.Persistence.ETS do
         true = :ets.insert(state.participant_bindings, {binding_key, candidate_participant_id})
         get_participant(state, candidate_participant_id)
     end
+  end
+
+  defp validate_revisioned_record(table, record, identity?) do
+    case :ets.lookup(table, record.id) do
+      [] when record.revision == 1 ->
+        :ok
+
+      [] ->
+        {:error, {:invalid_initial_revision, record.revision}}
+
+      [{_id, stored}] when stored == record ->
+        :ok
+
+      [{_id, stored}] ->
+        cond do
+          not identity?.(stored, record) ->
+            {:error, :authorization_identity_immutable}
+
+          stored.status == :revoked and record.status != :revoked ->
+            {:error, :authorization_revocation_terminal}
+
+          record.revision == stored.revision + 1 ->
+            :ok
+
+          true ->
+            {:error, {:stale_revision, stored.revision}}
+        end
+    end
+  end
+
+  defp validate_scope_index(index, records, scope, record_id, conflict \\ :membership_scope_conflict) do
+    case :ets.lookup(index, scope) do
+      [] ->
+        :ok
+
+      [{^scope, ^record_id}] ->
+        :ok
+
+      [{^scope, existing_id}] ->
+        case :ets.lookup(records, existing_id) do
+          [{^existing_id, _record}] ->
+            {:error, {conflict, existing_id}}
+
+          [] ->
+            true = :ets.delete(index, scope)
+            :ok
+        end
+    end
+  end
+
+  defp membership_identity?(stored, record) do
+    stored.principal_id == record.principal_id and stored.room_id == record.room_id and
+      stored.issuer_principal_id == record.issuer_principal_id
+  end
+
+  defp grant_identity?(stored, record) do
+    stored.principal_id == record.principal_id and
+      stored.issuer_principal_id == record.issuer_principal_id
+  end
+
+  defp policy_identity?(stored, record) do
+    stored.target_principal_id == record.target_principal_id and
+      stored.issuer_principal_id == record.issuer_principal_id and stored.scope == record.scope
+  end
+
+  defp fetch_authorization_record(table, record_id) do
+    case :ets.lookup(table, record_id) do
+      [{^record_id, record}] -> {:ok, record}
+      [] -> {:error, :not_found}
+    end
+  end
+
+  defp authorization_records(table) do
+    table
+    |> :ets.tab2list()
+    |> Enum.map(&elem(&1, 1))
+  end
+
+  defp filter_authorization_record(records, _field, nil), do: records
+
+  defp filter_authorization_record(records, field, value),
+    do: Enum.filter(records, &(Map.get(&1, field) == value))
+
+  defp filter_authorization_action(records, nil), do: records
+  defp filter_authorization_action(records, action), do: Enum.filter(records, &(action in &1.actions))
+
+  defp take_authorization_records(records, opts) do
+    limit = Keyword.get(opts, :limit, 100)
+    limit = if is_integer(limit) and limit > 0, do: min(limit, 501), else: 100
+
+    records
+    |> Enum.sort_by(&{&1.inserted_at, &1.id})
+    |> Enum.take(limit)
+  end
+
+  defp authorization_lock(table, key, fun) do
+    case :global.trans({{__MODULE__, table, key}, self()}, fun) do
+      :aborted -> {:error, :authorization_lock_aborted}
+      result -> result
+    end
+  end
+
+  defp delete_room_authorization_records(state, room_id) do
+    state.memberships
+    |> authorization_records()
+    |> Enum.each(fn membership ->
+      if membership.room_id == room_id, do: delete_membership_record(state, membership)
+    end)
+
+    state.principal_grants
+    |> authorization_records()
+    |> Enum.each(fn grant ->
+      if grant.scope.room_id == room_id, do: :ets.delete(state.principal_grants, grant.id)
+    end)
+
+    state.invocation_policies
+    |> authorization_records()
+    |> Enum.each(fn policy ->
+      if policy.scope.room_id == room_id, do: delete_policy_record(state, policy)
+    end)
+
+    :ok
+  end
+
+  defp delete_principal_authorization_records(state, principal_id) do
+    state.memberships
+    |> authorization_records()
+    |> Enum.each(fn membership ->
+      if membership.principal_id == principal_id, do: delete_membership_record(state, membership)
+    end)
+
+    state.principal_grants
+    |> authorization_records()
+    |> Enum.each(fn grant ->
+      if grant.principal_id == principal_id, do: :ets.delete(state.principal_grants, grant.id)
+    end)
+
+    state.invocation_policies
+    |> authorization_records()
+    |> Enum.each(fn policy ->
+      if policy.target_principal_id == principal_id, do: delete_policy_record(state, policy)
+    end)
+
+    :ok
+  end
+
+  defp delete_membership_record(state, membership) do
+    true = :ets.delete(state.memberships, membership.id)
+    true = :ets.delete(state.memberships_by_scope, {membership.room_id, membership.principal_id})
+    :ok
+  end
+
+  defp delete_policy_record(state, policy) do
+    scope = {policy.target_principal_id, AuthorizationScope.key(policy.scope)}
+    true = :ets.delete(state.invocation_policies, policy.id)
+    true = :ets.delete(state.invocation_policies_by_scope, scope)
+    :ok
   end
 end

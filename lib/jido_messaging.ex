@@ -50,6 +50,7 @@ defmodule Jido.Messaging do
   alias Jido.Messaging.TopologyValidator
 
   alias Jido.Messaging.{
+    AccessControl,
     AgentRunner,
     AgentSupervisor,
     ConfigStore,
@@ -164,6 +165,117 @@ defmodule Jido.Messaging do
       @doc "Get a participant by ID"
       def get_participant(participant_id) do
         Jido.Messaging.get_participant(__jido_messaging__(:runtime), participant_id)
+      end
+
+      @doc "Create an authorization membership for a canonical principal and room"
+      def create_membership(attrs) do
+        Jido.Messaging.create_membership(__jido_messaging__(:runtime), attrs)
+      end
+
+      @doc "Get an authorization membership by record ID"
+      def get_membership(membership_id) do
+        Jido.Messaging.get_membership(__jido_messaging__(:runtime), membership_id)
+      end
+
+      @doc "List authorization memberships for a room"
+      def list_memberships(room_id, opts \\ []) do
+        Jido.Messaging.list_memberships(__jido_messaging__(:runtime), room_id, opts)
+      end
+
+      @doc "Change membership status with an expected revision"
+      def transition_membership(membership_id, expected_revision, status) do
+        Jido.Messaging.transition_membership(
+          __jido_messaging__(:runtime),
+          membership_id,
+          expected_revision,
+          status
+        )
+      end
+
+      @doc "Create a durable messaging grant for a canonical principal"
+      def create_principal_grant(attrs) do
+        Jido.Messaging.create_principal_grant(__jido_messaging__(:runtime), attrs)
+      end
+
+      @doc "Get a principal messaging grant by record ID"
+      def get_principal_grant(grant_id) do
+        Jido.Messaging.get_principal_grant(__jido_messaging__(:runtime), grant_id)
+      end
+
+      @doc "List durable messaging grants for a principal"
+      def list_principal_grants(principal_id, opts \\ []) do
+        Jido.Messaging.list_principal_grants(
+          __jido_messaging__(:runtime),
+          principal_id,
+          opts
+        )
+      end
+
+      @doc "Revise a principal grant with an expected revision"
+      def revise_principal_grant(grant_id, expected_revision, attrs) do
+        Jido.Messaging.revise_principal_grant(
+          __jido_messaging__(:runtime),
+          grant_id,
+          expected_revision,
+          attrs
+        )
+      end
+
+      @doc "Revoke a principal grant with an expected revision"
+      def revoke_principal_grant(grant_id, expected_revision) do
+        Jido.Messaging.revoke_principal_grant(
+          __jido_messaging__(:runtime),
+          grant_id,
+          expected_revision
+        )
+      end
+
+      @doc "Create a messaging invocation policy for an agent principal"
+      def create_invocation_policy(attrs) do
+        Jido.Messaging.create_invocation_policy(__jido_messaging__(:runtime), attrs)
+      end
+
+      @doc "Get an invocation policy by record ID"
+      def get_invocation_policy(policy_id) do
+        Jido.Messaging.get_invocation_policy(__jido_messaging__(:runtime), policy_id)
+      end
+
+      @doc "List invocation policies for an agent principal"
+      def list_invocation_policies(target_principal_id, opts \\ []) do
+        Jido.Messaging.list_invocation_policies(
+          __jido_messaging__(:runtime),
+          target_principal_id,
+          opts
+        )
+      end
+
+      @doc "Revise an invocation policy with an expected revision"
+      def revise_invocation_policy(policy_id, expected_revision, attrs) do
+        Jido.Messaging.revise_invocation_policy(
+          __jido_messaging__(:runtime),
+          policy_id,
+          expected_revision,
+          attrs
+        )
+      end
+
+      @doc "Revoke an invocation policy with an expected revision"
+      def revoke_invocation_policy(policy_id, expected_revision) do
+        Jido.Messaging.revoke_invocation_policy(
+          __jido_messaging__(:runtime),
+          policy_id,
+          expected_revision
+        )
+      end
+
+      @doc "Check current durable messaging authorization for a principal"
+      def authorize(principal_id, action, scope) do
+        Jido.Messaging.Authorizer.check(
+          __jido_messaging__(:runtime),
+          principal_id,
+          action,
+          scope
+        )
       end
 
       @doc "Save a message"
@@ -843,6 +955,70 @@ defmodule Jido.Messaging do
     {persistence, persistence_state} = Runtime.get_persistence(runtime)
     persistence.get_participant(persistence_state, participant_id)
   end
+
+  @doc "Create an authorization membership for a canonical principal and room."
+  def create_membership(runtime, attrs) when is_map(attrs),
+    do: AccessControl.create_membership(runtime, attrs)
+
+  @doc "Get an authorization membership by record ID."
+  def get_membership(runtime, membership_id) when is_binary(membership_id),
+    do: AccessControl.get_membership(runtime, membership_id)
+
+  @doc "List authorization memberships for a room."
+  def list_memberships(runtime, room_id, opts \\ [])
+      when is_binary(room_id) and is_list(opts),
+      do: AccessControl.list_memberships(runtime, room_id, opts)
+
+  @doc "Change membership status with an expected revision."
+  def transition_membership(runtime, membership_id, expected_revision, status)
+      when is_binary(membership_id) and is_integer(expected_revision),
+      do: AccessControl.transition_membership(runtime, membership_id, expected_revision, status)
+
+  @doc "Create a durable messaging grant for a canonical principal."
+  def create_principal_grant(runtime, attrs) when is_map(attrs),
+    do: AccessControl.create_grant(runtime, attrs)
+
+  @doc "Get a principal messaging grant by record ID."
+  def get_principal_grant(runtime, grant_id) when is_binary(grant_id),
+    do: AccessControl.get_grant(runtime, grant_id)
+
+  @doc "List durable messaging grants for a principal."
+  def list_principal_grants(runtime, principal_id, opts \\ [])
+      when is_binary(principal_id) and is_list(opts),
+      do: AccessControl.list_grants(runtime, principal_id, opts)
+
+  @doc "Revise a principal grant with an expected revision."
+  def revise_principal_grant(runtime, grant_id, expected_revision, attrs)
+      when is_binary(grant_id) and is_integer(expected_revision) and is_map(attrs),
+      do: AccessControl.revise_grant(runtime, grant_id, expected_revision, attrs)
+
+  @doc "Revoke a principal grant with an expected revision."
+  def revoke_principal_grant(runtime, grant_id, expected_revision)
+      when is_binary(grant_id) and is_integer(expected_revision),
+      do: AccessControl.revoke_grant(runtime, grant_id, expected_revision)
+
+  @doc "Create a messaging invocation policy for an agent principal."
+  def create_invocation_policy(runtime, attrs) when is_map(attrs),
+    do: AccessControl.create_invocation_policy(runtime, attrs)
+
+  @doc "Get an invocation policy by record ID."
+  def get_invocation_policy(runtime, policy_id) when is_binary(policy_id),
+    do: AccessControl.get_invocation_policy(runtime, policy_id)
+
+  @doc "List invocation policies for an agent principal."
+  def list_invocation_policies(runtime, target_principal_id, opts \\ [])
+      when is_binary(target_principal_id) and is_list(opts),
+      do: AccessControl.list_invocation_policies(runtime, target_principal_id, opts)
+
+  @doc "Revise an invocation policy with an expected revision."
+  def revise_invocation_policy(runtime, policy_id, expected_revision, attrs)
+      when is_binary(policy_id) and is_integer(expected_revision) and is_map(attrs),
+      do: AccessControl.revise_invocation_policy(runtime, policy_id, expected_revision, attrs)
+
+  @doc "Revoke an invocation policy with an expected revision."
+  def revoke_invocation_policy(runtime, policy_id, expected_revision)
+      when is_binary(policy_id) and is_integer(expected_revision),
+      do: AccessControl.revoke_invocation_policy(runtime, policy_id, expected_revision)
 
   @doc "Save a message"
   def save_message(runtime, attrs) when is_map(attrs) do

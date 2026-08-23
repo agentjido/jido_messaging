@@ -157,6 +157,7 @@ defmodule Jido.Messaging.MixProject do
         "README.md",
         "CHANGELOG.md",
         "CONTRIBUTING.md",
+        "docs/principal-authorization.md",
         "docs/rfcs/0001-durable-delivery.md",
         "docs/message-correctness-hardening.md"
       ]

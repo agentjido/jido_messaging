@@ -3,6 +3,7 @@ defmodule Jido.Messaging.Transcript do
 
   alias Jido.Messaging.Message
 
+  @doc "Pages messages by stable timestamp and message ID order."
   @spec paginate([Message.t()], keyword()) :: {:ok, [Message.t()]} | {:error, term()}
   def paginate(messages, opts) when is_list(messages) and is_list(opts) do
     limit = Keyword.get(opts, :limit, 50)
