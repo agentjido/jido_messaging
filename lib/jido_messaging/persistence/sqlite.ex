@@ -23,10 +23,13 @@ defmodule Jido.Messaging.Persistence.SQLite do
   alias Jido.Chat.{Participant, Room}
 
   alias Jido.Messaging.{
+    AgentMessagingEndpoint,
+    AgentThreadRoute,
     BridgeConfig,
     IngressSubscription,
     Message,
     RoomBinding,
+    RoomMembership,
     RoutingPolicy,
     Thread
   }
@@ -78,7 +81,14 @@ defmodule Jido.Messaging.Persistence.SQLite do
       DELETE FROM #{@table}
       WHERE instance_id = ?1
         AND ((kind = 'room' AND id = ?2)
-         OR (kind IN ('message', 'thread', 'room_binding', 'routing_policy') AND room_id = ?2))
+         OR (kind IN (
+           'message',
+           'thread',
+           'room_binding',
+           'routing_policy',
+           'room_membership',
+           'agent_thread_route'
+         ) AND room_id = ?2))
       """,
       [state.instance_id, room_id]
     )
@@ -99,16 +109,36 @@ defmodule Jido.Messaging.Persistence.SQLite do
 
   @impl true
   def delete_participant(state, participant_id) do
-    run(
-      state.db,
-      """
-      DELETE FROM #{@table}
-      WHERE instance_id = ?1
-        AND ((kind = 'participant' AND id = ?2)
-          OR (kind = 'participant_binding' AND room_id = ?2))
-      """,
-      [state.instance_id, participant_id]
-    )
+    with :ok <-
+           run(
+             state.db,
+             """
+             DELETE FROM #{@table}
+             WHERE instance_id = ?1
+               AND kind = 'agent_thread_route'
+               AND external_id IN (
+                 SELECT id
+                 FROM #{@table}
+                 WHERE instance_id = ?1
+                   AND kind = 'agent_endpoint'
+                   AND sender_id = ?2
+               )
+             """,
+             [state.instance_id, participant_id]
+           ) do
+      run(
+        state.db,
+        """
+        DELETE FROM #{@table}
+        WHERE instance_id = ?1
+          AND ((kind = 'participant' AND id = ?2)
+            OR (kind = 'participant_binding' AND room_id = ?2)
+            OR (kind = 'agent_endpoint' AND sender_id = ?2)
+            OR (kind = 'room_membership' AND sender_id = ?2))
+        """,
+        [state.instance_id, participant_id]
+      )
+    end
   end
 
   @impl true
@@ -372,6 +402,131 @@ defmodule Jido.Messaging.Persistence.SQLite do
       order: "inserted_at ASC, id ASC",
       limit: limit
     )
+  end
+
+  # Agent messaging endpoint operations
+
+  @impl true
+  def save_agent_messaging_endpoint(state, %AgentMessagingEndpoint{} = endpoint) do
+    binding_lock(state, :agent_endpoint, fn ->
+      transaction(state, fn transaction_state ->
+        do_save_agent_messaging_endpoint(transaction_state, endpoint)
+      end)
+    end)
+  end
+
+  @impl true
+  def get_agent_messaging_endpoint(state, endpoint_id),
+    do: fetch_record(state, "agent_endpoint", endpoint_id)
+
+  @impl true
+  def get_agent_messaging_endpoint_by_ref(state, jidoka_agent_id) do
+    fetch_one(state, "agent_endpoint", [{"external_id", normalize_term(jidoka_agent_id)}])
+  end
+
+  @impl true
+  def list_agent_messaging_endpoints(state, opts \\ []) do
+    limit = Keyword.get(opts, :limit, 100)
+
+    with {:ok, endpoints} <- list_records(state, "agent_endpoint", limit: 500, order: "inserted_at ASC, id ASC") do
+      endpoints =
+        endpoints
+        |> maybe_filter_record(:principal_id, Keyword.get(opts, :principal_id))
+        |> maybe_filter_record(:status, Keyword.get(opts, :status))
+        |> maybe_filter_record(:availability, Keyword.get(opts, :availability))
+        |> Enum.take(limit)
+
+      {:ok, endpoints}
+    end
+  end
+
+  @impl true
+  def save_room_membership(state, %RoomMembership{} = membership) do
+    binding_lock(state, {:room_membership, membership.room_id, membership.endpoint_id}, fn ->
+      transaction(state, fn transaction_state ->
+        do_save_room_membership(transaction_state, membership)
+      end)
+    end)
+  end
+
+  @impl true
+  def get_room_membership(state, membership_id),
+    do: fetch_record(state, "room_membership", membership_id)
+
+  @impl true
+  def get_room_membership(state, room_id, endpoint_id) do
+    fetch_one(state, "room_membership", [
+      {"room_id", room_id},
+      {"external_id", endpoint_id}
+    ])
+  end
+
+  @impl true
+  def list_room_memberships(state, room_id, opts \\ []) do
+    limit = Keyword.get(opts, :limit, 100)
+
+    with {:ok, memberships} <-
+           query_records(
+             state,
+             "kind = ?1 AND room_id = ?2",
+             ["room_membership", room_id],
+             order: "inserted_at ASC, id ASC",
+             limit: 500
+           ) do
+      memberships =
+        memberships
+        |> maybe_filter_record(:endpoint_id, Keyword.get(opts, :endpoint_id))
+        |> maybe_filter_record(:principal_id, Keyword.get(opts, :principal_id))
+        |> maybe_filter_record(:status, Keyword.get(opts, :status))
+        |> Enum.take(limit)
+
+      {:ok, memberships}
+    end
+  end
+
+  @impl true
+  def save_agent_thread_route(state, %AgentThreadRoute{} = route) do
+    binding_lock(state, {:agent_thread_route, route.thread_id}, fn ->
+      transaction(state, fn transaction_state ->
+        case get_agent_thread_route(transaction_state, route.thread_id) do
+          {:ok, %AgentThreadRoute{id: route_id}} when route_id != route.id ->
+            {:error, {:agent_thread_route_conflict, route_id}}
+
+          {:ok, _existing} ->
+            persist_agent_thread_route(transaction_state, route)
+
+          {:error, :not_found} ->
+            persist_agent_thread_route(transaction_state, route)
+        end
+      end)
+    end)
+  end
+
+  @impl true
+  def get_agent_thread_route(state, thread_id) do
+    fetch_one(state, "agent_thread_route", [{"thread_id", thread_id}])
+  end
+
+  @impl true
+  def list_agent_thread_routes(state, endpoint_id, opts \\ []) do
+    limit = Keyword.get(opts, :limit, 100)
+
+    with {:ok, routes} <-
+           query_records(
+             state,
+             "kind = ?1 AND external_id = ?2",
+             ["agent_thread_route", endpoint_id],
+             order: "inserted_at ASC, id ASC",
+             limit: 500
+           ) do
+      routes =
+        routes
+        |> maybe_filter_record(:room_id, Keyword.get(opts, :room_id))
+        |> maybe_filter_record(:status, Keyword.get(opts, :status))
+        |> Enum.take(limit)
+
+      {:ok, routes}
+    end
   end
 
   @impl true
@@ -677,6 +832,99 @@ defmodule Jido.Messaging.Persistence.SQLite do
     end
   end
 
+  defp do_save_agent_messaging_endpoint(state, endpoint) do
+    jidoka_id = endpoint.jidoka_agent_ref["id"]
+
+    with :ok <- validate_stored_endpoint_identity(state, endpoint),
+         :ok <- validate_endpoint_principal(state, endpoint),
+         :ok <- validate_endpoint_ref(state, endpoint, jidoka_id) do
+      persist(state, "agent_endpoint", endpoint.id, endpoint,
+        sender_id: endpoint.principal_id,
+        inserted_at: endpoint.inserted_at,
+        external_id: jidoka_id
+      )
+    end
+  end
+
+  defp validate_stored_endpoint_identity(state, endpoint) do
+    case get_agent_messaging_endpoint(state, endpoint.id) do
+      {:ok, stored} ->
+        if stored.principal_id == endpoint.principal_id and
+             stored.jidoka_agent_ref == endpoint.jidoka_agent_ref do
+          :ok
+        else
+          {:error, :agent_endpoint_identity_immutable}
+        end
+
+      {:error, :not_found} ->
+        :ok
+    end
+  end
+
+  defp validate_endpoint_principal(state, endpoint) do
+    case fetch_one(state, "agent_endpoint", [{"sender_id", endpoint.principal_id}]) do
+      {:ok, %{id: endpoint_id}} when endpoint_id == endpoint.id -> :ok
+      {:ok, %{id: endpoint_id}} -> {:error, {:agent_endpoint_principal_conflict, endpoint_id}}
+      {:error, :not_found} -> :ok
+    end
+  end
+
+  defp validate_endpoint_ref(state, endpoint, jidoka_id) do
+    case get_agent_messaging_endpoint_by_ref(state, jidoka_id) do
+      {:ok, %{id: endpoint_id}} when endpoint_id == endpoint.id -> :ok
+      {:ok, %{id: endpoint_id}} -> {:error, {:jidoka_agent_ref_conflict, endpoint_id}}
+      {:error, :not_found} -> :ok
+    end
+  end
+
+  defp do_save_room_membership(state, membership) do
+    with :ok <- validate_stored_membership_identity(state, membership),
+         :ok <- validate_membership_scope(state, membership) do
+      persist(state, "room_membership", membership.id, membership,
+        room_id: membership.room_id,
+        sender_id: membership.principal_id,
+        inserted_at: membership.inserted_at,
+        external_id: membership.endpoint_id
+      )
+    end
+  end
+
+  defp validate_stored_membership_identity(state, membership) do
+    case get_room_membership(state, membership.id) do
+      {:ok, stored} ->
+        if stored.room_id == membership.room_id and
+             stored.endpoint_id == membership.endpoint_id and
+             stored.principal_id == membership.principal_id do
+          :ok
+        else
+          {:error, :room_membership_identity_immutable}
+        end
+
+      {:error, :not_found} ->
+        :ok
+    end
+  end
+
+  defp validate_membership_scope(state, membership) do
+    case get_room_membership(state, membership.room_id, membership.endpoint_id) do
+      {:ok, %{id: membership_id}} when membership_id == membership.id -> :ok
+      {:ok, %{id: membership_id}} -> {:error, {:room_membership_conflict, membership_id}}
+      {:error, :not_found} -> :ok
+    end
+  end
+
+  defp persist_agent_thread_route(state, route) do
+    persist(state, "agent_thread_route", route.id, route,
+      room_id: route.room_id,
+      thread_id: route.thread_id,
+      inserted_at: route.inserted_at,
+      external_id: route.endpoint_id
+    )
+  end
+
+  defp maybe_filter_record(records, _field, nil), do: records
+  defp maybe_filter_record(records, field, value), do: Enum.filter(records, &(Map.get(&1, field) == value))
+
   defp ensure_parent_dir(":memory:"), do: :ok
 
   defp ensure_parent_dir(path) do
@@ -841,6 +1089,18 @@ defmodule Jido.Messaging.Persistence.SQLite do
     CREATE UNIQUE INDEX IF NOT EXISTS #{@table}_participant_binding_unique_idx
       ON #{@table} (instance_id, channel, bridge_id, external_id)
       WHERE kind = 'participant_binding';
+
+    CREATE UNIQUE INDEX IF NOT EXISTS #{@table}_agent_endpoint_ref_unique_idx
+      ON #{@table} (instance_id, external_id)
+      WHERE kind = 'agent_endpoint';
+
+    CREATE UNIQUE INDEX IF NOT EXISTS #{@table}_room_membership_unique_idx
+      ON #{@table} (instance_id, room_id, external_id)
+      WHERE kind = 'room_membership';
+
+    CREATE UNIQUE INDEX IF NOT EXISTS #{@table}_agent_thread_route_unique_idx
+      ON #{@table} (instance_id, thread_id)
+      WHERE kind = 'agent_thread_route';
     """)
   end
 
