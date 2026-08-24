@@ -28,13 +28,20 @@ jobs:
 
   optional-jido-ai:
     name: Optional jido_ai example
-    uses: agentjido/github-actions/.github/workflows/jido-ci.yml@v5
-    secrets: inherit
-    with:
-      credo_command: mix credo --min-priority higher
-      validate_hex_package: false
-      docs_command: mix docs -f html
-      test_command: mix test.optional_jido_ai
+    runs-on: ubuntu-latest
+    env:
+      MIX_ENV: test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: erlef/setup-beam@v1
+        with:
+          elixir-version: "1.18.4"
+          otp-version: "27.3"
+      - run: mix local.hex --force
+      - run: mix local.rebar --force
+      - run: mix deps.get
+      - name: Run optional jido_ai example tests
+        run: mix test.optional_jido_ai
 
   postgres-persistence:
     name: PostgreSQL persistence
