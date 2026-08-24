@@ -49,7 +49,8 @@ defmodule Jido.Messaging.Persistence do
     Principal,
     RoomMembership,
     RoutingPolicy,
-    Thread
+    Thread,
+    ThreadContinuityLink
   }
 
   @type state :: term()
@@ -182,6 +183,15 @@ defmodule Jido.Messaging.Persistence do
   @doc "List threads for a room"
   @callback list_threads(state, room_id(), opts :: keyword()) :: {:ok, [Thread.t()]}
 
+  # Jidoka continuity correlation
+
+  @doc "Persist a messaging thread link to Jidoka-owned continuity state."
+  @callback save_thread_continuity_link(state, ThreadContinuityLink.t()) ::
+              {:ok, ThreadContinuityLink.t()} | {:error, term()}
+
+  @doc "Fetch a Jidoka continuity link by messaging thread ID."
+  @callback get_thread_continuity_link(state, String.t()) ::
+              {:ok, ThreadContinuityLink.t()} | {:error, :not_found | term()}
   # Principal authorization operations
   @doc "Persist a revisioned principal room membership."
   @callback save_membership(state, Membership.t()) ::
@@ -497,6 +507,8 @@ defmodule Jido.Messaging.Persistence do
                       list_ingress_subscriptions: 3,
                       delete_ingress_subscription: 3,
                       mark_message_read: 4,
+                      save_thread_continuity_link: 2,
+                      get_thread_continuity_link: 2,
                       save_agent_directory_projection: 2,
                       get_agent_directory_projection: 2,
                       list_agent_directory_projections: 2,

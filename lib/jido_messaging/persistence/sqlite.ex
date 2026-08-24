@@ -46,7 +46,8 @@ defmodule Jido.Messaging.Persistence.SQLite do
     RoomBinding,
     RoomMembership,
     RoutingPolicy,
-    Thread
+    Thread,
+    ThreadContinuityLink
   }
 
   @table "jido_messaging_records"
@@ -120,6 +121,7 @@ defmodule Jido.Messaging.Persistence.SQLite do
            'thread',
            'room_binding',
            'routing_policy',
+           'thread_continuity_link',
            'messaging_activity',
            'membership',
            'principal_grant',
@@ -158,6 +160,7 @@ defmodule Jido.Messaging.Persistence.SQLite do
       WHERE instance_id = ?1
         AND ((kind = 'participant' AND id = ?2)
           OR (kind = 'participant_binding' AND room_id = ?2)
+          OR (kind = 'thread_continuity_link' AND sender_id = ?2)
           OR (kind = 'agent_directory_projection' AND sender_id = ?2)
           OR (kind = 'messaging_activity' AND sender_id = ?2)
           OR (kind = 'identity_assertion' AND room_id IN (
@@ -557,6 +560,23 @@ defmodule Jido.Messaging.Persistence.SQLite do
     )
   end
 
+  # Jidoka continuity correlation
+
+  @impl true
+  def save_thread_continuity_link(state, %ThreadContinuityLink{} = incoming) do
+    binding_lock(state, :thread_continuity, fn ->
+      transaction(state, fn transaction_state ->
+        with {:ok, stored} <- optional_continuity_link(transaction_state, incoming.thread_id),
+             {:ok, accepted, operation} <-
+               ThreadContinuityLink.prepare_save(stored, incoming),
+             :ok <-
+               ensure_continuity_session_available(transaction_state, accepted, operation) do
+          persist_continuity_link(transaction_state, accepted)
+        end
+      end)
+    end)
+  end
+
   # Principal authorization operations
 
   @impl true
@@ -666,6 +686,11 @@ defmodule Jido.Messaging.Persistence.SQLite do
         end
       end)
     end)
+  end
+
+  @impl true
+  def get_thread_continuity_link(state, thread_id) when is_binary(thread_id) do
+    fetch_one(state, "thread_continuity_link", [{"thread_id", thread_id}])
   end
 
   @impl true
@@ -1834,6 +1859,9 @@ defmodule Jido.Messaging.Persistence.SQLite do
       ON #{@table} (instance_id, channel, bridge_id, external_id)
       WHERE kind = 'participant_binding';
 
+    CREATE UNIQUE INDEX IF NOT EXISTS #{@table}_continuity_session_unique_idx
+      ON #{@table} (instance_id, bridge_id, external_id)
+      WHERE kind = 'thread_continuity_link' AND external_id IS NOT NULL;
     CREATE INDEX IF NOT EXISTS #{@table}_identity_subject_idx
       ON #{@table} (instance_id, kind, sender_id, inserted_at, id)
       WHERE kind = 'identity_credential';
@@ -1904,6 +1932,56 @@ defmodule Jido.Messaging.Persistence.SQLite do
     CREATE INDEX IF NOT EXISTS #{@table}_participant_history_idx
       ON #{@table} (instance_id, kind, sender_id, inserted_at, id);
     """)
+  end
+
+  defp optional_continuity_link(state, thread_id) do
+    case get_thread_continuity_link(state, thread_id) do
+      {:ok, %ThreadContinuityLink{} = link} -> {:ok, link}
+      {:error, :not_found} -> {:ok, nil}
+      {:error, _reason} = error -> error
+    end
+  end
+
+  defp ensure_continuity_session_available(_state, _link, :unchanged), do: :ok
+
+  defp ensure_continuity_session_available(state, %ThreadContinuityLink{} = link, _operation) do
+    if ThreadContinuityLink.claims_session?(link) do
+      reference = link.continuity_ref
+
+      case fetch_one(state, "thread_continuity_link", [
+             {"bridge_id", reference.integration_id},
+             {"external_id", reference.session_id}
+           ]) do
+        {:ok, %ThreadContinuityLink{thread_id: thread_id}} when thread_id == link.thread_id ->
+          :ok
+
+        {:ok, %ThreadContinuityLink{} = existing} ->
+          {:error, {:continuity_session_scope_conflict, existing.thread_id}}
+
+        {:error, :not_found} ->
+          :ok
+
+        {:error, _reason} = error ->
+          error
+      end
+    else
+      :ok
+    end
+  end
+
+  defp persist_continuity_link(state, %ThreadContinuityLink{} = link) do
+    reference = link.continuity_ref
+    external_id = if ThreadContinuityLink.claims_session?(link), do: reference.session_id
+
+    persist(state, "thread_continuity_link", link.id, link,
+      room_id: link.room_id,
+      thread_id: link.thread_id,
+      sender_id: link.principal_id,
+      inserted_at: link.inserted_at,
+      channel: link.status,
+      bridge_id: reference.integration_id,
+      external_id: external_id
+    )
   end
 
   defp create_activity_index(db) do

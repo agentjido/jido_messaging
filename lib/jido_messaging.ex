@@ -624,6 +624,63 @@ defmodule Jido.Messaging do
         Jido.Messaging.HistoryScope.new(__MODULE__, room_ids, metadata)
       end
 
+      @doc "Create or update a messaging reference to Jidoka-owned continuity"
+      def put_thread_continuity(attrs) do
+        Jido.Messaging.put_thread_continuity(__jido_messaging__(:runtime), attrs)
+      end
+
+      @doc "Get a thread continuity link within an authorized history scope"
+      def get_thread_continuity(thread_id, scope) do
+        Jido.Messaging.get_thread_continuity(
+          __MODULE__,
+          __jido_messaging__(:runtime),
+          thread_id,
+          scope
+        )
+      end
+
+      @doc "Resolve a usable opaque Jidoka continuity reference"
+      def resolve_thread_continuity(thread_id, scope) do
+        Jido.Messaging.resolve_thread_continuity(
+          __MODULE__,
+          __jido_messaging__(:runtime),
+          thread_id,
+          scope
+        )
+      end
+
+      @doc "Change the availability state of a thread continuity link"
+      def set_thread_continuity_status(thread_id, status, expected_revision, opts \\ []) do
+        Jido.Messaging.set_thread_continuity_status(
+          __jido_messaging__(:runtime),
+          thread_id,
+          status,
+          expected_revision,
+          opts
+        )
+      end
+
+      @doc "Clear a thread continuity link and keep a durable marker"
+      def clear_thread_continuity(thread_id, expected_revision, opts \\ []) do
+        Jido.Messaging.clear_thread_continuity(
+          __jido_messaging__(:runtime),
+          thread_id,
+          expected_revision,
+          opts
+        )
+      end
+
+      @doc "Return a scoped canonical transcript and its opaque Jidoka link"
+      def jidoka_continuity_context(thread_id, scope, opts \\ []) do
+        Jido.Messaging.jidoka_continuity_context(
+          __MODULE__,
+          __jido_messaging__(:runtime),
+          thread_id,
+          scope,
+          opts
+        )
+      end
+
       @doc "Return messages sent by one canonical participant in the allowed history scope"
       def participant_transcript(participant_id, scope, opts \\ []) do
         Jido.Messaging.participant_transcript(
@@ -1734,6 +1791,36 @@ defmodule Jido.Messaging do
     with {:ok, messages} <- list_messages(runtime, room_id, opts) do
       {:ok, Jido.Messaging.Query.room_timeline(messages)}
     end
+  end
+
+  @doc "Create or update a messaging reference to Jidoka-owned continuity."
+  def put_thread_continuity(runtime, attrs) do
+    Jido.Messaging.Continuity.put(runtime, attrs)
+  end
+
+  @doc "Get a thread continuity link within an authorized history scope."
+  def get_thread_continuity(instance_module, runtime, thread_id, scope) do
+    Jido.Messaging.Continuity.get(instance_module, runtime, thread_id, scope)
+  end
+
+  @doc "Resolve a usable opaque Jidoka continuity reference."
+  def resolve_thread_continuity(instance_module, runtime, thread_id, scope) do
+    Jido.Messaging.Continuity.resolve(instance_module, runtime, thread_id, scope)
+  end
+
+  @doc "Change the availability state of a thread continuity link."
+  def set_thread_continuity_status(runtime, thread_id, status, expected_revision, opts \\ []) do
+    Jido.Messaging.Continuity.set_status(runtime, thread_id, status, expected_revision, opts)
+  end
+
+  @doc "Clear a thread continuity link and keep a durable marker."
+  def clear_thread_continuity(runtime, thread_id, expected_revision, opts \\ []) do
+    Jido.Messaging.Continuity.clear(runtime, thread_id, expected_revision, opts)
+  end
+
+  @doc "Return a scoped canonical transcript and its opaque Jidoka link."
+  def jidoka_continuity_context(instance_module, runtime, thread_id, scope, opts \\ []) do
+    Jido.Messaging.Continuity.context(instance_module, runtime, thread_id, scope, opts)
   end
 
   @doc """
