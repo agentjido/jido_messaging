@@ -22,6 +22,8 @@ defmodule Jido.Messaging.Persistence.ETS do
   - `:thread_messages` - Index of message_ids by thread_id (bag table)
   - `:room_bindings` - External binding to room_id mapping
   - `:participant_bindings` - External ID to participant_id mapping
+  - `:messaging_activities` - Safe Jidoka activity projections by activity ID
+  - `:principal_activities` - Index of activity IDs by principal ID
   - `:onboarding_flows` - Onboarding flow records keyed by onboarding_id
   - `:ingress_subscriptions` - Bridge/provider subscription metadata
   """
@@ -46,6 +48,8 @@ defmodule Jido.Messaging.Persistence.ETS do
               room_bindings_by_id: Zoi.any(),
               participant_bindings: Zoi.any(),
               message_external_ids: Zoi.any(),
+              messaging_activities: Zoi.any(),
+              principal_activities: Zoi.any(),
               onboarding_flows: Zoi.any(),
               bridge_configs: Zoi.any(),
               ingress_subscriptions: Zoi.any(),
@@ -63,7 +67,16 @@ defmodule Jido.Messaging.Persistence.ETS do
   def schema, do: @schema
 
   alias Jido.Chat.{Participant, Room}
-  alias Jido.Messaging.{BridgeConfig, IngressSubscription, Message, RoomBinding, Thread}
+
+  alias Jido.Messaging.{
+    ActivityPage,
+    BridgeConfig,
+    IngressSubscription,
+    Message,
+    MessagingActivityEntry,
+    RoomBinding,
+    Thread
+  }
 
   @impl true
   def init(_opts) do
@@ -83,6 +96,8 @@ defmodule Jido.Messaging.Persistence.ETS do
         room_bindings_by_id: :ets.new(:room_bindings_by_id, [:set, :public]),
         participant_bindings: :ets.new(:participant_bindings, [:set, :public]),
         message_external_ids: :ets.new(:message_external_ids, [:set, :public]),
+        messaging_activities: :ets.new(:messaging_activities, [:set, :public]),
+        principal_activities: :ets.new(:principal_activities, [:bag, :public]),
         onboarding_flows: :ets.new(:onboarding_flows, [:set, :public]),
         bridge_configs: :ets.new(:bridge_configs, [:set, :public]),
         ingress_subscriptions: :ets.new(:ingress_subscriptions, [:set, :public]),
@@ -119,6 +134,7 @@ defmodule Jido.Messaging.Persistence.ETS do
     Enum.each(bindings, &delete_room_binding(state, &1.id))
 
     delete_threads_for_room(state, room_id)
+    delete_activities_for_room(state, room_id)
     :ok
   end
 
@@ -152,6 +168,7 @@ defmodule Jido.Messaging.Persistence.ETS do
 
   @impl true
   def delete_participant(state, participant_id) do
+    delete_activities_for_principal(state, participant_id)
     true = :ets.delete(state.participants, participant_id)
     :ok
   end
@@ -290,6 +307,48 @@ defmodule Jido.Messaging.Persistence.ETS do
       |> Enum.filter(&(&1.sender_id == participant_id and MapSet.member?(allowed_rooms, &1.room_id)))
 
     Jido.Messaging.Transcript.paginate(messages, opts)
+  end
+
+  # Messaging activity projection operations
+
+  @impl true
+  def save_messaging_activity(state, %MessagingActivityEntry{} = entry) do
+    activity_lock(state.messaging_activities, entry.id, fn ->
+      case :ets.lookup(state.messaging_activities, entry.id) do
+        [] ->
+          store_messaging_activity(state, entry)
+
+        [{_id, stored}] ->
+          revise_messaging_activity(state, stored, entry)
+      end
+    end)
+  end
+
+  @impl true
+  def get_messaging_activity(state, activity_id) when is_binary(activity_id) do
+    case :ets.lookup(state.messaging_activities, activity_id) do
+      [{^activity_id, entry}] -> {:ok, entry}
+      [] -> {:error, :not_found}
+    end
+  end
+
+  @impl true
+  def get_principal_activity(state, principal_id, room_ids, opts \\ [])
+      when is_binary(principal_id) and is_list(room_ids) and is_list(opts) do
+    allowed_rooms = MapSet.new(room_ids)
+
+    entries =
+      state.principal_activities
+      |> :ets.lookup(principal_id)
+      |> Enum.flat_map(fn {^principal_id, activity_id} ->
+        case :ets.lookup(state.messaging_activities, activity_id) do
+          [{^activity_id, %MessagingActivityEntry{} = entry}] -> [entry]
+          [] -> []
+        end
+      end)
+      |> Enum.filter(&MapSet.member?(allowed_rooms, &1.room_id))
+
+    ActivityPage.paginate(entries, opts)
   end
 
   @impl true
@@ -725,6 +784,78 @@ defmodule Jido.Messaging.Persistence.ETS do
     case :ets.take(state.routing_policies, room_id) do
       [] -> {:error, :not_found}
       _ -> :ok
+    end
+  end
+
+  defp revise_messaging_activity(state, stored, incoming) do
+    cond do
+      incoming.source_revision < stored.source_revision ->
+        {:error, {:stale_activity_revision, stored.source_revision}}
+
+      incoming.source_revision == stored.source_revision and
+          MessagingActivityEntry.equivalent?(stored, incoming) ->
+        {:ok, stored}
+
+      incoming.source_revision == stored.source_revision ->
+        {:error, :activity_projection_conflict}
+
+      not MessagingActivityEntry.same_correlation?(stored, incoming) ->
+        {:error, :activity_correlation_immutable}
+
+      true ->
+        incoming = MessagingActivityEntry.preserve_insertion(incoming, stored)
+        true = :ets.insert(state.messaging_activities, {incoming.id, incoming})
+        {:ok, incoming}
+    end
+  end
+
+  defp store_messaging_activity(state, entry) do
+    true = :ets.insert(state.messaging_activities, {entry.id, entry})
+    true = :ets.insert(state.principal_activities, {entry.principal_id, entry.id})
+    {:ok, entry}
+  end
+
+  defp delete_activities_for_room(state, room_id) do
+    state.messaging_activities
+    |> :ets.tab2list()
+    |> Enum.each(fn
+      {activity_id, %MessagingActivityEntry{room_id: ^room_id}} ->
+        delete_messaging_activity(state, activity_id)
+
+      _entry ->
+        :ok
+    end)
+
+    :ok
+  end
+
+  defp delete_activities_for_principal(state, principal_id) do
+    state.principal_activities
+    |> :ets.lookup(principal_id)
+    |> Enum.each(fn {^principal_id, activity_id} ->
+      delete_messaging_activity(state, activity_id)
+    end)
+
+    :ok
+  end
+
+  defp delete_messaging_activity(state, activity_id) do
+    activity_lock(state.messaging_activities, activity_id, fn ->
+      case :ets.take(state.messaging_activities, activity_id) do
+        [{^activity_id, entry}] ->
+          true = :ets.delete_object(state.principal_activities, {entry.principal_id, activity_id})
+          :ok
+
+        [] ->
+          :ok
+      end
+    end)
+  end
+
+  defp activity_lock(table, activity_id, fun) do
+    case :global.trans({{__MODULE__, table, activity_id}, self()}, fun) do
+      :aborted -> {:error, :activity_projection_lock_aborted}
+      result -> result
     end
   end
 

@@ -52,6 +52,7 @@ defmodule Jido.Messaging do
   alias Jido.Messaging.{
     AgentRunner,
     AgentSupervisor,
+    ActivityProjection,
     ConfigStore,
     IngressSubscriptions,
     Message,
@@ -228,6 +229,22 @@ defmodule Jido.Messaging do
           __MODULE__,
           __jido_messaging__(:runtime),
           participant_id,
+          scope,
+          opts
+        )
+      end
+
+      @doc "Store a safe messaging activity projection from a trusted Jidoka adapter"
+      def project_messaging_activity(attrs) do
+        Jido.Messaging.project_messaging_activity(__jido_messaging__(:runtime), attrs)
+      end
+
+      @doc "Return Jidoka-linked activity for one principal inside explicit room scope"
+      def principal_activity(principal_id, scope, opts \\ []) do
+        Jido.Messaging.principal_activity(
+          __MODULE__,
+          __jido_messaging__(:runtime),
+          principal_id,
           scope,
           opts
         )
@@ -940,6 +957,15 @@ defmodule Jido.Messaging do
       {:ok, Enum.map(messages, &Jido.Messaging.TranscriptEntry.new(instance_module, participant, &1))}
     end
   end
+
+  @doc "Store a safe messaging activity projection from a trusted Jidoka adapter."
+  def project_messaging_activity(runtime, attrs) when is_atom(runtime) and is_map(attrs),
+    do: ActivityProjection.project(runtime, attrs)
+
+  @doc "Return Jidoka-linked activity for one principal inside explicit room scope."
+  def principal_activity(instance_module, runtime, principal_id, scope, opts \\ [])
+      when is_atom(instance_module) and is_atom(runtime) and is_binary(principal_id) and is_list(opts),
+      do: ActivityProjection.principal_activity(instance_module, runtime, principal_id, scope, opts)
 
   @doc "Search a configured optional transcript projection."
   def search_transcript(instance_module, query, scope, opts \\ [])

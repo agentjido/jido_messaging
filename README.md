@@ -127,8 +127,8 @@ Each `Jido.Messaging` runtime uses its module name as a SQLite instance
 namespace. Different runtimes can therefore share one database path without
 reading or replacing each other's records. Set `persistence_opts: [instance_id:
 "stable-name"]` when a namespace must remain stable across a module rename.
-Direct calls to `Jido.Messaging.Persistence.SQLite.init/1` use the explicit
-default namespace `"default"` unless `:instance_id` is supplied.
+Direct SQLite adapter initialization uses the explicit default namespace
+`"default"` unless `:instance_id` is supplied.
 
 Inbound participant identity is scoped by adapter and bridge ID. This prevents
 equal tenant-local provider IDs from merging participants across workspaces or
@@ -171,6 +171,21 @@ incremental index call `upsert_transcript_search/3` and
 helpers enforce the same instance and room scope before they invoke the
 projection. This keeps a failed optional index from changing canonical message
 commit behavior. Small deployments can omit a projection.
+
+### Jidoka-Linked Messaging Activity
+
+A trusted Jidoka-owned adapter can store a small messaging activity projection
+for a Jidoka request, turn, approval, handoff, or outcome. The projection links
+canonical room, thread, message, and agent principal IDs to opaque Jidoka
+execution references. It stores a bounded status summary, not the Jidoka event
+or trace.
+
+Activity queries require the same instance-bound `HistoryScope` as participant
+transcripts. Jidoka remains the source of truth for execution detail, and the
+host must authorize access before it resolves a detail reference. The core has
+no Jidoka or `jido_harness` dependency. See
+[Jidoka Activity Projection](docs/jidoka-activity-projection.md) for the input,
+revision, scope, retention, and privacy contracts.
 
 ### Presence Signals
 
