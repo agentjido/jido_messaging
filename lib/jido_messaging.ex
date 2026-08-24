@@ -55,6 +55,8 @@ defmodule Jido.Messaging do
     AgentRunner,
     AgentSupervisor,
     ConfigStore,
+    IdentityCredentials,
+    IdentityVerifier,
     IngressSubscriptions,
     ExternalIdentityBinding,
     Identity,
@@ -171,6 +173,53 @@ defmodule Jido.Messaging do
         Jido.Messaging.get_participant(__jido_messaging__(:runtime), participant_id)
       end
 
+      @doc "Create an optional controller credential for a messaging principal"
+      def create_identity_credential(attrs) do
+        Jido.Messaging.create_identity_credential(__jido_messaging__(:runtime), attrs)
+      end
+
+      @doc "Get a controller credential by ID"
+      def get_identity_credential(credential_id) do
+        Jido.Messaging.get_identity_credential(__jido_messaging__(:runtime), credential_id)
+      end
+
+      @doc "List controller credentials for one subject principal"
+      def list_identity_credentials(subject_principal_id, opts \\ []) do
+        Jido.Messaging.list_identity_credentials(
+          __jido_messaging__(:runtime),
+          subject_principal_id,
+          opts
+        )
+      end
+
+      @doc "Suspend a controller credential with an expected revision"
+      def suspend_identity_credential(credential_id, expected_revision) do
+        Jido.Messaging.suspend_identity_credential(
+          __jido_messaging__(:runtime),
+          credential_id,
+          expected_revision
+        )
+      end
+
+      @doc "Activate a suspended controller credential with an expected revision"
+      def activate_identity_credential(credential_id, expected_revision) do
+        Jido.Messaging.activate_identity_credential(
+          __jido_messaging__(:runtime),
+          credential_id,
+          expected_revision
+        )
+      end
+
+      @doc "Revoke a controller credential with an expected revision"
+      def revoke_identity_credential(credential_id, expected_revision, opts \\ []) do
+        Jido.Messaging.revoke_identity_credential(
+          __jido_messaging__(:runtime),
+          credential_id,
+          expected_revision,
+          opts
+        )
+      end
+
       @doc "Create an authorization membership for a canonical principal and room"
       def create_membership(attrs) do
         Jido.Messaging.create_membership(__jido_messaging__(:runtime), attrs)
@@ -212,6 +261,16 @@ defmodule Jido.Messaging do
           __jido_messaging__(:runtime),
           principal_id,
           opts
+        )
+      end
+
+      @doc "Rotate a controller credential without changing its principal relation"
+      def rotate_identity_credential(credential_id, expected_revision, attrs) do
+        Jido.Messaging.rotate_identity_credential(
+          __jido_messaging__(:runtime),
+          credential_id,
+          expected_revision,
+          attrs
         )
       end
 
@@ -379,6 +438,17 @@ defmodule Jido.Messaging do
         )
       end
 
+      @doc "Verify one controller proof and return separate identity evidence"
+      def verify_identity_credential(credential_id, proof, context, opts \\ []) do
+        Jido.Messaging.verify_identity_credential(
+          __jido_messaging__(:runtime),
+          credential_id,
+          proof,
+          context,
+          opts
+        )
+      end
+
       @doc "Revoke a principal grant with an expected revision"
       def revoke_principal_grant(grant_id, expected_revision) do
         Jido.Messaging.revoke_principal_grant(
@@ -403,6 +473,17 @@ defmodule Jido.Messaging do
         Jido.Messaging.list_invocation_policies(
           __jido_messaging__(:runtime),
           target_principal_id,
+          opts
+        )
+      end
+
+      @doc "Verify a controller credential, or return lower assurance when it is absent"
+      def verify_optional_identity(credential_id, proof, context, opts \\ []) do
+        Jido.Messaging.verify_optional_identity(
+          __jido_messaging__(:runtime),
+          credential_id,
+          proof,
+          context,
           opts
         )
       end
@@ -1173,6 +1254,54 @@ defmodule Jido.Messaging do
     {persistence, persistence_state} = Runtime.get_persistence(runtime)
     persistence.get_participant(persistence_state, participant_id)
   end
+
+  @doc "Create an optional controller credential for a messaging principal."
+  def create_identity_credential(runtime, attrs) when is_atom(runtime) and is_map(attrs),
+    do: IdentityCredentials.create(runtime, attrs)
+
+  @doc "Get a controller credential by ID."
+  def get_identity_credential(runtime, credential_id)
+      when is_atom(runtime) and is_binary(credential_id),
+      do: IdentityCredentials.get(runtime, credential_id)
+
+  @doc "List controller credentials for one subject principal."
+  def list_identity_credentials(runtime, subject_principal_id, opts \\ [])
+      when is_atom(runtime) and is_binary(subject_principal_id) and is_list(opts),
+      do: IdentityCredentials.list(runtime, subject_principal_id, opts)
+
+  @doc "Suspend a controller credential with an expected revision."
+  def suspend_identity_credential(runtime, credential_id, expected_revision)
+      when is_atom(runtime) and is_binary(credential_id) and is_integer(expected_revision),
+      do: IdentityCredentials.transition(runtime, credential_id, expected_revision, :suspended)
+
+  @doc "Activate a suspended controller credential with an expected revision."
+  def activate_identity_credential(runtime, credential_id, expected_revision)
+      when is_atom(runtime) and is_binary(credential_id) and is_integer(expected_revision),
+      do: IdentityCredentials.transition(runtime, credential_id, expected_revision, :active)
+
+  @doc "Revoke a controller credential with an expected revision."
+  def revoke_identity_credential(runtime, credential_id, expected_revision, opts \\ [])
+      when is_atom(runtime) and is_binary(credential_id) and is_integer(expected_revision) and
+             is_list(opts),
+      do: IdentityCredentials.transition(runtime, credential_id, expected_revision, :revoked, opts)
+
+  @doc "Rotate a controller credential without changing its principal relation."
+  def rotate_identity_credential(runtime, credential_id, expected_revision, attrs)
+      when is_atom(runtime) and is_binary(credential_id) and is_integer(expected_revision) and
+             is_map(attrs),
+      do: IdentityCredentials.rotate(runtime, credential_id, expected_revision, attrs)
+
+  @doc "Verify one controller proof and return separate identity evidence."
+  def verify_identity_credential(runtime, credential_id, proof, context, opts \\ [])
+      when is_atom(runtime) and is_binary(credential_id) and is_map(proof) and is_map(context) and
+             is_list(opts),
+      do: IdentityVerifier.verify(runtime, credential_id, proof, context, opts)
+
+  @doc "Verify a controller credential, or return lower assurance when it is absent."
+  def verify_optional_identity(runtime, credential_id, proof, context, opts \\ [])
+      when is_atom(runtime) and (is_binary(credential_id) or is_nil(credential_id)) and is_map(proof) and
+             is_map(context) and is_list(opts),
+      do: IdentityVerifier.verify_optional(runtime, credential_id, proof, context, opts)
 
   @doc "Create an authorization membership for a canonical principal and room."
   def create_membership(runtime, attrs) when is_map(attrs),

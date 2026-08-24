@@ -33,6 +33,8 @@ defmodule Jido.Messaging.Persistence.SQLite do
     BridgeConfig,
     ExternalIdentityBinding,
     Grant,
+    IdentityAssertionUse,
+    IdentityCredential,
     IngressSubscription,
     InvocationPolicy,
     Membership,
@@ -152,6 +154,12 @@ defmodule Jido.Messaging.Persistence.SQLite do
       WHERE instance_id = ?1
         AND ((kind = 'participant' AND id = ?2)
           OR (kind = 'participant_binding' AND room_id = ?2)
+          OR (kind = 'identity_assertion' AND room_id IN (
+            SELECT id FROM #{@table}
+            WHERE instance_id = ?1 AND kind = 'identity_credential'
+              AND (sender_id = ?2 OR room_id = ?2)
+          ))
+          OR (kind = 'identity_credential' AND (sender_id = ?2 OR room_id = ?2))
           OR (kind IN ('membership', 'principal_grant', 'invocation_policy') AND sender_id = ?2))
       """,
       [state.instance_id, participant_id]
@@ -1012,6 +1020,91 @@ defmodule Jido.Messaging.Persistence.SQLite do
   @impl true
   def get_onboarding(state, onboarding_id), do: fetch_record(state, "onboarding", onboarding_id)
 
+  # Identity credential operations
+
+  @impl true
+  def save_identity_credential(state, %IdentityCredential{} = credential) do
+    binding_lock(state, {:identity_credentials}, fn ->
+      transaction(state, fn transaction_state ->
+        with :ok <- validate_sqlite_identity_revision(transaction_state, credential) do
+          persist_identity_credential(transaction_state, credential)
+        end
+      end)
+    end)
+  end
+
+  @impl true
+  def get_identity_credential(state, credential_id) when is_binary(credential_id),
+    do: fetch_record(state, "identity_credential", credential_id)
+
+  @impl true
+  def list_identity_credentials(state, subject_principal_id, opts \\ [])
+      when is_binary(subject_principal_id) and is_list(opts) do
+    status = Keyword.get(opts, :status)
+    provider_id = Keyword.get(opts, :provider_id)
+    limit = opts |> Keyword.get(:limit, 100) |> bounded_identity_limit()
+
+    with {:ok, credentials} <-
+           query_records(
+             state,
+             "kind = ?1 AND sender_id = ?2",
+             ["identity_credential", subject_principal_id],
+             order: "inserted_at ASC, id ASC",
+             limit: 501
+           ) do
+      {:ok,
+       credentials
+       |> Enum.filter(&(is_nil(status) or &1.status == status))
+       |> Enum.filter(&(is_nil(provider_id) or &1.provider_id == provider_id))
+       |> Enum.take(limit)}
+    end
+  end
+
+  @impl true
+  def rotate_identity_credential(
+        state,
+        %IdentityCredential{} = revoked,
+        %IdentityCredential{} = replacement
+      ) do
+    result =
+      binding_lock(state, {:identity_credentials}, fn ->
+        transaction(state, fn transaction_state ->
+          with :ok <- validate_sqlite_identity_revision(transaction_state, revoked),
+               :ok <- validate_sqlite_identity_replacement(transaction_state, revoked, replacement),
+               {:ok, revoked} <- persist_identity_credential(transaction_state, revoked),
+               {:ok, replacement} <- persist_identity_credential(transaction_state, replacement) do
+            {:ok, {revoked, replacement}}
+          end
+        end)
+      end)
+
+    case result do
+      {:ok, {revoked, replacement}} -> {:ok, revoked, replacement}
+      {:error, _reason} = error -> error
+    end
+  end
+
+  @impl true
+  def consume_identity_assertion(state, credential_id, assertion_key, expires_at)
+      when is_binary(credential_id) and is_binary(assertion_key) and is_struct(expires_at, DateTime) do
+    result =
+      binding_lock(state, {:identity_assertion, credential_id, assertion_key}, fn ->
+        transaction(state, fn transaction_state ->
+          consume_sqlite_identity_assertion(
+            transaction_state,
+            credential_id,
+            assertion_key,
+            expires_at
+          )
+        end)
+      end)
+
+    case result do
+      {:ok, %IdentityAssertionUse{}} -> :ok
+      {:error, _reason} = error -> error
+    end
+  end
+
   @impl true
   def save_bridge_config(state, %BridgeConfig{} = bridge_config) do
     with :ok <- BridgeConfig.validate_for_storage(bridge_config) do
@@ -1091,6 +1184,63 @@ defmodule Jido.Messaging.Persistence.SQLite do
     end
   end
 
+  defp validate_sqlite_identity_revision(state, credential) do
+    case get_identity_credential(state, credential.id) do
+      {:error, :not_found} when credential.revision == 1 and credential.status == :active ->
+        :ok
+
+      {:error, :not_found} when credential.revision != 1 ->
+        {:error, {:invalid_initial_revision, credential.revision}}
+
+      {:error, :not_found} ->
+        {:error, {:invalid_initial_status, credential.status}}
+
+      {:ok, stored} when stored == credential ->
+        :ok
+
+      {:ok, stored} ->
+        cond do
+          not identity_credential_identity?(stored, credential) ->
+            {:error, :identity_credential_identity_immutable}
+
+          stored.status == :revoked ->
+            {:error, :identity_credential_revocation_terminal}
+
+          credential.revision != stored.revision + 1 ->
+            {:error, {:stale_revision, stored.revision}}
+
+          true ->
+            :ok
+        end
+
+      {:error, _reason} = error ->
+        error
+    end
+  end
+
+  defp validate_sqlite_identity_replacement(state, revoked, replacement) do
+    cond do
+      revoked.status != :revoked ->
+        {:error, :identity_rotation_requires_revocation}
+
+      replacement.status != :active or replacement.revision != 1 ->
+        {:error, :invalid_identity_rotation_replacement}
+
+      replacement.rotated_from_credential_id != revoked.id ->
+        {:error, :invalid_identity_rotation_lineage}
+
+      not identity_credential_relation?(revoked, replacement) ->
+        {:error, :identity_credential_identity_immutable}
+
+      true ->
+        case get_identity_credential(state, replacement.id) do
+          {:error, :not_found} -> :ok
+          {:ok, _credential} -> {:error, :identity_credential_conflict}
+          {:error, _reason} = error -> error
+        end
+    end
+  end
+
   defp validate_sqlite_revision(state, kind, record, identity?) do
     case fetch_record(state, kind, record.id) do
       {:error, :not_found} when record.revision == 1 ->
@@ -1118,6 +1268,74 @@ defmodule Jido.Messaging.Persistence.SQLite do
         end
     end
   end
+
+  defp identity_credential_identity?(left, right) do
+    left.id == right.id and
+      identity_credential_relation?(left, right) and
+      left.provider_id == right.provider_id and
+      left.proof_type == right.proof_type and
+      left.proof_ref == right.proof_ref and
+      left.key_version_ref == right.key_version_ref and
+      left.rotated_from_credential_id == right.rotated_from_credential_id and
+      left.issued_at == right.issued_at and
+      left.not_before == right.not_before and
+      left.expires_at == right.expires_at and
+      left.inserted_at == right.inserted_at and
+      left.metadata == right.metadata
+  end
+
+  defp identity_credential_relation?(left, right) do
+    left.issuer_principal_id == right.issuer_principal_id and
+      left.subject_principal_id == right.subject_principal_id and
+      left.purpose == right.purpose and
+      left.conditions == right.conditions
+  end
+
+  defp persist_identity_credential(state, credential) do
+    persist(state, "identity_credential", credential.id, credential,
+      room_id: credential.issuer_principal_id,
+      sender_id: credential.subject_principal_id,
+      inserted_at: credential.inserted_at,
+      channel: credential.purpose,
+      bridge_id: credential.provider_id,
+      external_id: credential.proof_ref
+    )
+  end
+
+  defp consume_sqlite_identity_assertion(state, credential_id, assertion_key, expires_at) do
+    case fetch_record(state, "identity_assertion", assertion_key) do
+      {:ok, %IdentityAssertionUse{expires_at: stored_expiry}} ->
+        if DateTime.compare(stored_expiry, DateTime.utc_now()) == :gt do
+          {:error, :identity_assertion_replayed}
+        else
+          with :ok <- delete_record(state, "identity_assertion", assertion_key) do
+            persist_identity_assertion(state, credential_id, assertion_key, expires_at)
+          end
+        end
+
+      {:ok, _stored} ->
+        {:error, :identity_assertion_replayed}
+
+      {:error, :not_found} ->
+        persist_identity_assertion(state, credential_id, assertion_key, expires_at)
+
+      {:error, _reason} = error ->
+        error
+    end
+  end
+
+  defp persist_identity_assertion(state, credential_id, assertion_key, expires_at) do
+    assertion_use = IdentityAssertionUse.new(credential_id, assertion_key, expires_at)
+
+    persist(state, "identity_assertion", assertion_key, assertion_use,
+      room_id: credential_id,
+      inserted_at: assertion_use.inserted_at,
+      external_id: assertion_key
+    )
+  end
+
+  defp bounded_identity_limit(limit) when is_integer(limit) and limit > 0, do: min(limit, 500)
+  defp bounded_identity_limit(_limit), do: 100
 
   defp validate_sqlite_membership_scope(state, membership) do
     case get_membership_by_scope(state, membership.room_id, membership.principal_id) do
@@ -1422,6 +1640,13 @@ defmodule Jido.Messaging.Persistence.SQLite do
       ON #{@table} (instance_id, channel, bridge_id, external_id)
       WHERE kind = 'participant_binding';
 
+    CREATE INDEX IF NOT EXISTS #{@table}_identity_subject_idx
+      ON #{@table} (instance_id, kind, sender_id, inserted_at, id)
+      WHERE kind = 'identity_credential';
+
+    CREATE UNIQUE INDEX IF NOT EXISTS #{@table}_identity_assertion_unique_idx
+      ON #{@table} (instance_id, kind, room_id, external_id)
+      WHERE kind = 'identity_assertion';
     CREATE UNIQUE INDEX IF NOT EXISTS #{@table}_membership_unique_idx
       ON #{@table} (instance_id, room_id, sender_id)
       WHERE kind = 'membership';

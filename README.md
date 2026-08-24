@@ -186,6 +186,24 @@ scope. SQLite assigns an unclaimed legacy participant record to the first
 matching scoped identity. Applications can use the binding API before traffic
 starts when a different migration is required.
 
+### Optional Controller Identity Credentials
+
+Jido Messaging can store a revisioned controller credential for a messaging
+principal. The credential has an exact audience, room scope, validity window,
+and opaque provider proof references. Verification returns separate identity
+evidence. It does not change the message author and does not grant a messaging
+action.
+
+Credentials are optional. An agent without a credential can continue with
+short-lived `:uncredentialed` assurance. ETS and SQLite store credential
+lifecycle and replay records. A host-owned provider verifies transient proof
+data. Raw keys, tokens, and proof payloads are not stored.
+
+Jidoka is the first-party agent authoring and execution surface. A Jidoka-owned
+adapter can consume the evidence. The messaging core has no Jidoka or
+`jido_harness` dependency. See [Controller Identity Credentials](docs/identity-credentials.md)
+for the API, lifecycle, security limits, and integration boundary.
+
 ### Participant Transcripts and Search Projections
 
 Participant history requires an instance-bound list of rooms that the caller

@@ -28,6 +28,8 @@ defmodule Jido.Messaging.Persistence.ETS do
   - `:agent_thread_routes` - Durable thread-to-endpoint routes
   - `:onboarding_flows` - Onboarding flow records keyed by onboarding_id
   - `:ingress_subscriptions` - Bridge/provider subscription metadata
+  - `:identity_credentials` - Revisioned controller credential records
+  - `:identity_assertions` - Hashed, single-use proof assertion records
   - `:memberships` - Canonical principal room memberships
   - `:principal_grants` - Revisioned messaging grants
   - `:invocation_policies` - Revisioned agent invocation policies
@@ -63,6 +65,8 @@ defmodule Jido.Messaging.Persistence.ETS do
               bridge_configs: Zoi.any(),
               ingress_subscriptions: Zoi.any(),
               routing_policies: Zoi.any(),
+              identity_credentials: Zoi.any(),
+              identity_assertions: Zoi.any(),
               memberships: Zoi.any(),
               memberships_by_scope: Zoi.any(),
               principal_grants: Zoi.any(),
@@ -89,6 +93,8 @@ defmodule Jido.Messaging.Persistence.ETS do
     BridgeConfig,
     ExternalIdentityBinding,
     Grant,
+    IdentityAssertionUse,
+    IdentityCredential,
     IngressSubscription,
     InvocationPolicy,
     Membership,
@@ -127,6 +133,8 @@ defmodule Jido.Messaging.Persistence.ETS do
         bridge_configs: :ets.new(:bridge_configs, [:set, :public]),
         ingress_subscriptions: :ets.new(:ingress_subscriptions, [:set, :public]),
         routing_policies: :ets.new(:routing_policies, [:set, :public]),
+        identity_credentials: :ets.new(:identity_credentials, [:set, :public]),
+        identity_assertions: :ets.new(:identity_assertions, [:set, :public]),
         memberships: :ets.new(:memberships, [:set, :public]),
         memberships_by_scope: :ets.new(:memberships_by_scope, [:set, :public]),
         principal_grants: :ets.new(:principal_grants, [:set, :public]),
@@ -208,6 +216,7 @@ defmodule Jido.Messaging.Persistence.ETS do
 
   @impl true
   def delete_participant(state, participant_id) do
+    delete_participant_identity_credentials(state, participant_id)
     true = :ets.delete(state.participants, participant_id)
     delete_principal_authorization_records(state, participant_id)
     true = :ets.delete(state.principals, participant_id)
@@ -1036,6 +1045,89 @@ defmodule Jido.Messaging.Persistence.ETS do
     end
   end
 
+  # Identity credential operations
+
+  @impl true
+  def save_identity_credential(state, %IdentityCredential{} = credential) do
+    identity_lock(state.identity_credentials, fn ->
+      with :ok <- validate_identity_credential_revision(state.identity_credentials, credential) do
+        true = :ets.insert(state.identity_credentials, {credential.id, credential})
+        {:ok, credential}
+      end
+    end)
+  end
+
+  @impl true
+  def get_identity_credential(state, credential_id) when is_binary(credential_id) do
+    case :ets.lookup(state.identity_credentials, credential_id) do
+      [{^credential_id, credential}] -> {:ok, credential}
+      [] -> {:error, :not_found}
+    end
+  end
+
+  @impl true
+  def list_identity_credentials(state, subject_principal_id, opts \\ [])
+      when is_binary(subject_principal_id) and is_list(opts) do
+    status = Keyword.get(opts, :status)
+    provider_id = Keyword.get(opts, :provider_id)
+    limit = opts |> Keyword.get(:limit, 100) |> bounded_identity_limit()
+
+    credentials =
+      state.identity_credentials
+      |> :ets.tab2list()
+      |> Enum.map(&elem(&1, 1))
+      |> Enum.filter(&(&1.subject_principal_id == subject_principal_id))
+      |> Enum.filter(&(is_nil(status) or &1.status == status))
+      |> Enum.filter(&(is_nil(provider_id) or &1.provider_id == provider_id))
+      |> Enum.sort_by(&{DateTime.to_iso8601(&1.inserted_at), &1.id})
+      |> Enum.take(limit)
+
+    {:ok, credentials}
+  end
+
+  @impl true
+  def rotate_identity_credential(
+        state,
+        %IdentityCredential{} = revoked,
+        %IdentityCredential{} = replacement
+      ) do
+    identity_lock(state.identity_credentials, fn ->
+      with :ok <- validate_identity_credential_revision(state.identity_credentials, revoked),
+           :ok <- validate_identity_replacement(state.identity_credentials, revoked, replacement) do
+        true =
+          :ets.insert(state.identity_credentials, [
+            {revoked.id, revoked},
+            {replacement.id, replacement}
+          ])
+
+        {:ok, revoked, replacement}
+      end
+    end)
+  end
+
+  @impl true
+  def consume_identity_assertion(state, credential_id, assertion_key, expires_at)
+      when is_binary(credential_id) and is_binary(assertion_key) and is_struct(expires_at, DateTime) do
+    identity_assertion_lock(state.identity_assertions, credential_id, assertion_key, fn ->
+      now = DateTime.utc_now()
+
+      case :ets.lookup(state.identity_assertions, {credential_id, assertion_key}) do
+        [{{^credential_id, ^assertion_key}, %IdentityAssertionUse{expires_at: stored_expiry}}] ->
+          if DateTime.compare(stored_expiry, now) == :gt do
+            {:error, :identity_assertion_replayed}
+          else
+            store_identity_assertion(state, credential_id, assertion_key, expires_at)
+          end
+
+        [_stored] ->
+          {:error, :identity_assertion_replayed}
+
+        [] ->
+          store_identity_assertion(state, credential_id, assertion_key, expires_at)
+      end
+    end)
+  end
+
   # Bridge/routing control plane persistence
 
   @impl true
@@ -1127,6 +1219,130 @@ defmodule Jido.Messaging.Persistence.ETS do
     case :ets.take(state.routing_policies, room_id) do
       [] -> {:error, :not_found}
       _ -> :ok
+    end
+  end
+
+  defp validate_identity_credential_revision(table, credential) do
+    case :ets.lookup(table, credential.id) do
+      [] when credential.revision == 1 and credential.status == :active ->
+        :ok
+
+      [] when credential.revision != 1 ->
+        {:error, {:invalid_initial_revision, credential.revision}}
+
+      [] ->
+        {:error, {:invalid_initial_status, credential.status}}
+
+      [{_id, stored}] when stored == credential ->
+        :ok
+
+      [{_id, stored}] ->
+        cond do
+          not identity_credential_identity?(stored, credential) ->
+            {:error, :identity_credential_identity_immutable}
+
+          stored.status == :revoked ->
+            {:error, :identity_credential_revocation_terminal}
+
+          credential.revision != stored.revision + 1 ->
+            {:error, {:stale_revision, stored.revision}}
+
+          true ->
+            :ok
+        end
+    end
+  end
+
+  defp validate_identity_replacement(table, revoked, replacement) do
+    cond do
+      revoked.status != :revoked ->
+        {:error, :identity_rotation_requires_revocation}
+
+      replacement.status != :active or replacement.revision != 1 ->
+        {:error, :invalid_identity_rotation_replacement}
+
+      replacement.rotated_from_credential_id != revoked.id ->
+        {:error, :invalid_identity_rotation_lineage}
+
+      not identity_credential_relation?(revoked, replacement) ->
+        {:error, :identity_credential_identity_immutable}
+
+      :ets.member(table, replacement.id) ->
+        {:error, :identity_credential_conflict}
+
+      true ->
+        :ok
+    end
+  end
+
+  defp identity_credential_identity?(left, right) do
+    left.id == right.id and
+      identity_credential_relation?(left, right) and
+      left.provider_id == right.provider_id and
+      left.proof_type == right.proof_type and
+      left.proof_ref == right.proof_ref and
+      left.key_version_ref == right.key_version_ref and
+      left.rotated_from_credential_id == right.rotated_from_credential_id and
+      left.issued_at == right.issued_at and
+      left.not_before == right.not_before and
+      left.expires_at == right.expires_at and
+      left.inserted_at == right.inserted_at and
+      left.metadata == right.metadata
+  end
+
+  defp identity_credential_relation?(left, right) do
+    left.issuer_principal_id == right.issuer_principal_id and
+      left.subject_principal_id == right.subject_principal_id and
+      left.purpose == right.purpose and
+      left.conditions == right.conditions
+  end
+
+  defp store_identity_assertion(state, credential_id, assertion_key, expires_at) do
+    use = IdentityAssertionUse.new(credential_id, assertion_key, expires_at)
+    true = :ets.insert(state.identity_assertions, {{credential_id, assertion_key}, use})
+    :ok
+  end
+
+  defp delete_participant_identity_credentials(state, participant_id) do
+    identity_lock(state.identity_credentials, fn ->
+      credential_ids =
+        state.identity_credentials
+        |> :ets.tab2list()
+        |> Enum.flat_map(fn
+          {credential_id, %IdentityCredential{} = credential}
+          when credential.issuer_principal_id == participant_id or
+                 credential.subject_principal_id == participant_id ->
+            [credential_id]
+
+          _record ->
+            []
+        end)
+
+      Enum.each(credential_ids, fn credential_id ->
+        true = :ets.delete(state.identity_credentials, credential_id)
+        :ets.match_delete(state.identity_assertions, {{credential_id, :_}, :_})
+      end)
+
+      :ok
+    end)
+  end
+
+  defp bounded_identity_limit(limit) when is_integer(limit) and limit > 0, do: min(limit, 500)
+  defp bounded_identity_limit(_limit), do: 100
+
+  defp identity_lock(table, fun) do
+    case :global.trans({{__MODULE__, table, :identity_credentials}, self()}, fun) do
+      :aborted -> {:error, :identity_credential_lock_aborted}
+      result -> result
+    end
+  end
+
+  defp identity_assertion_lock(table, credential_id, assertion_key, fun) do
+    lock = {{__MODULE__, table, credential_id, assertion_key}, self()}
+
+    case :global.trans(lock, fun) do
+      :aborted -> {:error, :identity_assertion_lock_aborted}
+      result -> result
     end
   end
 
