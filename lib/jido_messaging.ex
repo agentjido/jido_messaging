@@ -700,6 +700,16 @@ defmodule Jido.Messaging do
         Jido.Messaging.InstanceSupervisor.list_instance_health(__MODULE__)
       end
 
+      @doc "Get persistence guarantees for this messaging runtime."
+      def persistence_capabilities do
+        Jido.Messaging.Runtime.persistence_capabilities(__jido_messaging__(:runtime))
+      end
+
+      @doc "Check this messaging runtime's persistence connection and schema."
+      def persistence_health do
+        Jido.Messaging.Runtime.persistence_health(__jido_messaging__(:runtime))
+      end
+
       # Deduplication functions
 
       @doc "Check if a message key is a duplicate (and mark as seen if new)"

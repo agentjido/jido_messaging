@@ -1,6 +1,10 @@
 defmodule Jido.Messaging.Persistence.SQLite do
   @moduledoc """
-  Durable SQLite persistence adapter for `Jido.Messaging`.
+  Lightweight SQLite persistence adapter for `Jido.Messaging`.
+
+  Use this adapter for demos, local development, and tests. Use
+  `Jido.Messaging.Persistence.Postgres` for production deployments that need a
+  connection pool and concurrent writers.
 
   This adapter stores canonical messaging records directly in SQLite. It is
   intentionally simple: each record is serialized as an Erlang term with a small
@@ -59,6 +63,25 @@ defmodule Jido.Messaging.Persistence.SQLite do
           _ = Sqlite3.close(db)
           error
       end
+    end
+  end
+
+  @impl true
+  def capabilities(_state), do: [:durable, :transactions]
+
+  @impl true
+  def health_check(state) do
+    case query_all(state.db, "SELECT 1", []) do
+      {:ok, [[1]]} -> :ok
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  @impl true
+  def close(state) do
+    case Sqlite3.close(state.db) do
+      :ok -> :ok
+      {:error, _reason} -> :ok
     end
   end
 
@@ -1007,7 +1030,8 @@ defmodule Jido.Messaging.Persistence.SQLite do
     end
   end
 
-  defp transaction(state, fun) do
+  @impl true
+  def transaction(state, fun) do
     case transaction_connection(state) do
       {:ok, transaction_db, close?} ->
         transaction_state = %{state | db: transaction_db}
