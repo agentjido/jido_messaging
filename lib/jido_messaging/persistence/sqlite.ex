@@ -27,6 +27,7 @@ defmodule Jido.Messaging.Persistence.SQLite do
   alias Jido.Chat.{Participant, Room}
 
   alias Jido.Messaging.{
+    ActivityPage,
     AgentMessagingEndpoint,
     AgentThreadRoute,
     AuthorizationScope,
@@ -39,6 +40,7 @@ defmodule Jido.Messaging.Persistence.SQLite do
     InvocationPolicy,
     Membership,
     Message,
+    MessagingActivityEntry,
     Principal,
     RoomBinding,
     RoomMembership,
@@ -117,6 +119,7 @@ defmodule Jido.Messaging.Persistence.SQLite do
            'thread',
            'room_binding',
            'routing_policy',
+           'messaging_activity',
            'membership',
            'principal_grant',
            'invocation_policy',
@@ -154,6 +157,7 @@ defmodule Jido.Messaging.Persistence.SQLite do
       WHERE instance_id = ?1
         AND ((kind = 'participant' AND id = ?2)
           OR (kind = 'participant_binding' AND room_id = ?2)
+          OR (kind = 'messaging_activity' AND sender_id = ?2))
           OR (kind = 'identity_assertion' AND room_id IN (
             SELECT id FROM #{@table}
             WHERE instance_id = ?1 AND kind = 'identity_credential'
@@ -366,14 +370,53 @@ defmodule Jido.Messaging.Persistence.SQLite do
     end
   end
 
+  # Messaging activity projection operations
+
+  @impl true
+  def save_messaging_activity(state, %MessagingActivityEntry{} = entry) do
+    binding_lock(state, {:messaging_activity, entry.id}, fn ->
+      transaction(state, fn transaction_state ->
+        case get_messaging_activity(transaction_state, entry.id) do
+          {:error, :not_found} -> persist_messaging_activity(transaction_state, entry)
+          {:ok, stored} -> revise_sqlite_messaging_activity(transaction_state, stored, entry)
+          {:error, _reason} = error -> error
+        end
+      end)
+    end)
+  end
+
+  @impl true
+  def get_messaging_activity(state, activity_id) when is_binary(activity_id),
+    do: fetch_record(state, "messaging_activity", activity_id)
+
+  @impl true
+  def get_principal_activity(state, principal_id, room_ids, opts \\ [])
+
+  def get_principal_activity(_state, _principal_id, [], opts), do: ActivityPage.paginate([], opts)
+
+  def get_principal_activity(state, principal_id, room_ids, opts)
+      when is_binary(principal_id) and is_list(room_ids) and is_list(opts) do
+    limit = Keyword.get(opts, :limit, 50)
+
+    if is_integer(limit) and limit > 0 do
+      query_principal_records(state, "messaging_activity", principal_id, room_ids, opts, min(limit, 500))
+    else
+      {:error, :invalid_limit}
+    end
+  end
+
   defp query_participant_messages(state, participant_id, room_ids, opts, limit) do
+    query_principal_records(state, "message", participant_id, room_ids, opts, limit)
+  end
+
+  defp query_principal_records(state, kind, participant_id, room_ids, opts, limit) do
     room_placeholders =
       room_ids
       |> Enum.with_index(3)
       |> Enum.map_join(", ", fn {_room_id, index} -> "?#{index}" end)
 
     where = "kind = ?1 AND sender_id = ?2 AND room_id IN (#{room_placeholders})"
-    params = ["message", participant_id | room_ids]
+    params = [kind, participant_id | room_ids]
     {where, params} = with_instance_scope(state, where, params)
 
     case participant_cursor_direction(opts) do
@@ -1184,6 +1227,40 @@ defmodule Jido.Messaging.Persistence.SQLite do
     end
   end
 
+  defp revise_sqlite_messaging_activity(state, stored, incoming) do
+    cond do
+      incoming.source_revision < stored.source_revision ->
+        {:error, {:stale_activity_revision, stored.source_revision}}
+
+      incoming.source_revision == stored.source_revision and
+          MessagingActivityEntry.equivalent?(stored, incoming) ->
+        {:ok, stored}
+
+      incoming.source_revision == stored.source_revision ->
+        {:error, :activity_projection_conflict}
+
+      not MessagingActivityEntry.same_correlation?(stored, incoming) ->
+        {:error, :activity_correlation_immutable}
+
+      true ->
+        incoming
+        |> MessagingActivityEntry.preserve_insertion(stored)
+        |> then(&persist_messaging_activity(state, &1))
+    end
+  end
+
+  defp persist_messaging_activity(state, entry) do
+    persist(state, "messaging_activity", entry.id, entry,
+      room_id: entry.room_id,
+      thread_id: entry.thread_id,
+      sender_id: entry.principal_id,
+      inserted_at: entry.source_recorded_at,
+      channel: entry.kind,
+      bridge_id: entry.execution_ref.integration_id,
+      external_id: entry.source_event_id
+    )
+  end
+
   defp validate_sqlite_identity_revision(state, credential) do
     case get_identity_credential(state, credential.id) do
       {:error, :not_found} when credential.revision == 1 and credential.status == :active ->
@@ -1492,8 +1569,9 @@ defmodule Jido.Messaging.Persistence.SQLite do
          {:ok, columns} <- query_all(db, "PRAGMA table_info(#{@table})", []),
          :ok <- migrate_schema(db, columns, instance_id),
          :ok <- ensure_sender_id_column(db),
-         :ok <- backfill_message_sender_ids(db) do
-      create_history_index(db)
+         :ok <- backfill_message_sender_ids(db),
+         :ok <- create_history_index(db) do
+      create_activity_index(db)
     end
   end
 
@@ -1709,6 +1787,14 @@ defmodule Jido.Messaging.Persistence.SQLite do
     exec(db, """
     CREATE INDEX IF NOT EXISTS #{@table}_participant_history_idx
       ON #{@table} (instance_id, kind, sender_id, inserted_at, id);
+    """)
+  end
+
+  defp create_activity_index(db) do
+    exec(db, """
+    CREATE INDEX IF NOT EXISTS #{@table}_messaging_activity_scope_idx
+      ON #{@table} (instance_id, kind, sender_id, room_id, inserted_at, id)
+      WHERE kind = 'messaging_activity';
     """)
   end
 

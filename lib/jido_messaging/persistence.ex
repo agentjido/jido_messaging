@@ -43,6 +43,7 @@ defmodule Jido.Messaging.Persistence do
     IngressSubscription,
     InvocationPolicy,
     Membership,
+    MessagingActivityEntry,
     Message,
     Principal,
     RoomMembership,
@@ -406,6 +407,19 @@ defmodule Jido.Messaging.Persistence do
   @doc "Delete stored ingress subscription metadata."
   @callback delete_ingress_subscription(state, bridge_id(), String.t()) :: :ok | {:error, :not_found}
 
+  # Optional messaging activity projection operations
+
+  @doc "Persist one safe messaging activity projection revision."
+  @callback save_messaging_activity(state, MessagingActivityEntry.t()) ::
+              {:ok, MessagingActivityEntry.t()} | {:error, term()}
+
+  @doc "Fetch one messaging activity projection by ID."
+  @callback get_messaging_activity(state, String.t()) ::
+              {:ok, MessagingActivityEntry.t()} | {:error, :not_found}
+
+  @doc "List projected activity for one principal inside explicit room scope."
+  @callback get_principal_activity(state, participant_id(), room_ids :: [room_id()], keyword()) ::
+              {:ok, [MessagingActivityEntry.t()]} | {:error, term()}
   # Optional identity credential operations
 
   @doc "Persist a revisioned controller credential."
@@ -470,6 +484,9 @@ defmodule Jido.Messaging.Persistence do
                       list_ingress_subscriptions: 3,
                       delete_ingress_subscription: 3,
                       mark_message_read: 4,
+                      save_messaging_activity: 2,
+                      get_messaging_activity: 2,
+                      get_principal_activity: 4,
                       save_identity_credential: 2,
                       get_identity_credential: 2,
                       list_identity_credentials: 3,
