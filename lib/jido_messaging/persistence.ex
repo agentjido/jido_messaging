@@ -32,7 +32,16 @@ defmodule Jido.Messaging.Persistence do
   """
 
   alias Jido.Chat.{Participant, Room}
-  alias Jido.Messaging.{BridgeConfig, IngressSubscription, Message, RoutingPolicy, Thread}
+
+  alias Jido.Messaging.{
+    BridgeConfig,
+    ExternalIdentityBinding,
+    IngressSubscription,
+    Message,
+    Principal,
+    RoutingPolicy,
+    Thread
+  }
 
   @type state :: term()
   @type room_id :: String.t()
@@ -88,6 +97,30 @@ defmodule Jido.Messaging.Persistence do
 
   @doc "Delete a participant by ID"
   @callback delete_participant(state, participant_id) :: :ok | {:error, term()}
+
+  # Canonical identity operations
+  @doc "Persist a canonical principal."
+  @callback save_principal(state, Principal.t()) :: {:ok, Principal.t()} | {:error, term()}
+
+  @doc "Get a canonical principal by ID."
+  @callback get_principal(state, String.t()) :: {:ok, Principal.t()} | {:error, :not_found}
+
+  @doc "Persist one bridge-scoped external identity binding."
+  @callback save_external_identity_binding(state, ExternalIdentityBinding.t()) ::
+              {:ok, ExternalIdentityBinding.t()}
+              | {:error, :not_found | :external_identity_revoked | {:external_identity_conflict, String.t()}}
+
+  @doc "Get an external identity binding by its stable record ID."
+  @callback get_external_identity_binding(state, String.t()) ::
+              {:ok, ExternalIdentityBinding.t()} | {:error, :not_found}
+
+  @doc "Get an external identity binding by its complete provider scope."
+  @callback get_external_identity_binding(state, channel, bridge_id, external_id) ::
+              {:ok, ExternalIdentityBinding.t()} | {:error, :not_found}
+
+  @doc "List the external identity bindings for one principal."
+  @callback list_external_identity_bindings(state, String.t(), keyword()) ::
+              {:ok, [ExternalIdentityBinding.t()]} | {:error, term()}
 
   # Message operations
   @doc "Save a message"
@@ -283,6 +316,12 @@ defmodule Jido.Messaging.Persistence do
 
   @optional_callbacks get_or_create_participant_by_external_binding: 5,
                       bind_participant_external_id: 5,
+                      save_principal: 2,
+                      get_principal: 2,
+                      save_external_identity_binding: 2,
+                      get_external_identity_binding: 2,
+                      get_external_identity_binding: 4,
+                      list_external_identity_bindings: 3,
                       save_ingress_subscription: 2,
                       list_ingress_subscriptions: 3,
                       delete_ingress_subscription: 3,

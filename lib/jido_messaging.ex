@@ -54,8 +54,11 @@ defmodule Jido.Messaging do
     AgentSupervisor,
     ConfigStore,
     IngressSubscriptions,
+    ExternalIdentityBinding,
+    Identity,
     Message,
     Onboarding,
+    Principal,
     RoomServer,
     RoomSupervisor,
     Runtime,
@@ -164,6 +167,77 @@ defmodule Jido.Messaging do
       @doc "Get a participant by ID"
       def get_participant(participant_id) do
         Jido.Messaging.get_participant(__jido_messaging__(:runtime), participant_id)
+      end
+
+      @doc "Create or replace the canonical principal for an existing participant"
+      def create_principal(attrs) do
+        Jido.Messaging.create_principal(__jido_messaging__(:runtime), attrs)
+      end
+
+      @doc "Persist an already-constructed canonical principal"
+      def save_principal(%Jido.Messaging.Principal{} = principal) do
+        Jido.Messaging.save_principal(__jido_messaging__(:runtime), principal)
+      end
+
+      @doc "Get a canonical principal by ID"
+      def get_principal(principal_id) do
+        Jido.Messaging.get_principal(__jido_messaging__(:runtime), principal_id)
+      end
+
+      @doc "Get or create the principal projection for a participant"
+      def principal_for_participant(participant_id) do
+        Jido.Messaging.principal_for_participant(
+          __jido_messaging__(:runtime),
+          participant_id
+        )
+      end
+
+      @doc "Bind a bridge-scoped provider identity to a canonical principal"
+      def bind_external_identity(principal_id, channel, bridge_id, external_id, opts \\ []) do
+        Jido.Messaging.bind_external_identity(
+          __jido_messaging__(:runtime),
+          principal_id,
+          channel,
+          bridge_id,
+          external_id,
+          opts
+        )
+      end
+
+      @doc "Get an external identity binding by record ID"
+      def get_external_identity_binding(binding_id) do
+        Jido.Messaging.get_external_identity_binding(
+          __jido_messaging__(:runtime),
+          binding_id
+        )
+      end
+
+      @doc "Get an external identity binding by provider scope"
+      def get_external_identity_binding(channel, bridge_id, external_id) do
+        Jido.Messaging.get_external_identity_binding(
+          __jido_messaging__(:runtime),
+          channel,
+          bridge_id,
+          external_id
+        )
+      end
+
+      @doc "List external identity bindings for a principal"
+      def list_external_identity_bindings(principal_id, opts \\ []) do
+        Jido.Messaging.list_external_identity_bindings(
+          __jido_messaging__(:runtime),
+          principal_id,
+          opts
+        )
+      end
+
+      @doc "Revoke an external identity binding"
+      def revoke_external_identity_binding(binding_id, opts \\ []) do
+        Jido.Messaging.revoke_external_identity_binding(
+          __jido_messaging__(:runtime),
+          binding_id,
+          opts
+        )
       end
 
       @doc "Save a message"
@@ -854,6 +928,118 @@ defmodule Jido.Messaging do
     persistence.get_participant(persistence_state, participant_id)
   end
 
+  @doc "Create or replace the canonical principal for an existing participant."
+  def create_principal(runtime, attrs) when is_map(attrs) do
+    {persistence, persistence_state} = Runtime.get_persistence(runtime)
+    principal = Principal.new(attrs)
+    Identity.persist_principal(persistence, persistence_state, principal)
+  end
+
+  @doc "Persist an already-constructed canonical principal."
+  def save_principal(runtime, %Principal{} = principal) do
+    {persistence, persistence_state} = Runtime.get_persistence(runtime)
+    principal = principal |> Map.from_struct() |> Principal.new()
+    Identity.persist_principal(persistence, persistence_state, principal)
+  end
+
+  @doc "Get a canonical principal by ID."
+  def get_principal(runtime, principal_id) when is_binary(principal_id) do
+    {persistence, persistence_state} = Runtime.get_persistence(runtime)
+
+    case Identity.get_principal(persistence, persistence_state, principal_id) do
+      {:error, :unsupported} ->
+        with {:ok, participant} <- persistence.get_participant(persistence_state, principal_id) do
+          {:ok, Principal.from_participant(participant)}
+        end
+
+      result ->
+        result
+    end
+  end
+
+  @doc "Get or create the principal projection for a participant."
+  def principal_for_participant(runtime, participant_id) when is_binary(participant_id) do
+    {persistence, persistence_state} = Runtime.get_persistence(runtime)
+
+    with {:ok, participant} <- persistence.get_participant(persistence_state, participant_id) do
+      Identity.ensure_principal(persistence, persistence_state, participant)
+    end
+  end
+
+  @doc false
+  def resolve_authorship(runtime, participant, channel, bridge_id, external_id, verify_result, opts \\ []) do
+    {persistence, persistence_state} = Runtime.get_persistence(runtime)
+
+    Identity.resolve_authorship(
+      persistence,
+      persistence_state,
+      participant,
+      channel,
+      to_string(bridge_id),
+      to_string(external_id),
+      verify_result,
+      opts
+    )
+  end
+
+  @doc "Bind one bridge-scoped provider identity to a canonical principal."
+  def bind_external_identity(runtime, principal_id, channel, bridge_id, external_id, opts \\ [])
+      when is_binary(principal_id) and is_list(opts) do
+    {persistence, persistence_state} = Runtime.get_persistence(runtime)
+
+    with {:ok, %Principal{status: :active} = principal} <- get_principal(runtime, principal_id) do
+      Identity.bind_external_identity(
+        persistence,
+        persistence_state,
+        principal,
+        channel,
+        to_string(bridge_id),
+        to_string(external_id),
+        opts
+      )
+    else
+      {:ok, %Principal{status: status}} -> {:error, {:principal_inactive, status}}
+      {:error, _reason} = error -> error
+    end
+  end
+
+  @doc "Get an external identity binding by its record ID."
+  def get_external_identity_binding(runtime, binding_id) when is_binary(binding_id) do
+    {persistence, persistence_state} = Runtime.get_persistence(runtime)
+    Identity.get_binding(persistence, persistence_state, binding_id)
+  end
+
+  @doc "Get an external identity binding by its complete provider scope."
+  def get_external_identity_binding(runtime, channel, bridge_id, external_id) do
+    {persistence, persistence_state} = Runtime.get_persistence(runtime)
+    Identity.get_binding(persistence, persistence_state, channel, bridge_id, external_id)
+  end
+
+  @doc "List the bridge-scoped provider identities for one principal."
+  def list_external_identity_bindings(runtime, principal_id, opts \\ [])
+      when is_binary(principal_id) and is_list(opts) do
+    {persistence, persistence_state} = Runtime.get_persistence(runtime)
+    Identity.list_bindings(persistence, persistence_state, principal_id, opts)
+  end
+
+  @doc "Revoke an external identity binding and keep its audit record."
+  def revoke_external_identity_binding(runtime, binding_id, opts \\ [])
+      when is_binary(binding_id) and is_list(opts) do
+    {persistence, persistence_state} = Runtime.get_persistence(runtime)
+
+    with {:ok, binding} <- Identity.get_binding(persistence, persistence_state, binding_id) do
+      revoked_at = Keyword.get(opts, :revoked_at, DateTime.utc_now())
+      metadata_updates = Keyword.get(opts, :metadata, %{})
+      metadata_updates = if is_map(metadata_updates), do: metadata_updates, else: %{}
+      metadata = Map.merge(binding.metadata, metadata_updates)
+
+      binding
+      |> ExternalIdentityBinding.revoke(revoked_at)
+      |> Map.put(:metadata, metadata)
+      |> then(&Identity.save_binding(persistence, persistence_state, &1))
+    end
+  end
+
   @doc "Save a message"
   def save_message(runtime, attrs) when is_map(attrs) do
     {persistence, persistence_state} = Runtime.get_persistence(runtime)
@@ -947,7 +1133,19 @@ defmodule Jido.Messaging do
          {:ok, participant} <- persistence.get_participant(persistence_state, participant_id),
          {:ok, messages} <-
            persistence.get_participant_messages(persistence_state, participant_id, scope.room_ids, opts) do
-      {:ok, Enum.map(messages, &Jido.Messaging.TranscriptEntry.new(instance_module, participant, &1))}
+      entries =
+        Enum.map(
+          messages,
+          &build_transcript_entry(
+            instance_module,
+            persistence,
+            persistence_state,
+            participant,
+            &1
+          )
+        )
+
+      {:ok, entries}
     end
   end
 
@@ -976,7 +1174,15 @@ defmodule Jido.Messaging do
          {:ok, message} <- persistence.get_message(persistence_state, message_id),
          :ok <- validate_history_room(scope, message.room_id),
          {:ok, participant} <- persistence.get_participant(persistence_state, message.sender_id) do
-      entry = Jido.Messaging.TranscriptEntry.new(instance_module, participant, message)
+      entry =
+        build_transcript_entry(
+          instance_module,
+          persistence,
+          persistence_state,
+          participant,
+          message
+        )
+
       context = %{instance_module: instance_module, scope: scope}
       projection.upsert(entry, context, Keyword.delete(opts, :projection))
     end
@@ -2326,6 +2532,22 @@ defmodule Jido.Messaging do
   end
 
   defp runtime_name(instance_module), do: Module.concat(instance_module, :Runtime)
+
+  defp build_transcript_entry(
+         instance_module,
+         persistence,
+         persistence_state,
+         participant,
+         message
+       ) do
+    authorship = Identity.authorship_for_message(message, participant)
+    binding = Identity.binding_for_message(persistence, persistence_state, message, authorship)
+
+    Jido.Messaging.TranscriptEntry.new(instance_module, participant, message,
+      authorship: authorship,
+      external_identity_binding: binding
+    )
+  end
 
   defp validate_history_scope(
          instance_module,
