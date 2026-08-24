@@ -50,6 +50,7 @@ defmodule Jido.Messaging do
   alias Jido.Messaging.TopologyValidator
 
   alias Jido.Messaging.{
+    AgentEndpoints,
     AgentRunner,
     AgentSupervisor,
     ConfigStore,
@@ -169,6 +170,44 @@ defmodule Jido.Messaging do
         Jido.Messaging.get_participant(__jido_messaging__(:runtime), participant_id)
       end
 
+      @doc "Create a durable messaging endpoint for one Jidoka agent principal"
+      def create_agent_messaging_endpoint(attrs) do
+        Jido.Messaging.create_agent_messaging_endpoint(__jido_messaging__(:runtime), attrs)
+      end
+
+      @doc "Persist an updated Jidoka agent messaging endpoint"
+      def save_agent_messaging_endpoint(endpoint) do
+        Jido.Messaging.save_agent_messaging_endpoint(__jido_messaging__(:runtime), endpoint)
+      end
+
+      @doc "Get an agent messaging endpoint by record ID"
+      def get_agent_messaging_endpoint(endpoint_id) do
+        Jido.Messaging.get_agent_messaging_endpoint(__jido_messaging__(:runtime), endpoint_id)
+      end
+
+      @doc "Get an agent messaging endpoint by Jidoka agent ID"
+      def get_agent_messaging_endpoint_by_ref(jidoka_agent_id) do
+        Jido.Messaging.get_agent_messaging_endpoint_by_ref(
+          __jido_messaging__(:runtime),
+          jidoka_agent_id
+        )
+      end
+
+      @doc "List durable Jidoka agent messaging endpoints"
+      def list_agent_messaging_endpoints(opts \\ []) do
+        Jido.Messaging.list_agent_messaging_endpoints(__jido_messaging__(:runtime), opts)
+      end
+
+      @doc "Update an endpoint availability projection"
+      def set_agent_endpoint_availability(endpoint_id, availability, opts \\ []) do
+        Jido.Messaging.set_agent_endpoint_availability(
+          __jido_messaging__(:runtime),
+          endpoint_id,
+          availability,
+          opts
+        )
+      end
+
       @doc "Create or replace the canonical principal for an existing participant"
       def create_principal(attrs) do
         Jido.Messaging.create_principal(__jido_messaging__(:runtime), attrs)
@@ -204,6 +243,15 @@ defmodule Jido.Messaging do
         )
       end
 
+      @doc "Revoke an agent messaging endpoint"
+      def revoke_agent_messaging_endpoint(endpoint_id, opts \\ []) do
+        Jido.Messaging.revoke_agent_messaging_endpoint(
+          __jido_messaging__(:runtime),
+          endpoint_id,
+          opts
+        )
+      end
+
       @doc "Get an external identity binding by record ID"
       def get_external_identity_binding(binding_id) do
         Jido.Messaging.get_external_identity_binding(
@@ -231,12 +279,98 @@ defmodule Jido.Messaging do
         )
       end
 
+      @doc "Add an agent endpoint to a room without granting messaging actions"
+      def add_agent_endpoint_to_room(endpoint_id, room_id, opts \\ []) do
+        Jido.Messaging.add_agent_endpoint_to_room(
+          __jido_messaging__(:runtime),
+          endpoint_id,
+          room_id,
+          opts
+        )
+      end
+
       @doc "Revoke an external identity binding"
       def revoke_external_identity_binding(binding_id, opts \\ []) do
         Jido.Messaging.revoke_external_identity_binding(
           __jido_messaging__(:runtime),
           binding_id,
           opts
+        )
+      end
+
+      @doc "Get an agent endpoint room membership"
+      def get_agent_room_membership(membership_id) do
+        Jido.Messaging.get_agent_room_membership(
+          __jido_messaging__(:runtime),
+          membership_id
+        )
+      end
+
+      @doc "List agent endpoint memberships for a room"
+      def list_agent_room_memberships(room_id, opts \\ []) do
+        Jido.Messaging.list_agent_room_memberships(
+          __jido_messaging__(:runtime),
+          room_id,
+          opts
+        )
+      end
+
+      @doc "Revoke an agent endpoint room membership"
+      def revoke_agent_room_membership(membership_id, opts \\ []) do
+        Jido.Messaging.revoke_agent_room_membership(
+          __jido_messaging__(:runtime),
+          membership_id,
+          opts
+        )
+      end
+
+      @doc "Route a thread to a durable agent endpoint without starting an agent"
+      def route_thread_to_agent_endpoint(thread_id, endpoint_id, opts \\ []) do
+        Jido.Messaging.route_thread_to_agent_endpoint(
+          __jido_messaging__(:runtime),
+          thread_id,
+          endpoint_id,
+          opts
+        )
+      end
+
+      @doc "Get the durable agent endpoint route for a thread"
+      def get_agent_thread_route(thread_id) do
+        Jido.Messaging.get_agent_thread_route(__jido_messaging__(:runtime), thread_id)
+      end
+
+      @doc "List durable thread routes for an agent endpoint"
+      def list_agent_thread_routes(endpoint_id, opts \\ []) do
+        Jido.Messaging.list_agent_thread_routes(
+          __jido_messaging__(:runtime),
+          endpoint_id,
+          opts
+        )
+      end
+
+      @doc "Update opaque Jidoka correlation references for a thread route"
+      def put_agent_thread_route_correlations(thread_id, correlations) do
+        Jido.Messaging.put_agent_thread_route_correlations(
+          __jido_messaging__(:runtime),
+          thread_id,
+          correlations
+        )
+      end
+
+      @doc "Revoke a durable agent endpoint route"
+      def revoke_agent_thread_route(thread_id, opts \\ []) do
+        Jido.Messaging.revoke_agent_thread_route(
+          __jido_messaging__(:runtime),
+          thread_id,
+          opts
+        )
+      end
+
+      @doc "Resolve an available endpoint, membership, and route for a thread"
+      def resolve_agent_thread_endpoint(thread_id) do
+        Jido.Messaging.resolve_agent_thread_endpoint(
+          __jido_messaging__(:runtime),
+          thread_id
         )
       end
 
@@ -593,7 +727,7 @@ defmodule Jido.Messaging do
 
       # Agent functions
 
-      @doc "Register an agent with a room"
+      @doc "Register a legacy in-memory agent handler with a room"
       def register_agent(room_id, agent_spec, opts \\ []) do
         Jido.Messaging.register_agent(__MODULE__, room_id, agent_spec, opts)
       end
@@ -927,6 +1061,83 @@ defmodule Jido.Messaging do
     {persistence, persistence_state} = Runtime.get_persistence(runtime)
     persistence.get_participant(persistence_state, participant_id)
   end
+
+  @doc "Create a durable messaging endpoint for one Jidoka agent principal."
+  def create_agent_messaging_endpoint(runtime, attrs) when is_map(attrs),
+    do: AgentEndpoints.create_endpoint(runtime, attrs)
+
+  @doc "Persist an updated Jidoka agent messaging endpoint."
+  def save_agent_messaging_endpoint(runtime, %Jido.Messaging.AgentMessagingEndpoint{} = endpoint),
+    do: AgentEndpoints.save_endpoint(runtime, endpoint)
+
+  @doc "Get an agent messaging endpoint by record ID."
+  def get_agent_messaging_endpoint(runtime, endpoint_id) when is_binary(endpoint_id),
+    do: AgentEndpoints.get_endpoint(runtime, endpoint_id)
+
+  @doc "Get an agent messaging endpoint by Jidoka agent ID."
+  def get_agent_messaging_endpoint_by_ref(runtime, jidoka_agent_id) when is_binary(jidoka_agent_id),
+    do: AgentEndpoints.get_endpoint_by_ref(runtime, jidoka_agent_id)
+
+  @doc "List durable Jidoka agent messaging endpoints."
+  def list_agent_messaging_endpoints(runtime, opts \\ []) when is_list(opts),
+    do: AgentEndpoints.list_endpoints(runtime, opts)
+
+  @doc "Update an endpoint availability projection."
+  def set_agent_endpoint_availability(runtime, endpoint_id, availability, opts \\ [])
+      when is_binary(endpoint_id) and is_list(opts),
+      do: AgentEndpoints.set_availability(runtime, endpoint_id, availability, opts)
+
+  @doc "Revoke an agent messaging endpoint."
+  def revoke_agent_messaging_endpoint(runtime, endpoint_id, opts \\ [])
+      when is_binary(endpoint_id) and is_list(opts),
+      do: AgentEndpoints.revoke_endpoint(runtime, endpoint_id, opts)
+
+  @doc "Add an agent endpoint to a room without granting messaging actions."
+  def add_agent_endpoint_to_room(runtime, endpoint_id, room_id, opts \\ [])
+      when is_binary(endpoint_id) and is_binary(room_id) and is_list(opts),
+      do: AgentEndpoints.add_endpoint_to_room(runtime, endpoint_id, room_id, opts)
+
+  @doc "Get an agent endpoint room membership by record ID."
+  def get_agent_room_membership(runtime, membership_id) when is_binary(membership_id),
+    do: AgentEndpoints.get_membership(runtime, membership_id)
+
+  @doc "List agent endpoint memberships for a room."
+  def list_agent_room_memberships(runtime, room_id, opts \\ [])
+      when is_binary(room_id) and is_list(opts),
+      do: AgentEndpoints.list_memberships(runtime, room_id, opts)
+
+  @doc "Revoke an agent endpoint room membership."
+  def revoke_agent_room_membership(runtime, membership_id, opts \\ [])
+      when is_binary(membership_id) and is_list(opts),
+      do: AgentEndpoints.revoke_membership(runtime, membership_id, opts)
+
+  @doc "Route a thread to a durable agent endpoint without starting an agent."
+  def route_thread_to_agent_endpoint(runtime, thread_id, endpoint_id, opts \\ [])
+      when is_binary(thread_id) and is_binary(endpoint_id) and is_list(opts),
+      do: AgentEndpoints.route_thread(runtime, thread_id, endpoint_id, opts)
+
+  @doc "Get the durable agent endpoint route for a thread."
+  def get_agent_thread_route(runtime, thread_id) when is_binary(thread_id),
+    do: AgentEndpoints.get_route(runtime, thread_id)
+
+  @doc "List durable thread routes for an agent endpoint."
+  def list_agent_thread_routes(runtime, endpoint_id, opts \\ [])
+      when is_binary(endpoint_id) and is_list(opts),
+      do: AgentEndpoints.list_routes(runtime, endpoint_id, opts)
+
+  @doc "Update opaque Jidoka correlation references for a thread route."
+  def put_agent_thread_route_correlations(runtime, thread_id, correlations)
+      when is_binary(thread_id) and is_map(correlations),
+      do: AgentEndpoints.put_route_correlations(runtime, thread_id, correlations)
+
+  @doc "Revoke a durable agent endpoint route."
+  def revoke_agent_thread_route(runtime, thread_id, opts \\ [])
+      when is_binary(thread_id) and is_list(opts),
+      do: AgentEndpoints.revoke_route(runtime, thread_id, opts)
+
+  @doc "Resolve an available endpoint, membership, and route for a thread."
+  def resolve_agent_thread_endpoint(runtime, thread_id) when is_binary(thread_id),
+    do: AgentEndpoints.resolve_target(runtime, thread_id)
 
   @doc "Create or replace the canonical principal for an existing participant."
   def create_principal(runtime, attrs) when is_map(attrs) do
@@ -1605,7 +1816,7 @@ defmodule Jido.Messaging do
     ConfigStore.delete_routing_policy(instance_module, room_id)
   end
 
-  @doc "Register an agent with a room."
+  @doc "Register a legacy in-memory agent handler with a room."
   def register_agent(instance_module, room_id, agent_spec, opts \\ [])
       when is_atom(instance_module) and is_binary(room_id) and is_map(agent_spec) and is_list(opts) do
     normalized_spec = normalize_agent_spec(agent_spec, opts)

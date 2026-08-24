@@ -158,8 +158,9 @@ end
 ```
 
 The SQLite adapter stores canonical rooms, participants, principals, scoped
-identity bindings, messages, threads, bridge bindings, routing policies, bridge
-configs, and ingress subscriptions.
+identity bindings, messages, threads, bridge bindings, Jidoka messaging
+endpoints, room memberships, thread routes, routing policies, bridge configs,
+and ingress subscriptions.
 `room_timeline/2` returns top-level messages, grouped thread replies, and reply
 counts from the persisted message records.
 
@@ -485,17 +486,47 @@ not put the token in the stored bridge configuration.
 
 ### Agent Integration Boundary
 
-The messaging core does not own an agent implementation. `Jido.Messaging.AgentRunner`
-connects an agent process through an `agent_config.handler` function. The handler
-receives the canonical message and context and returns a reply or ignores the
-message. It returns `{:reply, text}`, `:noreply`, or `{:error, reason}`. This
-boundary supports Jido agents and other agent runtimes.
+Jidoka is the intended first-party agent authoring and execution surface. Jido
+Messaging stores only the messaging-side endpoint, room membership, thread
+route, availability, and opaque Jidoka correlation references. It does not
+store or execute a Jidoka agent definition, and it has no Jidoka or
+`jido_harness` dependency.
+
+```elixir
+{:ok, endpoint} =
+  MyApp.Messaging.create_agent_messaging_endpoint(%{
+    principal_id: "support-agent-principal",
+    jidoka_agent_ref: %{"system" => "jidoka", "id" => "support-agent"}
+  })
+
+{:ok, _membership} =
+  MyApp.Messaging.add_agent_endpoint_to_room(endpoint.id, room.id)
+
+{:ok, _route} =
+  MyApp.Messaging.route_thread_to_agent_endpoint(thread.id, endpoint.id)
+
+{:ok, _endpoint} =
+  MyApp.Messaging.set_agent_endpoint_availability(endpoint.id, :available)
+```
+
+This route does not register a handler or start an agent. A Jidoka-owned
+integration first applies messaging authorization, resolves the route with
+`resolve_agent_thread_endpoint/1`, and then uses
+`Jido.Messaging.AgentEndpointDelivery.deliver/4`. The callback has a bounded
+timeout and a stable delivery ID for provider-side deduplication.
+
+`register_agent/3`, `assign_thread/3`, and `Jido.Messaging.AgentRunner` remain
+the legacy in-memory handler path. They are not endpoint registration facades.
+No new Jidoka runtime behavior is added to that path.
 
 The ReAct demo uses the optional `jido_ai` dependency. Add
 `{:jido_ai, "~> 2.2"}` to the host application to use
 `mix jido.messaging.demo --agent`. See
 [`examples/jido_ai/README.md`](examples/jido_ai/README.md) for the example and
 the handler contract. Echo and bridge modes do not load `jido_ai`.
+
+See [Durable Jidoka Agent Endpoints](docs/jidoka-agent-endpoints.md) for the
+complete ownership, recovery, security, and callback contracts.
 
 ## Architecture
 

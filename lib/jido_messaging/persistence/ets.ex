@@ -23,6 +23,9 @@ defmodule Jido.Messaging.Persistence.ETS do
   - `:thread_messages` - Index of message_ids by thread_id (bag table)
   - `:room_bindings` - External binding to room_id mapping
   - `:participant_bindings` - Scoped ExternalIdentityBinding records
+  - `:agent_endpoints` - Durable Jidoka messaging endpoint records
+  - `:room_memberships` - Durable room membership records
+  - `:agent_thread_routes` - Durable thread-to-endpoint routes
   - `:onboarding_flows` - Onboarding flow records keyed by onboarding_id
   - `:ingress_subscriptions` - Bridge/provider subscription metadata
   """
@@ -47,6 +50,11 @@ defmodule Jido.Messaging.Persistence.ETS do
               room_bindings_by_room: Zoi.any(),
               room_bindings_by_id: Zoi.any(),
               participant_bindings: Zoi.any(),
+              agent_endpoints: Zoi.any(),
+              agent_endpoints_by_ref: Zoi.any(),
+              room_memberships: Zoi.any(),
+              room_memberships_by_scope: Zoi.any(),
+              agent_thread_routes: Zoi.any(),
               message_external_ids: Zoi.any(),
               onboarding_flows: Zoi.any(),
               bridge_configs: Zoi.any(),
@@ -67,12 +75,15 @@ defmodule Jido.Messaging.Persistence.ETS do
   alias Jido.Chat.{Participant, Room}
 
   alias Jido.Messaging.{
+    AgentMessagingEndpoint,
+    AgentThreadRoute,
     BridgeConfig,
     ExternalIdentityBinding,
     IngressSubscription,
     Message,
     Principal,
     RoomBinding,
+    RoomMembership,
     Thread
   }
 
@@ -94,6 +105,11 @@ defmodule Jido.Messaging.Persistence.ETS do
         room_bindings_by_room: :ets.new(:room_bindings_by_room, [:bag, :public]),
         room_bindings_by_id: :ets.new(:room_bindings_by_id, [:set, :public]),
         participant_bindings: :ets.new(:participant_bindings, [:set, :public]),
+        agent_endpoints: :ets.new(:agent_endpoints, [:set, :public]),
+        agent_endpoints_by_ref: :ets.new(:agent_endpoints_by_ref, [:set, :public]),
+        room_memberships: :ets.new(:room_memberships, [:set, :public]),
+        room_memberships_by_scope: :ets.new(:room_memberships_by_scope, [:set, :public]),
+        agent_thread_routes: :ets.new(:agent_thread_routes, [:set, :public]),
         message_external_ids: :ets.new(:message_external_ids, [:set, :public]),
         onboarding_flows: :ets.new(:onboarding_flows, [:set, :public]),
         bridge_configs: :ets.new(:bridge_configs, [:set, :public]),
@@ -136,6 +152,7 @@ defmodule Jido.Messaging.Persistence.ETS do
     {:ok, bindings} = list_room_bindings(state, room_id)
     Enum.each(bindings, &delete_room_binding(state, &1.id))
 
+    delete_room_agent_records(state, room_id)
     delete_threads_for_room(state, room_id)
     :ok
   end
@@ -176,6 +193,7 @@ defmodule Jido.Messaging.Persistence.ETS do
     true = :ets.delete(state.participants, participant_id)
     true = :ets.delete(state.principals, participant_id)
     delete_participant_bindings(state, participant_id)
+    delete_principal_agent_records(state, participant_id)
     :ok
   end
 
@@ -451,6 +469,142 @@ defmodule Jido.Messaging.Persistence.ETS do
       |> Enum.take(limit)
 
     {:ok, threads}
+  end
+
+  # Agent messaging endpoint operations
+
+  @impl true
+  def save_agent_messaging_endpoint(state, %AgentMessagingEndpoint{} = endpoint) do
+    agent_record_lock(state.agent_endpoints, :endpoints, fn ->
+      jidoka_id = endpoint.jidoka_agent_ref["id"]
+
+      with :ok <- validate_endpoint_identity(state, endpoint),
+           :ok <- validate_endpoint_ref(state, endpoint, jidoka_id) do
+        true = :ets.insert(state.agent_endpoints, {endpoint.id, endpoint})
+        true = :ets.insert(state.agent_endpoints_by_ref, {jidoka_id, endpoint.id})
+        {:ok, endpoint}
+      end
+    end)
+  end
+
+  @impl true
+  def get_agent_messaging_endpoint(state, endpoint_id) do
+    case :ets.lookup(state.agent_endpoints, endpoint_id) do
+      [{^endpoint_id, endpoint}] -> {:ok, endpoint}
+      [] -> {:error, :not_found}
+    end
+  end
+
+  @impl true
+  def get_agent_messaging_endpoint_by_ref(state, jidoka_agent_id) do
+    case :ets.lookup(state.agent_endpoints_by_ref, jidoka_agent_id) do
+      [{^jidoka_agent_id, endpoint_id}] -> get_agent_messaging_endpoint(state, endpoint_id)
+      [] -> {:error, :not_found}
+    end
+  end
+
+  @impl true
+  def list_agent_messaging_endpoints(state, opts \\ []) do
+    endpoints =
+      state.agent_endpoints
+      |> :ets.tab2list()
+      |> Enum.map(&elem(&1, 1))
+      |> maybe_filter_endpoint(:principal_id, Keyword.get(opts, :principal_id))
+      |> maybe_filter_endpoint(:status, Keyword.get(opts, :status))
+      |> maybe_filter_endpoint(:availability, Keyword.get(opts, :availability))
+      |> Enum.sort_by(&{&1.inserted_at, &1.id})
+      |> Enum.take(Keyword.get(opts, :limit, 100))
+
+    {:ok, endpoints}
+  end
+
+  @impl true
+  def save_room_membership(state, %RoomMembership{} = membership) do
+    scope = {membership.room_id, membership.endpoint_id}
+
+    agent_record_lock(state.room_memberships, :memberships, fn ->
+      with :ok <- validate_membership_identity(state, membership),
+           :ok <- validate_membership_scope(state, membership, scope) do
+        true = :ets.insert(state.room_memberships, {membership.id, membership})
+        true = :ets.insert(state.room_memberships_by_scope, {scope, membership.id})
+        {:ok, membership}
+      end
+    end)
+  end
+
+  @impl true
+  def get_room_membership(state, membership_id) do
+    case :ets.lookup(state.room_memberships, membership_id) do
+      [{^membership_id, membership}] -> {:ok, membership}
+      [] -> {:error, :not_found}
+    end
+  end
+
+  @impl true
+  def get_room_membership(state, room_id, endpoint_id) do
+    scope = {room_id, endpoint_id}
+
+    case :ets.lookup(state.room_memberships_by_scope, scope) do
+      [{^scope, membership_id}] -> get_room_membership(state, membership_id)
+      [] -> {:error, :not_found}
+    end
+  end
+
+  @impl true
+  def list_room_memberships(state, room_id, opts \\ []) do
+    memberships =
+      state.room_memberships
+      |> :ets.tab2list()
+      |> Enum.map(&elem(&1, 1))
+      |> Enum.filter(&(&1.room_id == room_id))
+      |> maybe_filter_membership(:endpoint_id, Keyword.get(opts, :endpoint_id))
+      |> maybe_filter_membership(:principal_id, Keyword.get(opts, :principal_id))
+      |> maybe_filter_membership(:status, Keyword.get(opts, :status))
+      |> Enum.sort_by(&{&1.inserted_at, &1.id})
+      |> Enum.take(Keyword.get(opts, :limit, 100))
+
+    {:ok, memberships}
+  end
+
+  @impl true
+  def save_agent_thread_route(state, %AgentThreadRoute{} = route) do
+    agent_record_lock(state.agent_thread_routes, route.thread_id, fn ->
+      case :ets.lookup(state.agent_thread_routes, route.thread_id) do
+        [] ->
+          true = :ets.insert(state.agent_thread_routes, {route.thread_id, route})
+          {:ok, route}
+
+        [{_thread_id, %AgentThreadRoute{id: route_id}}] when route_id == route.id ->
+          true = :ets.insert(state.agent_thread_routes, {route.thread_id, route})
+          {:ok, route}
+
+        [{_thread_id, existing}] ->
+          {:error, {:agent_thread_route_conflict, existing.id}}
+      end
+    end)
+  end
+
+  @impl true
+  def get_agent_thread_route(state, thread_id) do
+    case :ets.lookup(state.agent_thread_routes, thread_id) do
+      [{^thread_id, route}] -> {:ok, route}
+      [] -> {:error, :not_found}
+    end
+  end
+
+  @impl true
+  def list_agent_thread_routes(state, endpoint_id, opts \\ []) do
+    routes =
+      state.agent_thread_routes
+      |> :ets.tab2list()
+      |> Enum.map(&elem(&1, 1))
+      |> Enum.filter(&(&1.endpoint_id == endpoint_id))
+      |> maybe_filter_route(:room_id, Keyword.get(opts, :room_id))
+      |> maybe_filter_route(:status, Keyword.get(opts, :status))
+      |> Enum.sort_by(&{&1.inserted_at, &1.id})
+      |> Enum.take(Keyword.get(opts, :limit, 100))
+
+    {:ok, routes}
   end
 
   # External binding operations
@@ -1139,6 +1293,35 @@ defmodule Jido.Messaging.Persistence.ETS do
     end
   end
 
+  defp validate_endpoint_identity(state, endpoint) do
+    with :ok <- validate_stored_endpoint_identity(state, endpoint) do
+      state.agent_endpoints
+      |> :ets.tab2list()
+      |> Enum.find(fn {endpoint_id, stored} ->
+        endpoint_id != endpoint.id and stored.principal_id == endpoint.principal_id
+      end)
+      |> case do
+        nil -> :ok
+        {existing_id, _stored} -> {:error, {:agent_endpoint_principal_conflict, existing_id}}
+      end
+    end
+  end
+
+  defp validate_stored_endpoint_identity(state, endpoint) do
+    case :ets.lookup(state.agent_endpoints, endpoint.id) do
+      [] ->
+        :ok
+
+      [{_endpoint_id, stored}] ->
+        if stored.principal_id == endpoint.principal_id and
+             stored.jidoka_agent_ref == endpoint.jidoka_agent_ref do
+          :ok
+        else
+          {:error, :agent_endpoint_identity_immutable}
+        end
+    end
+  end
+
   defp ensure_principal(state, %Participant{} = participant) do
     case get_principal(state, participant.id) do
       {:ok, principal} ->
@@ -1183,6 +1366,130 @@ defmodule Jido.Messaging.Persistence.ETS do
         else
           {:error, {:external_identity_conflict, existing.principal_id}}
         end
+    end
+  end
+
+  defp validate_endpoint_ref(state, endpoint, jidoka_id) do
+    case :ets.lookup(state.agent_endpoints_by_ref, jidoka_id) do
+      [] ->
+        :ok
+
+      [{^jidoka_id, endpoint_id}] when endpoint_id == endpoint.id ->
+        :ok
+
+      [{^jidoka_id, endpoint_id}] ->
+        case get_agent_messaging_endpoint(state, endpoint_id) do
+          {:ok, _existing} ->
+            {:error, {:jidoka_agent_ref_conflict, endpoint_id}}
+
+          {:error, :not_found} ->
+            true = :ets.delete(state.agent_endpoints_by_ref, jidoka_id)
+            :ok
+        end
+    end
+  end
+
+  defp validate_membership_identity(state, membership) do
+    case :ets.lookup(state.room_memberships, membership.id) do
+      [] ->
+        :ok
+
+      [{_membership_id, stored}] ->
+        if stored.room_id == membership.room_id and
+             stored.endpoint_id == membership.endpoint_id and
+             stored.principal_id == membership.principal_id do
+          :ok
+        else
+          {:error, :room_membership_identity_immutable}
+        end
+    end
+  end
+
+  defp validate_membership_scope(state, membership, scope) do
+    case :ets.lookup(state.room_memberships_by_scope, scope) do
+      [] ->
+        :ok
+
+      [{^scope, membership_id}] when membership_id == membership.id ->
+        :ok
+
+      [{^scope, membership_id}] ->
+        case get_room_membership(state, membership_id) do
+          {:ok, _existing} ->
+            {:error, {:room_membership_conflict, membership_id}}
+
+          {:error, :not_found} ->
+            true = :ets.delete(state.room_memberships_by_scope, scope)
+            :ok
+        end
+    end
+  end
+
+  defp maybe_filter_endpoint(endpoints, _field, nil), do: endpoints
+  defp maybe_filter_endpoint(endpoints, field, value), do: Enum.filter(endpoints, &(Map.get(&1, field) == value))
+
+  defp maybe_filter_membership(memberships, _field, nil), do: memberships
+
+  defp maybe_filter_membership(memberships, field, value),
+    do: Enum.filter(memberships, &(Map.get(&1, field) == value))
+
+  defp maybe_filter_route(routes, _field, nil), do: routes
+  defp maybe_filter_route(routes, field, value), do: Enum.filter(routes, &(Map.get(&1, field) == value))
+
+  defp delete_room_agent_records(state, room_id) do
+    state.room_memberships
+    |> :ets.tab2list()
+    |> Enum.each(fn {_id, membership} ->
+      if membership.room_id == room_id, do: delete_membership_record(state, membership)
+    end)
+
+    state.agent_thread_routes
+    |> :ets.tab2list()
+    |> Enum.each(fn {thread_id, route} ->
+      if route.room_id == room_id, do: :ets.delete(state.agent_thread_routes, thread_id)
+    end)
+
+    :ok
+  end
+
+  defp delete_principal_agent_records(state, principal_id) do
+    endpoint_ids =
+      state.agent_endpoints
+      |> :ets.tab2list()
+      |> Enum.filter(fn {_id, endpoint} -> endpoint.principal_id == principal_id end)
+      |> Enum.map(fn {id, endpoint} ->
+        true = :ets.delete(state.agent_endpoints, id)
+        true = :ets.delete(state.agent_endpoints_by_ref, endpoint.jidoka_agent_ref["id"])
+        id
+      end)
+
+    state.room_memberships
+    |> :ets.tab2list()
+    |> Enum.each(fn {_id, membership} ->
+      if membership.principal_id == principal_id or membership.endpoint_id in endpoint_ids do
+        delete_membership_record(state, membership)
+      end
+    end)
+
+    state.agent_thread_routes
+    |> :ets.tab2list()
+    |> Enum.each(fn {thread_id, route} ->
+      if route.endpoint_id in endpoint_ids, do: :ets.delete(state.agent_thread_routes, thread_id)
+    end)
+
+    :ok
+  end
+
+  defp delete_membership_record(state, membership) do
+    true = :ets.delete(state.room_memberships, membership.id)
+    true = :ets.delete(state.room_memberships_by_scope, {membership.room_id, membership.endpoint_id})
+    :ok
+  end
+
+  defp agent_record_lock(table, key, fun) do
+    case :global.trans({{__MODULE__, table, key}, self()}, fun) do
+      :aborted -> {:error, :agent_record_lock_aborted}
+      result -> result
     end
   end
 

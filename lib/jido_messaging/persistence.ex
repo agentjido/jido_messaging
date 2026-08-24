@@ -34,11 +34,14 @@ defmodule Jido.Messaging.Persistence do
   alias Jido.Chat.{Participant, Room}
 
   alias Jido.Messaging.{
+    AgentMessagingEndpoint,
+    AgentThreadRoute,
     BridgeConfig,
     ExternalIdentityBinding,
     IngressSubscription,
     Message,
     Principal,
+    RoomMembership,
     RoutingPolicy,
     Thread
   }
@@ -172,6 +175,51 @@ defmodule Jido.Messaging.Persistence do
 
   @doc "List threads for a room"
   @callback list_threads(state, room_id(), opts :: keyword()) :: {:ok, [Thread.t()]}
+
+  # Agent messaging endpoint operations
+  @doc "Persist a Jidoka agent messaging endpoint."
+  @callback save_agent_messaging_endpoint(state, AgentMessagingEndpoint.t()) ::
+              {:ok, AgentMessagingEndpoint.t()} | {:error, term()}
+
+  @doc "Get an agent messaging endpoint by record ID."
+  @callback get_agent_messaging_endpoint(state, String.t()) ::
+              {:ok, AgentMessagingEndpoint.t()} | {:error, :not_found}
+
+  @doc "Get an agent messaging endpoint by opaque Jidoka agent ID."
+  @callback get_agent_messaging_endpoint_by_ref(state, String.t()) ::
+              {:ok, AgentMessagingEndpoint.t()} | {:error, :not_found}
+
+  @doc "List agent messaging endpoints with optional filters."
+  @callback list_agent_messaging_endpoints(state, keyword()) ::
+              {:ok, [AgentMessagingEndpoint.t()]}
+
+  @doc "Persist a room membership for an agent endpoint."
+  @callback save_room_membership(state, RoomMembership.t()) ::
+              {:ok, RoomMembership.t()} | {:error, term()}
+
+  @doc "Get a room membership by record ID."
+  @callback get_room_membership(state, String.t()) ::
+              {:ok, RoomMembership.t()} | {:error, :not_found}
+
+  @doc "Get a room membership by room and endpoint."
+  @callback get_room_membership(state, String.t(), String.t()) ::
+              {:ok, RoomMembership.t()} | {:error, :not_found}
+
+  @doc "List room memberships for a room."
+  @callback list_room_memberships(state, String.t(), keyword()) ::
+              {:ok, [RoomMembership.t()]}
+
+  @doc "Persist a thread route to an agent endpoint."
+  @callback save_agent_thread_route(state, AgentThreadRoute.t()) ::
+              {:ok, AgentThreadRoute.t()} | {:error, term()}
+
+  @doc "Get an agent endpoint route by thread ID."
+  @callback get_agent_thread_route(state, String.t()) ::
+              {:ok, AgentThreadRoute.t()} | {:error, :not_found}
+
+  @doc "List thread routes for an agent endpoint."
+  @callback list_agent_thread_routes(state, String.t(), keyword()) ::
+              {:ok, [AgentThreadRoute.t()]}
 
   # External ID resolution (for channel mapping)
   @doc """
@@ -316,6 +364,17 @@ defmodule Jido.Messaging.Persistence do
 
   @optional_callbacks get_or_create_participant_by_external_binding: 5,
                       bind_participant_external_id: 5,
+                      save_agent_messaging_endpoint: 2,
+                      get_agent_messaging_endpoint: 2,
+                      get_agent_messaging_endpoint_by_ref: 2,
+                      list_agent_messaging_endpoints: 2,
+                      save_room_membership: 2,
+                      get_room_membership: 2,
+                      get_room_membership: 3,
+                      list_room_memberships: 3,
+                      save_agent_thread_route: 2,
+                      get_agent_thread_route: 2,
+                      list_agent_thread_routes: 3,
                       save_principal: 2,
                       get_principal: 2,
                       save_external_identity_binding: 2,

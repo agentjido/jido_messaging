@@ -159,6 +159,7 @@ defmodule Jido.Messaging.MixProject do
         "README.md",
         "CHANGELOG.md",
         "CONTRIBUTING.md",
+        "docs/jidoka-agent-endpoints.md",
         "docs/agentic-identity.md",
         "docs/postgresql.md",
         "docs/rfcs/0001-durable-delivery.md",
