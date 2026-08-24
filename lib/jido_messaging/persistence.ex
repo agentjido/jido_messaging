@@ -6,6 +6,16 @@ defmodule Jido.Messaging.Persistence do
   Each adapter instance maintains its own state (e.g., ETS table references)
   to enable multiple isolated messaging instances in the same BEAM.
 
+  Use `Jido.Messaging.Persistence.Postgres` for production. Use
+  `Jido.Messaging.Persistence.SQLite` for demos, local development, and tests.
+  Use `Jido.Messaging.Persistence.ETS` for explicit in-memory operation.
+
+  Capabilities describe current guarantees. `:durable` means canonical records
+  survive a runtime restart. `:transactions` means the adapter can commit a
+  group of persistence calls atomically. `:concurrent_writers` means multiple
+  pools or nodes can write safely. These capabilities do not imply RFC 0001's
+  broader `:transactional_delivery` guarantee.
+
   ## Implementing an Adapter
 
       defmodule MyApp.CustomAdapter do
@@ -44,10 +54,26 @@ defmodule Jido.Messaging.Persistence do
   @type directory_query :: map()
   @type onboarding_id :: String.t()
   @type onboarding_flow :: map()
+  @type capability ::
+          :memory | :durable | :transactions | :concurrent_writers | :transactional_delivery
+  @type transaction_result(value) :: {:ok, value} | {:error, term()}
 
   # Initialization
   @doc "Initialize the adapter with options. Returns adapter state."
   @callback init(opts :: keyword()) :: {:ok, state} | {:error, term()}
+
+  @doc "Report storage guarantees that the initialized adapter provides."
+  @callback capabilities(state) :: [capability]
+
+  @doc "Check the adapter connection and required schema."
+  @callback health_check(state) :: :ok | {:error, term()}
+
+  @doc "Run adapter operations in one storage transaction."
+  @callback transaction(state, (state -> transaction_result(value))) :: transaction_result(value)
+            when value: term()
+
+  @doc "Release resources that the adapter owns."
+  @callback close(state) :: :ok
 
   # Room operations
   @doc "Save a room (insert or update)"
@@ -299,7 +325,11 @@ defmodule Jido.Messaging.Persistence do
                       save_ingress_subscription: 2,
                       list_ingress_subscriptions: 3,
                       delete_ingress_subscription: 3,
-                      mark_message_read: 4
+                      mark_message_read: 4,
+                      capabilities: 1,
+                      health_check: 1,
+                      transaction: 2,
+                      close: 1
 
   @doc "Persist routing policy."
   @callback save_routing_policy(state, RoutingPolicy.t()) :: {:ok, RoutingPolicy.t()} | {:error, term()}

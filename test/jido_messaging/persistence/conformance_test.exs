@@ -12,3 +12,11 @@ defmodule Jido.Messaging.Persistence.SQLiteConformanceTest do
     factory: {Jido.Messaging.Test.PersistenceConformanceFactory, :start_sqlite, []},
     cleanup: {Jido.Messaging.Test.PersistenceConformanceFactory, :stop_sqlite, []}
 end
+
+defmodule Jido.Messaging.Persistence.PostgresConformanceTest do
+  use Jido.Messaging.Persistence.Conformance,
+    adapter: Jido.Messaging.Persistence.Postgres,
+    factory: {Jido.Messaging.Test.PersistenceConformanceFactory, :start_postgres, []},
+    cleanup: {Jido.Messaging.Test.PersistenceConformanceFactory, :stop_postgres, []},
+    tags: [postgres: true]
+end

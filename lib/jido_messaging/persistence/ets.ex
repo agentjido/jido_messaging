@@ -104,6 +104,12 @@ defmodule Jido.Messaging.Persistence.ETS do
     {:ok, state}
   end
 
+  @impl true
+  def capabilities(_state), do: [:memory]
+
+  @impl true
+  def health_check(_state), do: :ok
+
   # Room operations
 
   @impl true

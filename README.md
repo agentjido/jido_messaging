@@ -49,6 +49,9 @@ defmodule MyApp.Messaging do
 end
 ```
 
+ETS keeps this quick start small, but it loses data after a BEAM restart. Use
+PostgreSQL for production.
+
 ### 2. Add to Supervision Tree
 
 ```elixir
@@ -106,9 +109,45 @@ Subscribe to the instance Signal Bus for application UI or bridge notifications:
 :ok = MyApp.Messaging.unsubscribe_signals(subscription_id)
 ```
 
-### Durable SQLite Persistence
+### Production PostgreSQL Persistence
 
-Use the SQLite adapter when the host app needs durable local messaging state:
+PostgreSQL is the production persistence recommendation. It supports pooled
+connections, concurrent writers, package-owned migrations, and database
+transactions.
+
+```elixir
+defmodule MyApp.Messaging do
+  use Jido.Messaging,
+    persistence: Jido.Messaging.Persistence.Postgres
+end
+
+children = [
+  {MyApp.Messaging,
+   persistence_opts: [
+     url: System.fetch_env!("DATABASE_URL"),
+     instance_id: "my-app-messaging",
+     pool_size: 10,
+     migrate: false
+   ]}
+]
+```
+
+Install migrations before the runtime starts:
+
+```bash
+JIDO_MESSAGING_POSTGRES_URL="$DATABASE_URL" \
+  mix jido_messaging.postgres.migrate
+```
+
+The adapter can own its Postgrex pool or use a host-owned pool. See
+[PostgreSQL Persistence](docs/postgresql.md) for migration ownership, pool
+configuration, transactions, instance isolation, health checks, telemetry,
+and operations guidance.
+
+### Local SQLite Persistence
+
+Use SQLite for demos, local development, and tests that need restart
+persistence without a database server:
 
 ```elixir
 defmodule MyApp.Messaging do
@@ -128,8 +167,12 @@ Each `Jido.Messaging` runtime uses its module name as a SQLite instance
 namespace. Different runtimes can therefore share one database path without
 reading or replacing each other's records. Set `persistence_opts: [instance_id:
 "stable-name"]` when a namespace must remain stable across a module rename.
-Direct calls to `Jido.Messaging.Persistence.SQLite.init/1` use the explicit
-default namespace `"default"` unless `:instance_id` is supplied.
+Direct SQLite adapter initialization uses the explicit default namespace
+`"default"` unless `:instance_id` is supplied.
+
+SQLite remains supported. It is not the production recommendation because it
+does not provide a server pool or the same concurrent-writer operation as
+PostgreSQL.
 
 Inbound participant identity is scoped by adapter and bridge ID. This prevents
 equal tenant-local provider IDs from merging participants across workspaces or
@@ -159,9 +202,9 @@ is allowed to read:
 Each entry contains stable canonical message, participant, and principal IDs,
 the room ID, scoped identity binding, authorship assurance, provider message and
 participant IDs, channel, bridge, timestamp, and the canonical message record.
-ETS and SQLite apply the same stable message cursor contract. A cursor outside
-the allowed rooms is reported as not found. A scope from one messaging instance
-cannot be used by another instance.
+ETS, SQLite, and PostgreSQL apply the same stable
+message cursor contract. A cursor outside the allowed rooms is reported as not
+found. A scope from one messaging instance cannot be used by another instance.
 
 Full-text search is optional. Configure a module that implements
 `Jido.Messaging.SearchProjection`, or pass it as the `:projection` option. The
@@ -477,10 +520,13 @@ Message Flow:
 - `mix test.integration`: integration-only tests (`@moduletag :integration`)
 - `mix test.story`: story/spec contract tests (`@moduletag :story`)
 - `mix test.all`: full suite except `:flaky`
+- `JIDO_MESSAGING_POSTGRES_URL=... mix test --only postgres`: PostgreSQL
+  conformance, concurrency, isolation, migration, and recovery tests
 
 ## Design RFCs
 
 - [RFC 0001: Durable Inbox, Outbox, and Delivery Recovery](docs/rfcs/0001-durable-delivery.md)
+- [PostgreSQL Persistence](docs/postgresql.md)
 
 ## Domain Model
 
