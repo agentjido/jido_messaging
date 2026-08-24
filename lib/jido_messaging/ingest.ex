@@ -24,7 +24,9 @@ defmodule Jido.Messaging.Ingest do
   alias Jido.Chat.Content.Text
 
   alias Jido.Messaging.{
+    Authorship,
     Context,
+    Identity,
     Message,
     MediaPolicy,
     MsgContext,
@@ -217,6 +219,16 @@ defmodule Jido.Messaging.Ingest do
          {:ok, room} <- resolve_room(messaging_module, channel_type, bridge_id, incoming),
          {:ok, room_server} <- RoomSupervisor.get_or_start_room(messaging_module, room),
          {:ok, participant} <- resolve_participant(messaging_module, channel_type, bridge_id, incoming),
+         {:ok, authorship} <-
+           resolve_authorship(
+             messaging_module,
+             participant,
+             channel_type,
+             bridge_id,
+             incoming,
+             verify_result,
+             opts
+           ),
          msg_context <- build_msg_context(channel_module, bridge_id, incoming, room, participant, opts),
          {:ok, thread} <-
            resolve_thread_scope(
@@ -239,6 +251,7 @@ defmodule Jido.Messaging.Ingest do
              bridge_id,
              opts
            ),
+         message <- Identity.put_authorship(message, authorship),
          message <- put_verify_metadata(message, verify_result),
          {:ok, policy_message} <- apply_policy_pipeline(message, msg_context, opts),
          {:ok, persisted_message} <- messaging_module.save_message_struct(policy_message) do
@@ -365,6 +378,37 @@ defmodule Jido.Messaging.Ingest do
       to_string(external_id),
       participant_attrs
     )
+  end
+
+  defp resolve_authorship(
+         messaging_module,
+         participant,
+         channel_type,
+         bridge_id,
+         incoming,
+         verify_result,
+         opts
+       ) do
+    external_id = external_user_id(incoming)
+
+    if blank_value?(external_id) do
+      {:ok, Authorship.asserted(participant.id)}
+    else
+      runtime = messaging_module.__jido_messaging__(:runtime)
+
+      with {:ok, _principal, _binding, authorship} <-
+             Jido.Messaging.resolve_authorship(
+               runtime,
+               participant,
+               channel_type,
+               bridge_id,
+               external_id,
+               verify_result,
+               runtime_execution_id: Keyword.get(opts, :runtime_execution_id)
+             ) do
+        {:ok, authorship}
+      end
+    end
   end
 
   defp author_value(author, key) when is_map(author), do: Map.get(author, key) || Map.get(author, Atom.to_string(key))

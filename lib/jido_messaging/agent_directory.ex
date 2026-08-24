@@ -245,6 +245,9 @@ defmodule Jido.Messaging.AgentDirectory do
         {:ok, %{status: status}} ->
           {:error, {:agent_directory_endpoint_inactive, status}}
 
+        {:error, :not_found} ->
+          :ok
+
         {:error, _reason} = error ->
           error
       end
