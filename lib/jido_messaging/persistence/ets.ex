@@ -31,6 +31,7 @@ defmodule Jido.Messaging.Persistence.ETS do
   - `:agent_thread_routes` - Durable thread-to-endpoint routes
   - `:onboarding_flows` - Onboarding flow records keyed by onboarding_id
   - `:ingress_subscriptions` - Bridge/provider subscription metadata
+  - `:trust_evidence` - Advisory evidence revisions keyed by evidence ID
   - `:agent_directory_projections` - Safe revisioned Jidoka discovery records
   - `:identity_credentials` - Revisioned controller credential records
   - `:identity_assertions` - Hashed, single-use proof assertion records
@@ -71,6 +72,7 @@ defmodule Jido.Messaging.Persistence.ETS do
               bridge_configs: Zoi.any(),
               ingress_subscriptions: Zoi.any(),
               routing_policies: Zoi.any(),
+              trust_evidence: Zoi.any(),
               jidoka_delegation_events: Zoi.any(),
               jidoka_delegation_cancellations: Zoi.any(),
               thread_continuity_links: Zoi.any(),
@@ -118,7 +120,8 @@ defmodule Jido.Messaging.Persistence.ETS do
     RoomBinding,
     RoomMembership,
     Thread,
-    ThreadContinuityLink
+    ThreadContinuityLink,
+    TrustEvidence
   }
 
   @impl true
@@ -151,6 +154,7 @@ defmodule Jido.Messaging.Persistence.ETS do
         bridge_configs: :ets.new(:bridge_configs, [:set, :public]),
         ingress_subscriptions: :ets.new(:ingress_subscriptions, [:set, :public]),
         routing_policies: :ets.new(:routing_policies, [:set, :public]),
+        trust_evidence: :ets.new(:trust_evidence, [:set, :public]),
         jidoka_delegation_events: :ets.new(:jidoka_delegation_events, [:set, :public]),
         jidoka_delegation_cancellations: :ets.new(:jidoka_delegation_cancellations, [:set, :public]),
         thread_continuity_links: :ets.new(:thread_continuity_links, [:set, :public]),
@@ -192,6 +196,7 @@ defmodule Jido.Messaging.Persistence.ETS do
   @impl true
   def delete_room(state, room_id) do
     true = :ets.delete(state.rooms, room_id)
+    delete_trust_evidence_for_room(state, room_id)
     delete_jidoka_delegation_records(state, room_id)
     delete_continuity_links(state, &(&1.room_id == room_id))
 
@@ -245,6 +250,7 @@ defmodule Jido.Messaging.Persistence.ETS do
     delete_activities_for_principal(state, participant_id)
     delete_participant_identity_credentials(state, participant_id)
     true = :ets.delete(state.participants, participant_id)
+    delete_trust_evidence_for_participant(state, participant_id)
     delete_continuity_links(state, &(&1.principal_id == participant_id))
     delete_principal_authorization_records(state, participant_id)
     true = :ets.delete(state.principals, participant_id)
@@ -459,6 +465,28 @@ defmodule Jido.Messaging.Persistence.ETS do
     Jido.Messaging.Transcript.paginate(messages, opts)
   end
 
+  # Advisory trust evidence
+
+  @impl true
+  def save_trust_evidence(state, %TrustEvidence{} = incoming) do
+    lock_id = {{__MODULE__, state.trust_evidence, incoming.id}, self()}
+
+    :global.trans(lock_id, fn ->
+      case :ets.lookup(state.trust_evidence, incoming.id) do
+        [{_id, %TrustEvidence{} = stored}] ->
+          if TrustEvidence.equivalent?(stored, incoming) do
+            {:ok, stored}
+          else
+            {:error, :trust_evidence_revision_conflict}
+          end
+
+        [] ->
+          true = :ets.insert(state.trust_evidence, {incoming.id, incoming})
+          {:ok, incoming}
+      end
+    end)
+  end
+
   # Messaging activity projection operations
 
   @impl true
@@ -472,6 +500,26 @@ defmodule Jido.Messaging.Persistence.ETS do
           revise_messaging_activity(state, stored, entry)
       end
     end)
+  end
+
+  @impl true
+  def list_trust_evidence(state, subject_principal_id, room_id, opts \\ [])
+      when is_binary(subject_principal_id) and is_binary(room_id) and is_list(opts) do
+    limit = Keyword.get(opts, :limit, 100)
+
+    if is_integer(limit) and limit > 0 do
+      evidence =
+        state.trust_evidence
+        |> :ets.tab2list()
+        |> Enum.map(&elem(&1, 1))
+        |> Enum.filter(&(&1.subject_principal_id == subject_principal_id and &1.room_id == room_id))
+        |> Enum.sort_by(&trust_evidence_order/1, :desc)
+        |> Enum.take(limit)
+
+      {:ok, evidence}
+    else
+      {:error, :invalid_limit}
+    end
   end
 
   @impl true
@@ -1848,6 +1896,15 @@ defmodule Jido.Messaging.Persistence.ETS do
     :ok
   end
 
+  defp delete_trust_evidence_for_room(state, room_id) do
+    state.trust_evidence
+    |> :ets.tab2list()
+    |> Enum.filter(fn {_id, evidence} -> evidence.room_id == room_id end)
+    |> Enum.each(fn {id, _evidence} -> :ets.delete(state.trust_evidence, id) end)
+
+    :ok
+  end
+
   defp lookup_jidoka_delegation_event(state, event_id) do
     case :ets.lookup(state.jidoka_delegation_events, event_id) do
       [{^event_id, %JidokaDelegationEvent{} = event}] -> event
@@ -1930,6 +1987,18 @@ defmodule Jido.Messaging.Persistence.ETS do
 
   defp maybe_mark_delegation_cancelled(_state, %JidokaDelegationEvent{}), do: :ok
 
+  defp delete_trust_evidence_for_participant(state, participant_id) do
+    state.trust_evidence
+    |> :ets.tab2list()
+    |> Enum.filter(fn {_id, evidence} ->
+      evidence.subject_principal_id == participant_id or
+        evidence.issuer_principal_id == participant_id
+    end)
+    |> Enum.each(fn {id, _evidence} -> :ets.delete(state.trust_evidence, id) end)
+
+    :ok
+  end
+
   defp delete_continuity_links(state, predicate) do
     state.thread_continuity_links
     |> :ets.tab2list()
@@ -1955,6 +2024,10 @@ defmodule Jido.Messaging.Persistence.ETS do
     end)
 
     :ok
+  end
+
+  defp trust_evidence_order(evidence) do
+    {DateTime.to_unix(evidence.observed_at, :microsecond), evidence.source.revision, evidence.id}
   end
 
   defp validate_agent_directory_revision(table, projection) do

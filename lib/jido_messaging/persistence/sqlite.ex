@@ -27,8 +27,8 @@ defmodule Jido.Messaging.Persistence.SQLite do
   alias Jido.Chat.{Participant, Room}
 
   alias Jido.Messaging.{
-    AgentDirectoryProjection,
     ActivityPage,
+    AgentDirectoryProjection,
     AgentMessagingEndpoint,
     AgentThreadRoute,
     AuthorizationScope,
@@ -38,8 +38,8 @@ defmodule Jido.Messaging.Persistence.SQLite do
     IdentityAssertionUse,
     IdentityCredential,
     IngressSubscription,
-    JidokaDelegationEvent,
     InvocationPolicy,
+    JidokaDelegationEvent,
     Membership,
     Message,
     MessagingActivityEntry,
@@ -48,7 +48,8 @@ defmodule Jido.Messaging.Persistence.SQLite do
     RoomMembership,
     RoutingPolicy,
     Thread,
-    ThreadContinuityLink
+    ThreadContinuityLink,
+    TrustEvidence
   }
 
   @table "jido_messaging_records"
@@ -122,6 +123,7 @@ defmodule Jido.Messaging.Persistence.SQLite do
            'thread',
            'room_binding',
            'routing_policy',
+           'trust_evidence',
            'jidoka_delegation_event',
            'jidoka_delegation_cancellation',
            'thread_continuity_link',
@@ -156,28 +158,27 @@ defmodule Jido.Messaging.Persistence.SQLite do
 
   @impl true
   def delete_participant(state, participant_id) do
-    run(
-      state.db,
-      """
-      DELETE FROM #{@table}
-      WHERE instance_id = ?1
-        AND ((kind = 'participant' AND id = ?2)
-          OR (kind = 'participant_binding' AND room_id = ?2)
-          OR (kind = 'thread_continuity_link' AND sender_id = ?2)
-          OR (kind = 'agent_directory_projection' AND sender_id = ?2)
-          OR (kind = 'messaging_activity' AND sender_id = ?2)
-          OR (kind = 'identity_assertion' AND room_id IN (
-            SELECT id FROM #{@table}
-            WHERE instance_id = ?1 AND kind = 'identity_credential'
-              AND (sender_id = ?2 OR room_id = ?2)
-          ))
-          OR (kind = 'identity_credential' AND (sender_id = ?2 OR room_id = ?2))
-          OR (kind IN ('membership', 'principal_grant', 'invocation_policy') AND sender_id = ?2))
-      """,
-      [state.instance_id, participant_id]
-    )
-
     with :ok <-
+           run(
+             state.db,
+             """
+             DELETE FROM #{@table}
+             WHERE instance_id = ?1
+               AND ((kind = 'trust_evidence' AND (sender_id = ?2 OR external_id = ?2))
+                 OR (kind = 'thread_continuity_link' AND sender_id = ?2)
+                 OR (kind = 'agent_directory_projection' AND sender_id = ?2)
+                 OR (kind = 'messaging_activity' AND sender_id = ?2)
+                 OR (kind = 'identity_assertion' AND room_id IN (
+                   SELECT id FROM #{@table}
+                   WHERE instance_id = ?1 AND kind = 'identity_credential'
+                     AND (sender_id = ?2 OR room_id = ?2)
+                 ))
+                 OR (kind = 'identity_credential' AND (sender_id = ?2 OR room_id = ?2))
+                 OR (kind IN ('membership', 'principal_grant', 'invocation_policy') AND sender_id = ?2))
+             """,
+             [state.instance_id, participant_id]
+           ),
+         :ok <-
            run(
              state.db,
              """
@@ -378,6 +379,37 @@ defmodule Jido.Messaging.Persistence.SQLite do
     end
   end
 
+  # Advisory trust evidence
+
+  @impl true
+  def save_trust_evidence(state, %TrustEvidence{} = incoming) do
+    binding_lock(state, {:trust_evidence, incoming.id}, fn ->
+      transaction(state, fn transaction_state ->
+        case fetch_record(transaction_state, "trust_evidence", incoming.id) do
+          {:ok, %TrustEvidence{} = stored} ->
+            if TrustEvidence.equivalent?(stored, incoming) do
+              {:ok, stored}
+            else
+              {:error, :trust_evidence_revision_conflict}
+            end
+
+          {:error, :not_found} ->
+            persist(transaction_state, "trust_evidence", incoming.id, incoming,
+              room_id: incoming.room_id,
+              sender_id: incoming.subject_principal_id,
+              inserted_at: incoming.observed_at,
+              channel: incoming.outcome,
+              bridge_id: incoming.source.provider_id,
+              external_id: incoming.issuer_principal_id
+            )
+
+          {:error, _reason} = error ->
+            error
+        end
+      end)
+    end)
+  end
+
   # Messaging activity projection operations
 
   @impl true
@@ -391,6 +423,24 @@ defmodule Jido.Messaging.Persistence.SQLite do
         end
       end)
     end)
+  end
+
+  @impl true
+  def list_trust_evidence(state, subject_principal_id, room_id, opts \\ [])
+      when is_binary(subject_principal_id) and is_binary(room_id) and is_list(opts) do
+    limit = Keyword.get(opts, :limit, 100)
+
+    if is_integer(limit) and limit > 0 do
+      query_records(
+        state,
+        "kind = ?1 AND sender_id = ?2 AND room_id = ?3",
+        ["trust_evidence", subject_principal_id, room_id],
+        limit: limit,
+        order: "inserted_at DESC, id DESC"
+      )
+    else
+      {:error, :invalid_limit}
+    end
   end
 
   @impl true
@@ -1978,6 +2028,9 @@ defmodule Jido.Messaging.Persistence.SQLite do
     exec(db, """
     CREATE INDEX IF NOT EXISTS #{@table}_participant_history_idx
       ON #{@table} (instance_id, kind, sender_id, inserted_at, id);
+
+    CREATE INDEX IF NOT EXISTS #{@table}_trust_evidence_idx
+      ON #{@table} (instance_id, kind, room_id, sender_id, inserted_at, id);
     """)
   end
 

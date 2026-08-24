@@ -168,6 +168,7 @@ defmodule Jido.Messaging.MixProject do
         "docs/postgresql.md",
         "docs/rfcs/0001-durable-delivery.md",
         "docs/message-correctness-hardening.md",
+        "docs/advisory-trust-evidence.md",
         "docs/jidoka-delegation-messaging.md",
         "docs/jidoka-continuity-boundary.md"
       ]

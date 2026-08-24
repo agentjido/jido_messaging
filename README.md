@@ -158,6 +158,8 @@ end
 ```
 
 The SQLite adapter stores canonical rooms, participants, messages, threads,
+advisory trust evidence, bridge bindings, routing policies, bridge configs,
+and ingress subscriptions.
 Jidoka delegation transport records, bridge bindings, routing policies,
 bridge configs, and ingress subscriptions.
 Jidoka continuity links, bridge bindings, routing policies, bridge configs,
@@ -246,6 +248,37 @@ helpers enforce the same instance and room scope before they invoke the
 projection. This keeps a failed optional index from changing canonical message
 commit behavior. Small deployments can omit a projection.
 
+### Advisory Trust Evidence
+
+Jido Messaging can store room-scoped evidence about prior Jidoka agent
+outcomes. The evidence is advisory. It cannot rank, select, start, or authorize
+an agent.
+
+```elixir
+{:ok, scope} =
+  MyApp.Messaging.trust_evidence_scope(%{
+    room_id: room.id,
+    requester_principal_id: reviewer.id,
+    subject_principal_id: support_agent.id,
+    subject_jidoka_agent_ref: %{system: :jidoka, id: "support-agent"},
+    requester_authorization_refs: ["grant:reviewer:room"],
+    subject_membership_refs: ["membership:support-agent:room"]
+  })
+
+{:ok, _evidence} =
+  MyApp.Messaging.record_trust_evidence(
+    %{
+      room_id: room.id,
+      subject_principal_id: support_agent.id,
+      subject_jidoka_agent_ref: %{system: :jidoka, id: "support-agent"},
+      issuer_principal_id: reviewer.id,
+      capability_scope: ["customer_support"],
+      outcome: :succeeded,
+      source: %{kind: :message, id: review_message.id, revision: 1},
+      verification_state: :verified,
+      verification_ref: "review:approved:123",
+      observed_at: review_message.inserted_at,
+      expires_at: DateTime.add(review_message.inserted_at, 30, :day)
 ### Jidoka Delegation Transport
 
 Jidoka owns subagent work and handoff ownership. Jido Messaging can record a
@@ -293,6 +326,15 @@ room, thread, bridge, or remote endpoint.
     scope
   )
 
+{:ok, result} = MyApp.Messaging.query_trust_evidence(scope)
+```
+
+The exact scope is checked before stored evidence or a host-selected provider
+is queried. Results distinguish evidence, no evidence, and unavailable
+evidence. They expose factual outcomes without a score or recommendation.
+
+See [Advisory Trust Evidence for Jidoka Agents](docs/advisory-trust-evidence.md)
+for source, revision, provider, privacy, and Jidoka integration rules.
 {:ok, context} = MyApp.Messaging.jidoka_delegation_context(event.id, scope)
 ```
 
