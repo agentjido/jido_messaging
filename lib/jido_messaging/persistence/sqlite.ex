@@ -27,6 +27,7 @@ defmodule Jido.Messaging.Persistence.SQLite do
   alias Jido.Chat.{Participant, Room}
 
   alias Jido.Messaging.{
+    AgentDirectoryProjection,
     ActivityPage,
     AgentMessagingEndpoint,
     AgentThreadRoute,
@@ -157,7 +158,8 @@ defmodule Jido.Messaging.Persistence.SQLite do
       WHERE instance_id = ?1
         AND ((kind = 'participant' AND id = ?2)
           OR (kind = 'participant_binding' AND room_id = ?2)
-          OR (kind = 'messaging_activity' AND sender_id = ?2))
+          OR (kind = 'agent_directory_projection' AND sender_id = ?2)
+          OR (kind = 'messaging_activity' AND sender_id = ?2)
           OR (kind = 'identity_assertion' AND room_id IN (
             SELECT id FROM #{@table}
             WHERE instance_id = ?1 AND kind = 'identity_credential'
@@ -1045,8 +1047,85 @@ defmodule Jido.Messaging.Persistence.SQLite do
     end
   end
 
+  def directory_search(state, :agent, query, opts) when is_map(query) do
+    case Keyword.fetch(opts, :scope) do
+      {:ok, %Jido.Messaging.AgentDirectoryScope{} = scope} ->
+        with {:ok, projections} <-
+               list_agent_directory_projections(state,
+                 endpoint_ids: Map.keys(scope.endpoint_principals),
+                 limit: 500
+               ) do
+          Jido.Messaging.AgentDirectory.filter_projections(
+            projections,
+            query,
+            scope,
+            Keyword.delete(opts, :scope)
+          )
+        end
+
+      _other ->
+        {:error, :agent_directory_scope_required}
+    end
+  end
+
   def directory_search(_state, target, _query, _opts) do
     {:error, {:invalid_directory_target, target}}
+  end
+
+  # Jidoka agent directory projection operations
+
+  @impl true
+  def save_agent_directory_projection(state, %AgentDirectoryProjection{} = projection) do
+    binding_lock(state, {:agent_directory_projection, projection.id}, fn ->
+      transaction(state, fn transaction_state ->
+        with {:ok, accepted} <- validate_sqlite_agent_directory_revision(transaction_state, projection) do
+          persist(
+            transaction_state,
+            "agent_directory_projection",
+            accepted.id,
+            accepted,
+            sender_id: accepted.principal_id,
+            inserted_at: accepted.inserted_at,
+            bridge_id: endpoint_id(accepted),
+            external_id: accepted.jidoka_agent_ref["id"]
+          )
+        end
+      end)
+    end)
+  end
+
+  @impl true
+  def get_agent_directory_projection(state, projection_id) when is_binary(projection_id),
+    do: fetch_record(state, "agent_directory_projection", projection_id)
+
+  @impl true
+  def list_agent_directory_projections(state, opts \\ []) when is_list(opts) do
+    limit = opts |> Keyword.get(:limit, 100) |> bounded_agent_directory_limit()
+    endpoint_ids = Keyword.get(opts, :endpoint_ids)
+
+    case endpoint_ids do
+      nil ->
+        list_records(state, "agent_directory_projection", [limit: limit], order: "id ASC")
+
+      [] ->
+        {:ok, []}
+
+      endpoint_ids when is_list(endpoint_ids) and length(endpoint_ids) <= 500 ->
+        placeholders =
+          2..(length(endpoint_ids) + 1)
+          |> Enum.map_join(", ", &"?#{&1}")
+
+        query_records(
+          state,
+          "kind = ?1 AND bridge_id IN (#{placeholders})",
+          ["agent_directory_projection" | endpoint_ids],
+          limit: limit,
+          order: "id ASC"
+        )
+
+      _invalid ->
+        {:error, :invalid_agent_directory_endpoint_filter}
+    end
   end
 
   @impl true
@@ -1227,6 +1306,37 @@ defmodule Jido.Messaging.Persistence.SQLite do
     end
   end
 
+  defp validate_sqlite_agent_directory_revision(state, projection) do
+    case get_agent_directory_projection(state, projection.id) do
+      {:error, :not_found} when projection.source_revision == 1 ->
+        {:ok, projection}
+
+      {:error, :not_found} ->
+        {:error, {:invalid_initial_revision, projection.source_revision}}
+
+      {:ok, stored} ->
+        cond do
+          AgentDirectoryProjection.equivalent?(stored, projection) ->
+            {:ok, stored}
+
+          not AgentDirectoryProjection.same_identity?(stored, projection) ->
+            {:error, :agent_directory_identity_immutable}
+
+          projection.source_revision == stored.source_revision ->
+            {:error, :agent_directory_revision_conflict}
+
+          projection.source_revision < stored.source_revision ->
+            {:error, {:stale_revision, stored.source_revision}}
+
+          projection.source_revision != stored.source_revision + 1 ->
+            {:error, {:revision_gap, stored.source_revision, projection.source_revision}}
+
+          true ->
+            {:ok, AgentDirectoryProjection.preserve_insertion(projection, stored)}
+        end
+    end
+  end
+
   defp revise_sqlite_messaging_activity(state, stored, incoming) do
     cond do
       incoming.source_revision < stored.source_revision ->
@@ -1294,6 +1404,12 @@ defmodule Jido.Messaging.Persistence.SQLite do
         error
     end
   end
+
+  defp endpoint_id(%AgentDirectoryProjection{endpoint_ref: nil}), do: nil
+  defp endpoint_id(%AgentDirectoryProjection{endpoint_ref: endpoint_ref}), do: endpoint_ref.id
+
+  defp bounded_agent_directory_limit(limit) when is_integer(limit) and limit > 0, do: min(limit, 500)
+  defp bounded_agent_directory_limit(_limit), do: 100
 
   defp validate_sqlite_identity_replacement(state, revoked, replacement) do
     cond do

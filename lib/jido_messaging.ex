@@ -857,13 +857,97 @@ defmodule Jido.Messaging do
       # Directory functions
 
       @doc "Lookup a single directory entry."
-      def directory_lookup(target, query, opts \\ []) do
+      def directory_lookup(target, query, opts \\ [])
+
+      def directory_lookup(:agent, query, opts) do
+        case Keyword.fetch(opts, :scope) do
+          {:ok, scope} ->
+            Jido.Messaging.AgentDirectory.lookup(
+              __MODULE__,
+              __jido_messaging__(:runtime),
+              query,
+              scope,
+              Keyword.delete(opts, :scope)
+            )
+
+          :error ->
+            {:error, :agent_directory_scope_required}
+        end
+      end
+
+      def directory_lookup(target, query, opts) do
         Jido.Messaging.directory_lookup(__jido_messaging__(:runtime), target, query, opts)
       end
 
       @doc "Search directory entries."
-      def directory_search(target, query, opts \\ []) do
+      def directory_search(target, query, opts \\ [])
+
+      def directory_search(:agent, query, opts) do
+        case Keyword.fetch(opts, :scope) do
+          {:ok, scope} ->
+            Jido.Messaging.AgentDirectory.search(
+              __MODULE__,
+              __jido_messaging__(:runtime),
+              query,
+              scope,
+              Keyword.delete(opts, :scope)
+            )
+
+          :error ->
+            {:error, :agent_directory_scope_required}
+        end
+      end
+
+      def directory_search(target, query, opts) do
         Jido.Messaging.directory_search(__jido_messaging__(:runtime), target, query, opts)
+      end
+
+      @doc "Publish a safe Jidoka agent projection into the messaging directory."
+      def project_jidoka_agent(attrs) do
+        Jido.Messaging.AgentDirectory.project(__jido_messaging__(:runtime), attrs)
+      end
+
+      @doc "Publish a safe Jidoka agent projection through a Jidoka-owned adapter."
+      def project_jidoka_agent_from(projector, source, context \\ %{}, opts \\ []) do
+        Jido.Messaging.AgentDirectory.project_from(
+          __jido_messaging__(:runtime),
+          projector,
+          source,
+          context,
+          opts
+        )
+      end
+
+      @doc "Get a stored Jidoka agent directory projection by ID."
+      def get_jidoka_agent_projection(projection_id) do
+        Jido.Messaging.AgentDirectory.get(__jido_messaging__(:runtime), projection_id)
+      end
+
+      @doc "Build an explicit agent directory scope for this messaging instance."
+      def agent_directory_scope(endpoint_principals, metadata \\ %{}) do
+        Jido.Messaging.AgentDirectoryScope.new(__MODULE__, endpoint_principals, metadata)
+      end
+
+      @doc "Search safe Jidoka agent projections within an explicit scope."
+      def search_jidoka_agents(query, scope, opts \\ []) do
+        Jido.Messaging.AgentDirectory.search(
+          __MODULE__,
+          __jido_messaging__(:runtime),
+          query,
+          scope,
+          opts
+        )
+      end
+
+      @doc "Lookup one safe Jidoka agent projection within an explicit scope."
+      def lookup_jidoka_agent(query, scope, opts \\ []) do
+        Jido.Messaging.AgentDirectory.lookup(
+          __MODULE__,
+          __jido_messaging__(:runtime),
+          query,
+          scope,
+          opts
+        )
       end
 
       # Onboarding functions
@@ -2019,15 +2103,23 @@ defmodule Jido.Messaging do
   @doc "Lookup a single directory entry."
   def directory_lookup(runtime, target, query, opts \\ [])
       when is_atom(target) and is_map(query) and is_list(opts) do
-    {persistence, persistence_state} = Runtime.get_persistence(runtime)
-    persistence.directory_lookup(persistence_state, target, query, opts)
+    if target == :agent do
+      Jido.Messaging.AgentDirectory.lookup_from_directory(runtime, query, opts)
+    else
+      {persistence, persistence_state} = Runtime.get_persistence(runtime)
+      persistence.directory_lookup(persistence_state, target, query, opts)
+    end
   end
 
   @doc "Search directory entries."
   def directory_search(runtime, target, query, opts \\ [])
       when is_atom(target) and is_map(query) and is_list(opts) do
-    {persistence, persistence_state} = Runtime.get_persistence(runtime)
-    persistence.directory_search(persistence_state, target, query, opts)
+    if target == :agent do
+      Jido.Messaging.AgentDirectory.search_from_directory(runtime, query, opts)
+    else
+      {persistence, persistence_state} = Runtime.get_persistence(runtime)
+      persistence.directory_search(persistence_state, target, query, opts)
+    end
   end
 
   @doc "Start (or resume) an onboarding flow."

@@ -34,6 +34,7 @@ defmodule Jido.Messaging.Persistence do
   alias Jido.Chat.{Participant, Room}
 
   alias Jido.Messaging.{
+    AgentDirectoryProjection,
     AgentMessagingEndpoint,
     AgentThreadRoute,
     BridgeConfig,
@@ -58,7 +59,7 @@ defmodule Jido.Messaging.Persistence do
   @type channel :: atom()
   @type bridge_id :: String.t()
   @type external_id :: String.t()
-  @type directory_target :: :participant | :room
+  @type directory_target :: :participant | :room | :agent
   @type directory_query :: map()
   @type onboarding_id :: String.t()
   @type onboarding_flow :: map()
@@ -375,6 +376,18 @@ defmodule Jido.Messaging.Persistence do
   @callback directory_search(state, directory_target(), directory_query(), opts :: keyword()) ::
               {:ok, [map()]} | {:error, term()}
 
+  @doc "Save a revisioned safe Jidoka agent directory projection."
+  @callback save_agent_directory_projection(state, AgentDirectoryProjection.t()) ::
+              {:ok, AgentDirectoryProjection.t()} | {:error, term()}
+
+  @doc "Get an agent directory projection by its deterministic ID."
+  @callback get_agent_directory_projection(state, String.t()) ::
+              {:ok, AgentDirectoryProjection.t()} | {:error, :not_found | term()}
+
+  @doc "List agent directory projections for scoped filtering."
+  @callback list_agent_directory_projections(state, opts :: keyword()) ::
+              {:ok, [AgentDirectoryProjection.t()]} | {:error, term()}
+
   # Onboarding operations
 
   @doc "Persist onboarding flow state."
@@ -484,6 +497,9 @@ defmodule Jido.Messaging.Persistence do
                       list_ingress_subscriptions: 3,
                       delete_ingress_subscription: 3,
                       mark_message_read: 4,
+                      save_agent_directory_projection: 2,
+                      get_agent_directory_projection: 2,
+                      list_agent_directory_projections: 2,
                       save_messaging_activity: 2,
                       get_messaging_activity: 2,
                       get_principal_activity: 4,

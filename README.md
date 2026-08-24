@@ -157,6 +157,9 @@ defmodule MyApp.Messaging do
 end
 ```
 
+The SQLite adapter stores canonical rooms, participants, messages, threads,
+bridge bindings, routing policies, bridge configs, ingress subscriptions, and
+safe Jidoka agent directory projections.
 The SQLite adapter stores canonical rooms, participants, principals, scoped
 identity bindings, messages, threads, bridge bindings, Jidoka messaging
 endpoints, endpoint room memberships, thread routes, principal memberships,
@@ -239,6 +242,46 @@ helpers enforce the same instance and room scope before they invoke the
 projection. This keeps a failed optional index from changing canonical message
 commit behavior. Small deployments can omit a projection.
 
+### Scoped Jidoka Agent Discovery
+
+A Jidoka-owned adapter can publish a strict display projection without making
+Jido Messaging an agent authoring or execution surface:
+
+```elixir
+{:ok, projection} =
+  MyApp.Messaging.project_jidoka_agent(%{
+    jidoka_agent_ref: %{system: :jidoka, id: "support-guide"},
+    principal_id: "principal:support-guide",
+    endpoint_ref: %{system: :jido_messaging, id: "endpoint:support-guide"},
+    name: "Support Guide",
+    description: "Answers product support questions.",
+    capabilities: ["support", "text"],
+    availability: :available,
+    version: "1.0.0",
+    invocation_summary: %{mode: :thread, approval: :may_require},
+    verification_state: :verified,
+    listing_state: :listed,
+    source_revision: 1,
+    source_updated_at: DateTime.utc_now(),
+    fresh_for_seconds: 300
+  })
+
+{:ok, scope} =
+  MyApp.Messaging.agent_directory_scope(%{
+    "endpoint:support-guide" => "principal:support-guide"
+  })
+
+{:ok, agents} =
+  MyApp.Messaging.search_jidoka_agents(%{capability: "support"}, scope)
+```
+
+The application must build the scope from current messaging membership and
+authorization results. An unbound or out-of-scope endpoint does not appear.
+Freshness, availability, verification, capability, and `invokable` values are
+display data. They do not grant invocation. See
+[Jidoka Agent Discovery Projection](docs/jidoka-agent-discovery.md) for the
+Jidoka ownership boundary, adapter callback, safe field set, and revision
+rules. The core package does not depend on Jidoka or `jido_harness`.
 ### Jidoka-Linked Messaging Activity
 
 A trusted Jidoka-owned adapter can store a small messaging activity projection

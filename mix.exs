@@ -159,6 +159,7 @@ defmodule Jido.Messaging.MixProject do
         "README.md",
         "CHANGELOG.md",
         "CONTRIBUTING.md",
+        "docs/jidoka-agent-discovery.md",
         "docs/jidoka-activity-projection.md",
         "docs/identity-credentials.md",
         "docs/principal-authorization.md",
