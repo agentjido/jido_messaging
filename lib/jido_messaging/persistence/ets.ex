@@ -16,12 +16,13 @@ defmodule Jido.Messaging.Persistence.ETS do
   The adapter state contains table IDs for:
   - `:rooms` - Room records keyed by room_id
   - `:participants` - Participant records keyed by participant_id
+  - `:principals` - Principal records keyed by canonical principal_id
   - `:threads` - Thread records keyed by thread_id
   - `:messages` - Message records keyed by message_id
   - `:room_messages` - Index of message_ids by room_id (bag table)
   - `:thread_messages` - Index of message_ids by thread_id (bag table)
   - `:room_bindings` - External binding to room_id mapping
-  - `:participant_bindings` - External ID to participant_id mapping
+  - `:participant_bindings` - Scoped ExternalIdentityBinding records
   - `:agent_endpoints` - Durable Jidoka messaging endpoint records
   - `:room_memberships` - Durable room membership records
   - `:agent_thread_routes` - Durable thread-to-endpoint routes
@@ -37,6 +38,7 @@ defmodule Jido.Messaging.Persistence.ETS do
             %{
               rooms: Zoi.any(),
               participants: Zoi.any(),
+              principals: Zoi.any(),
               threads: Zoi.any(),
               room_threads: Zoi.any(),
               thread_external_ids: Zoi.any(),
@@ -76,8 +78,10 @@ defmodule Jido.Messaging.Persistence.ETS do
     AgentMessagingEndpoint,
     AgentThreadRoute,
     BridgeConfig,
+    ExternalIdentityBinding,
     IngressSubscription,
     Message,
+    Principal,
     RoomBinding,
     RoomMembership,
     Thread
@@ -89,6 +93,7 @@ defmodule Jido.Messaging.Persistence.ETS do
       struct!(__MODULE__, %{
         rooms: :ets.new(:rooms, [:set, :public]),
         participants: :ets.new(:participants, [:set, :public]),
+        principals: :ets.new(:principals, [:set, :public]),
         threads: :ets.new(:threads, [:set, :public]),
         room_threads: :ets.new(:room_threads, [:bag, :public]),
         thread_external_ids: :ets.new(:thread_external_ids, [:set, :public]),
@@ -114,6 +119,12 @@ defmodule Jido.Messaging.Persistence.ETS do
 
     {:ok, state}
   end
+
+  @impl true
+  def capabilities(_state), do: [:memory]
+
+  @impl true
+  def health_check(_state), do: :ok
 
   # Room operations
 
@@ -162,8 +173,11 @@ defmodule Jido.Messaging.Persistence.ETS do
 
   @impl true
   def save_participant(state, %Participant{} = participant) do
-    true = :ets.insert(state.participants, {participant.id, participant})
-    {:ok, participant}
+    with :ok <- validate_existing_principal(state, participant) do
+      true = :ets.insert(state.participants, {participant.id, participant})
+      {:ok, _principal} = ensure_principal(state, participant)
+      {:ok, participant}
+    end
   end
 
   @impl true
@@ -177,8 +191,79 @@ defmodule Jido.Messaging.Persistence.ETS do
   @impl true
   def delete_participant(state, participant_id) do
     true = :ets.delete(state.participants, participant_id)
+    true = :ets.delete(state.principals, participant_id)
+    delete_participant_bindings(state, participant_id)
     delete_principal_agent_records(state, participant_id)
     :ok
+  end
+
+  # Canonical identity operations
+
+  @impl true
+  def save_principal(state, %Principal{} = principal) do
+    with {:ok, participant} <- get_participant(state, principal.participant_id),
+         :ok <- validate_principal_projection(principal, participant),
+         :ok <- validate_principal_controller(state, principal) do
+      true = :ets.insert(state.principals, {principal.id, principal})
+      {:ok, principal}
+    end
+  end
+
+  @impl true
+  def get_principal(state, principal_id) do
+    case :ets.lookup(state.principals, principal_id) do
+      [{^principal_id, principal}] -> {:ok, principal}
+      [] -> {:error, :not_found}
+    end
+  end
+
+  @impl true
+  def save_external_identity_binding(state, %ExternalIdentityBinding{} = binding) do
+    with {:ok, participant} <- get_participant(state, binding.participant_id),
+         {:ok, principal} <- get_principal(state, binding.principal_id),
+         :ok <- validate_identity_binding(binding, participant, principal) do
+      binding_key = participant_binding_key(binding.channel, binding.bridge_id, binding.external_id)
+      save_external_identity_binding_record(state, binding_key, binding)
+    end
+  end
+
+  @impl true
+  def get_external_identity_binding(state, binding_id) do
+    state.participant_bindings
+    |> :ets.tab2list()
+    |> Enum.find_value(fn {_key, stored} ->
+      binding = normalize_external_identity_binding(stored)
+      if binding.id == binding_id, do: binding
+    end)
+    |> case do
+      nil -> {:error, :not_found}
+      binding -> {:ok, binding}
+    end
+  end
+
+  @impl true
+  def get_external_identity_binding(state, channel, bridge_id, external_id) do
+    binding_key = participant_binding_key(channel, bridge_id, external_id)
+
+    case :ets.lookup(state.participant_bindings, binding_key) do
+      [{^binding_key, stored}] -> {:ok, normalize_external_identity_binding(stored)}
+      [] -> {:error, :not_found}
+    end
+  end
+
+  @impl true
+  def list_external_identity_bindings(state, principal_id, opts \\ []) do
+    limit = Keyword.get(opts, :limit, 100)
+
+    bindings =
+      state.participant_bindings
+      |> :ets.tab2list()
+      |> Enum.map(fn {_key, stored} -> normalize_external_identity_binding(stored) end)
+      |> Enum.filter(&(&1.principal_id == principal_id))
+      |> Enum.sort_by(&{&1.inserted_at, &1.id})
+      |> Enum.take(limit)
+
+    {:ok, bindings}
   end
 
   # Message operations
@@ -567,29 +652,36 @@ defmodule Jido.Messaging.Persistence.ETS do
     binding_key = participant_binding_key(channel, bridge_id, external_id)
 
     case :ets.lookup(state.participant_bindings, binding_key) do
-      [{^binding_key, participant_id}] ->
-        case get_participant(state, participant_id) do
-          {:ok, _participant} = ok ->
-            ok
+      [{^binding_key, stored}] ->
+        binding = normalize_external_identity_binding(stored)
 
-          {:error, :not_found} ->
-            # Remove stale binding only if it still points at the missing participant.
-            true = :ets.delete_object(state.participant_bindings, {binding_key, participant_id})
+        if binding.status == :revoked do
+          {:error, :external_identity_revoked}
+        else
+          case get_participant(state, binding.participant_id) do
+            {:ok, _participant} = ok ->
+              ok
 
-            get_or_create_participant_by_external_binding(
-              state,
-              channel,
-              bridge_id,
-              external_id,
-              attrs
-            )
+            {:error, :not_found} ->
+              # Remove stale binding only if it still points at the missing participant.
+              true = :ets.delete_object(state.participant_bindings, {binding_key, stored})
+
+              get_or_create_participant_by_external_binding(
+                state,
+                channel,
+                bridge_id,
+                external_id,
+                attrs
+              )
+          end
         end
 
       [] ->
         participant = build_bound_participant(channel, external_id, attrs)
         {:ok, participant} = save_participant(state, participant)
+        binding = build_external_identity_binding(participant.id, channel, bridge_id, external_id)
 
-        case :ets.insert_new(state.participant_bindings, {binding_key, participant.id}) do
+        case :ets.insert_new(state.participant_bindings, {binding_key, binding}) do
           true ->
             {:ok, participant}
 
@@ -601,20 +693,30 @@ defmodule Jido.Messaging.Persistence.ETS do
 
   @impl true
   def bind_participant_external_id(state, participant_id, channel, bridge_id, external_id) do
-    with {:ok, _participant} <- get_participant(state, participant_id) do
+    with {:ok, participant} <- get_participant(state, participant_id),
+         {:ok, _principal} <- ensure_principal(state, participant) do
       binding_key = participant_binding_key(channel, bridge_id, external_id)
+      binding = build_external_identity_binding(participant_id, channel, bridge_id, external_id)
 
-      case :ets.insert_new(state.participant_bindings, {binding_key, participant_id}) do
+      case :ets.insert_new(state.participant_bindings, {binding_key, binding}) do
         true ->
           :ok
 
         false ->
           case :ets.lookup(state.participant_bindings, binding_key) do
-            [{^binding_key, ^participant_id}] ->
-              :ok
+            [{^binding_key, stored}] ->
+              existing = normalize_external_identity_binding(stored)
 
-            [{^binding_key, existing_participant_id}] ->
-              {:error, {:external_identity_conflict, existing_participant_id}}
+              cond do
+                existing.status == :revoked ->
+                  {:error, :external_identity_revoked}
+
+                existing.participant_id == participant_id ->
+                  :ok
+
+                true ->
+                  {:error, {:external_identity_conflict, existing.participant_id}}
+              end
           end
       end
     end
@@ -753,7 +855,7 @@ defmodule Jido.Messaging.Persistence.ETS do
     participants =
       :ets.tab2list(state.participants)
       |> Enum.map(&elem(&1, 1))
-      |> Enum.filter(&participant_matches?(&1, query))
+      |> Enum.filter(&participant_matches?(&1, state, query))
       |> Enum.sort_by(& &1.id)
 
     {:ok, participants}
@@ -889,10 +991,10 @@ defmodule Jido.Messaging.Persistence.ETS do
     end
   end
 
-  defp participant_matches?(participant, query) do
+  defp participant_matches?(participant, state, query) do
     id_matches?(participant.id, query) and
       name_matches?(participant_name(participant), query) and
-      participant_external_id_matches?(participant, query)
+      participant_external_id_matches?(participant, state, query)
   end
 
   defp maybe_filter_enabled(configs, nil), do: configs
@@ -910,16 +1012,23 @@ defmodule Jido.Messaging.Persistence.ETS do
       room_external_binding_matches?(room.id, state, query)
   end
 
-  defp participant_external_id_matches?(participant, query) do
+  defp participant_external_id_matches?(participant, state, query) do
     channel = query_value(query, :channel)
+    bridge_id = query_value(query, :bridge_id)
     external_id = query_value(query, :external_id)
 
     cond do
-      is_nil(channel) and is_nil(external_id) ->
+      is_nil(channel) and is_nil(bridge_id) and is_nil(external_id) ->
         true
 
       is_nil(channel) or is_nil(external_id) ->
         false
+
+      not is_nil(bridge_id) ->
+        case get_external_identity_binding(state, channel, bridge_id, external_id) do
+          {:ok, binding} -> binding.participant_id == participant.id and binding.status == :active
+          {:error, _reason} -> false
+        end
 
       true ->
         expected_channel = normalize_term(channel)
@@ -1114,7 +1223,7 @@ defmodule Jido.Messaging.Persistence.ETS do
   defp normalize_term(value), do: inspect(value)
 
   defp participant_binding_key(channel, bridge_id, external_id) do
-    {channel, normalize_term(bridge_id), normalize_term(external_id)}
+    {normalize_term(channel), normalize_term(bridge_id), normalize_term(external_id)}
   end
 
   defp build_bound_room(channel, bridge_id, external_id, attrs) do
@@ -1152,15 +1261,34 @@ defmodule Jido.Messaging.Persistence.ETS do
 
   defp resolve_participant_binding_race(state, binding_key, candidate_participant_id) do
     case :ets.lookup(state.participant_bindings, binding_key) do
-      [{^binding_key, participant_id}] when participant_id == candidate_participant_id ->
-        get_participant(state, participant_id)
+      [{^binding_key, stored}] ->
+        binding = normalize_external_identity_binding(stored)
 
-      [{^binding_key, participant_id}] ->
-        :ok = delete_participant(state, candidate_participant_id)
-        get_participant(state, participant_id)
+        cond do
+          binding.status == :revoked ->
+            :ok = delete_participant(state, candidate_participant_id)
+            {:error, :external_identity_revoked}
+
+          binding.participant_id == candidate_participant_id ->
+            get_participant(state, binding.participant_id)
+
+          true ->
+            :ok = delete_participant(state, candidate_participant_id)
+            get_participant(state, binding.participant_id)
+        end
 
       [] ->
-        true = :ets.insert(state.participant_bindings, {binding_key, candidate_participant_id})
+        {channel, bridge_id, external_id} = binding_key
+
+        binding =
+          build_external_identity_binding(
+            candidate_participant_id,
+            channel,
+            bridge_id,
+            external_id
+          )
+
+        true = :ets.insert(state.participant_bindings, {binding_key, binding})
         get_participant(state, candidate_participant_id)
     end
   end
@@ -1190,6 +1318,53 @@ defmodule Jido.Messaging.Persistence.ETS do
           :ok
         else
           {:error, :agent_endpoint_identity_immutable}
+        end
+    end
+  end
+
+  defp ensure_principal(state, %Participant{} = participant) do
+    case get_principal(state, participant.id) do
+      {:ok, principal} ->
+        {:ok, principal}
+
+      {:error, :not_found} ->
+        principal = Principal.from_participant(participant)
+
+        case :ets.insert_new(state.principals, {principal.id, principal}) do
+          true -> {:ok, principal}
+          false -> get_principal(state, principal.id)
+        end
+    end
+  end
+
+  defp build_external_identity_binding(participant_id, channel, bridge_id, external_id) do
+    ExternalIdentityBinding.new(%{
+      principal_id: participant_id,
+      participant_id: participant_id,
+      channel: channel,
+      bridge_id: bridge_id,
+      external_id: external_id
+    })
+  end
+
+  defp save_external_identity_binding_record(state, binding_key, binding) do
+    case :ets.lookup(state.participant_bindings, binding_key) do
+      [] ->
+        case :ets.insert_new(state.participant_bindings, {binding_key, binding}) do
+          true -> {:ok, binding}
+          false -> save_external_identity_binding_record(state, binding_key, binding)
+        end
+
+      [{^binding_key, stored}] ->
+        existing = normalize_external_identity_binding(stored)
+
+        if existing.principal_id == binding.principal_id and
+             existing.participant_id == binding.participant_id do
+          updated = %{binding | id: existing.id, inserted_at: existing.inserted_at}
+          true = :ets.insert(state.participant_bindings, {binding_key, updated})
+          {:ok, updated}
+        else
+          {:error, {:external_identity_conflict, existing.principal_id}}
         end
     end
   end
@@ -1316,5 +1491,68 @@ defmodule Jido.Messaging.Persistence.ETS do
       :aborted -> {:error, :agent_record_lock_aborted}
       result -> result
     end
+  end
+
+  defp normalize_external_identity_binding(%ExternalIdentityBinding{} = binding), do: binding
+
+  defp normalize_external_identity_binding(binding) when is_map(binding),
+    do: ExternalIdentityBinding.from_legacy(binding)
+
+  defp validate_principal_projection(%Principal{} = principal, %Participant{} = participant) do
+    if principal.id == participant.id and
+         principal.participant_id == participant.id and
+         principal.type == participant.type do
+      :ok
+    else
+      {:error, :principal_participant_mismatch}
+    end
+  end
+
+  defp validate_existing_principal(state, %Participant{} = participant) do
+    case get_principal(state, participant.id) do
+      {:ok, principal} -> validate_principal_projection(principal, participant)
+      {:error, :not_found} -> :ok
+    end
+  end
+
+  defp validate_identity_binding(binding, participant, principal) do
+    if binding.participant_id == participant.id and
+         binding.principal_id == principal.id and
+         principal.participant_id == participant.id do
+      :ok
+    else
+      {:error, :principal_participant_mismatch}
+    end
+  end
+
+  defp validate_principal_controller(_state, %Principal{controller_principal_id: nil}), do: :ok
+
+  defp validate_principal_controller(_state, %Principal{id: id, controller_principal_id: id}),
+    do: {:error, :principal_cannot_control_itself}
+
+  defp validate_principal_controller(state, %Principal{controller_principal_id: controller_id}) do
+    case get_principal(state, controller_id) do
+      {:ok, %Principal{status: :active, verification_state: :revoked}} ->
+        {:error, :controller_principal_verification_revoked}
+
+      {:ok, %Principal{status: :active}} ->
+        :ok
+
+      {:ok, %Principal{status: status}} ->
+        {:error, {:controller_principal_inactive, status}}
+
+      {:error, :not_found} ->
+        {:error, :controller_principal_not_found}
+    end
+  end
+
+  defp delete_participant_bindings(state, participant_id) do
+    state.participant_bindings
+    |> :ets.tab2list()
+    |> Enum.each(fn {_key, stored} = record ->
+      if normalize_external_identity_binding(stored).participant_id == participant_id do
+        true = :ets.delete_object(state.participant_bindings, record)
+      end
+    end)
   end
 end
