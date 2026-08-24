@@ -49,7 +49,8 @@ defmodule Jido.Messaging.Persistence.ETS do
               onboarding_flows: Zoi.any(),
               bridge_configs: Zoi.any(),
               ingress_subscriptions: Zoi.any(),
-              routing_policies: Zoi.any()
+              routing_policies: Zoi.any(),
+              thread_continuity_links: Zoi.any()
             },
             coerce: false
           )
@@ -63,7 +64,16 @@ defmodule Jido.Messaging.Persistence.ETS do
   def schema, do: @schema
 
   alias Jido.Chat.{Participant, Room}
-  alias Jido.Messaging.{BridgeConfig, IngressSubscription, Message, RoomBinding, Thread}
+
+  alias Jido.Messaging.{
+    BridgeConfig,
+    IngressSubscription,
+    JidokaContinuityRef,
+    Message,
+    RoomBinding,
+    Thread,
+    ThreadContinuityLink
+  }
 
   @impl true
   def init(_opts) do
@@ -86,7 +96,8 @@ defmodule Jido.Messaging.Persistence.ETS do
         onboarding_flows: :ets.new(:onboarding_flows, [:set, :public]),
         bridge_configs: :ets.new(:bridge_configs, [:set, :public]),
         ingress_subscriptions: :ets.new(:ingress_subscriptions, [:set, :public]),
-        routing_policies: :ets.new(:routing_policies, [:set, :public])
+        routing_policies: :ets.new(:routing_policies, [:set, :public]),
+        thread_continuity_links: :ets.new(:thread_continuity_links, [:set, :public])
       })
 
     {:ok, state}
@@ -111,6 +122,7 @@ defmodule Jido.Messaging.Persistence.ETS do
   @impl true
   def delete_room(state, room_id) do
     true = :ets.delete(state.rooms, room_id)
+    delete_continuity_links(state, &(&1.room_id == room_id))
 
     message_ids = :ets.lookup(state.room_messages, room_id) |> Enum.map(&elem(&1, 1))
     Enum.each(message_ids, &delete_message(state, &1))
@@ -153,6 +165,7 @@ defmodule Jido.Messaging.Persistence.ETS do
   @impl true
   def delete_participant(state, participant_id) do
     true = :ets.delete(state.participants, participant_id)
+    delete_continuity_links(state, &(&1.principal_id == participant_id))
     :ok
   end
 
@@ -211,6 +224,7 @@ defmodule Jido.Messaging.Persistence.ETS do
           [] -> []
         end
       end)
+      |> Enum.filter(&(&1.room_id == room_id))
       |> maybe_filter_thread(thread_id)
       |> Enum.sort_by(&message_order_key/1)
 
@@ -359,6 +373,31 @@ defmodule Jido.Messaging.Persistence.ETS do
       |> Enum.take(limit)
 
     {:ok, threads}
+  end
+
+  # Jidoka continuity correlation
+
+  @impl true
+  def save_thread_continuity_link(state, %ThreadContinuityLink{} = incoming) do
+    lock_id = {{__MODULE__, state.thread_continuity_links, :save}, self()}
+
+    :global.trans(lock_id, fn ->
+      stored = lookup_continuity_link(state, incoming.thread_id)
+
+      with {:ok, accepted, operation} <- ThreadContinuityLink.prepare_save(stored, incoming),
+           :ok <- ensure_continuity_session_available(state, accepted, operation) do
+        true = :ets.insert(state.thread_continuity_links, {accepted.thread_id, accepted})
+        {:ok, accepted}
+      end
+    end)
+  end
+
+  @impl true
+  def get_thread_continuity_link(state, thread_id) when is_binary(thread_id) do
+    case lookup_continuity_link(state, thread_id) do
+      nil -> {:error, :not_found}
+      %ThreadContinuityLink{} = link -> {:ok, link}
+    end
   end
 
   # External binding operations
@@ -944,6 +983,46 @@ defmodule Jido.Messaging.Persistence.ETS do
     end)
 
     true = :ets.delete(state.room_threads, room_id)
+    :ok
+  end
+
+  defp lookup_continuity_link(state, thread_id) do
+    case :ets.lookup(state.thread_continuity_links, thread_id) do
+      [{^thread_id, %ThreadContinuityLink{} = link}] -> link
+      [] -> nil
+    end
+  end
+
+  defp ensure_continuity_session_available(_state, _link, :unchanged), do: :ok
+
+  defp ensure_continuity_session_available(state, %ThreadContinuityLink{} = link, _operation) do
+    if ThreadContinuityLink.claims_session?(link) do
+      session_key = JidokaContinuityRef.session_key(link.continuity_ref)
+
+      state.thread_continuity_links
+      |> :ets.tab2list()
+      |> Enum.map(&elem(&1, 1))
+      |> Enum.find(fn existing ->
+        existing.thread_id != link.thread_id and
+          ThreadContinuityLink.claims_session?(existing) and
+          JidokaContinuityRef.session_key(existing.continuity_ref) == session_key
+      end)
+      |> case do
+        nil -> :ok
+        existing -> {:error, {:continuity_session_scope_conflict, existing.thread_id}}
+      end
+    else
+      :ok
+    end
+  end
+
+  defp delete_continuity_links(state, predicate) do
+    state.thread_continuity_links
+    |> :ets.tab2list()
+    |> Enum.map(&elem(&1, 1))
+    |> Enum.filter(predicate)
+    |> Enum.each(&:ets.delete(state.thread_continuity_links, &1.thread_id))
+
     :ok
   end
 

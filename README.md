@@ -119,7 +119,8 @@ end
 ```
 
 The SQLite adapter stores canonical rooms, participants, messages, threads,
-bridge bindings, routing policies, bridge configs, and ingress subscriptions.
+Jidoka continuity links, bridge bindings, routing policies, bridge configs,
+and ingress subscriptions.
 `room_timeline/2` returns top-level messages, grouped thread replies, and reply
 counts from the persisted message records.
 
@@ -127,8 +128,8 @@ Each `Jido.Messaging` runtime uses its module name as a SQLite instance
 namespace. Different runtimes can therefore share one database path without
 reading or replacing each other's records. Set `persistence_opts: [instance_id:
 "stable-name"]` when a namespace must remain stable across a module rename.
-Direct calls to `Jido.Messaging.Persistence.SQLite.init/1` use the explicit
-default namespace `"default"` unless `:instance_id` is supplied.
+Direct SQLite adapter initialization uses the explicit default namespace
+`"default"` unless `:instance_id` is supplied.
 
 Inbound participant identity is scoped by adapter and bridge ID. This prevents
 equal tenant-local provider IDs from merging participants across workspaces or
@@ -171,6 +172,43 @@ incremental index call `upsert_transcript_search/3` and
 helpers enforce the same instance and room scope before they invoke the
 projection. This keeps a failed optional index from changing canonical message
 commit behavior. Small deployments can omit a projection.
+
+### Jidoka Continuity References
+
+Jidoka is the first-party agent authoring and execution surface. Jidoka owns
+sessions, memory, snapshots, prompt assembly, resume work, and handoffs. Jido
+Messaging stores only a strict reference from a messaging thread and agent
+participant to that Jidoka state.
+
+```elixir
+{:ok, link} =
+  MyApp.Messaging.put_thread_continuity(%{
+    room_id: room.id,
+    thread_id: thread.id,
+    principal_id: agent_participant.id,
+    continuity_ref: %{
+      integration_id: "jidoka-primary",
+      jidoka_agent_ref: %{system: :jidoka, id: "support-agent"},
+      session_id: "session-123",
+      request_id: "request-456"
+    },
+    source_revision: 1,
+    source_updated_at: DateTime.utc_now()
+  })
+
+{:ok, scope} = MyApp.Messaging.history_scope([room.id])
+
+{:ok, context} =
+  MyApp.Messaging.jidoka_continuity_context(thread.id, scope, limit: 50)
+```
+
+The context contains the opaque link and canonical messages from only the
+linked thread. Room scope is checked before messages are read. A Jidoka-owned
+integration can use the context with Jidoka public APIs. Jido Messaging does
+not call Jidoka and does not depend on Jidoka or `jido_harness`.
+
+See [Jidoka Continuity Integration Boundary](docs/jidoka-continuity-boundary.md)
+for lifecycle states, revision rules, replacement rules, and ownership.
 
 ### Presence Signals
 
