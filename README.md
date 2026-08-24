@@ -159,8 +159,9 @@ end
 
 The SQLite adapter stores canonical rooms, participants, principals, scoped
 identity bindings, messages, threads, bridge bindings, Jidoka messaging
-endpoints, room memberships, thread routes, routing policies, bridge configs,
-and ingress subscriptions.
+endpoints, endpoint room memberships, thread routes, principal memberships,
+grants, invocation policies, routing policies, bridge configs, and ingress
+subscriptions.
 `room_timeline/2` returns top-level messages, grouped thread replies, and reply
 counts from the persisted message records.
 
@@ -485,6 +486,29 @@ the Telegram token from its environment reference at operation time. It does
 not put the token in the stored bridge configuration.
 
 ### Agent Integration Boundary
+
+Jido Messaging can enforce durable principal grants before a messaging action
+or Jidoka invocation. Membership does not grant an action. Invocation policy is
+an additional gate after an `:invoke_agent` grant.
+
+```elixir
+{:ok, decision} =
+  MyApp.Messaging.authorize(
+    caller_principal_id,
+    :invoke_agent,
+    %{
+      kind: :thread,
+      room_id: room.id,
+      thread_id: thread.id,
+      target_principal_id: agent_principal_id
+    }
+  )
+```
+
+`ChatActions.context/3` keeps `:legacy` mode for compatibility and supports an
+explicit fail-closed `:enforce` mode. See
+[Principal Messaging Authorization](docs/principal-authorization.md) for the
+grant, invocation, revision, Jidoka integration, and migration contracts.
 
 Jidoka is the intended first-party agent authoring and execution surface. Jido
 Messaging stores only the messaging-side endpoint, room membership, thread
