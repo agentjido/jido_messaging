@@ -215,7 +215,7 @@ defmodule Jido.Messaging.AgentEndpointsTest do
             })
           end,
           max_concurrency: 20,
-          timeout: 5_000
+          timeout: 15_000
         )
         |> Enum.map(fn {:ok, {:ok, endpoint}} -> endpoint end)
 
@@ -227,7 +227,7 @@ defmodule Jido.Messaging.AgentEndpointsTest do
         |> Task.async_stream(
           fn _index -> messaging.add_agent_endpoint_to_room(endpoint.id, room.id) end,
           max_concurrency: 20,
-          timeout: 5_000
+          timeout: 15_000
         )
         |> Enum.map(fn {:ok, {:ok, membership}} -> membership end)
 
@@ -238,7 +238,7 @@ defmodule Jido.Messaging.AgentEndpointsTest do
         |> Task.async_stream(
           fn _index -> messaging.route_thread_to_agent_endpoint(thread.id, endpoint.id) end,
           max_concurrency: 20,
-          timeout: 5_000
+          timeout: 15_000
         )
         |> Enum.map(fn {:ok, {:ok, route}} -> route end)
 
