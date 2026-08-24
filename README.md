@@ -119,7 +119,8 @@ end
 ```
 
 The SQLite adapter stores canonical rooms, participants, messages, threads,
-bridge bindings, routing policies, bridge configs, and ingress subscriptions.
+advisory trust evidence, bridge bindings, routing policies, bridge configs,
+and ingress subscriptions.
 `room_timeline/2` returns top-level messages, grouped thread replies, and reply
 counts from the persisted message records.
 
@@ -127,8 +128,8 @@ Each `Jido.Messaging` runtime uses its module name as a SQLite instance
 namespace. Different runtimes can therefore share one database path without
 reading or replacing each other's records. Set `persistence_opts: [instance_id:
 "stable-name"]` when a namespace must remain stable across a module rename.
-Direct calls to `Jido.Messaging.Persistence.SQLite.init/1` use the explicit
-default namespace `"default"` unless `:instance_id` is supplied.
+Direct SQLite adapter initialization uses the explicit default namespace
+`"default"` unless `:instance_id` is supplied.
 
 Inbound participant identity is scoped by adapter and bridge ID. This prevents
 equal tenant-local provider IDs from merging participants across workspaces or
@@ -171,6 +172,51 @@ incremental index call `upsert_transcript_search/3` and
 helpers enforce the same instance and room scope before they invoke the
 projection. This keeps a failed optional index from changing canonical message
 commit behavior. Small deployments can omit a projection.
+
+### Advisory Trust Evidence
+
+Jido Messaging can store room-scoped evidence about prior Jidoka agent
+outcomes. The evidence is advisory. It cannot rank, select, start, or authorize
+an agent.
+
+```elixir
+{:ok, scope} =
+  MyApp.Messaging.trust_evidence_scope(%{
+    room_id: room.id,
+    requester_principal_id: reviewer.id,
+    subject_principal_id: support_agent.id,
+    subject_jidoka_agent_ref: %{system: :jidoka, id: "support-agent"},
+    requester_authorization_refs: ["grant:reviewer:room"],
+    subject_membership_refs: ["membership:support-agent:room"]
+  })
+
+{:ok, _evidence} =
+  MyApp.Messaging.record_trust_evidence(
+    %{
+      room_id: room.id,
+      subject_principal_id: support_agent.id,
+      subject_jidoka_agent_ref: %{system: :jidoka, id: "support-agent"},
+      issuer_principal_id: reviewer.id,
+      capability_scope: ["customer_support"],
+      outcome: :succeeded,
+      source: %{kind: :message, id: review_message.id, revision: 1},
+      verification_state: :verified,
+      verification_ref: "review:approved:123",
+      observed_at: review_message.inserted_at,
+      expires_at: DateTime.add(review_message.inserted_at, 30, :day)
+    },
+    scope
+  )
+
+{:ok, result} = MyApp.Messaging.query_trust_evidence(scope)
+```
+
+The exact scope is checked before stored evidence or a host-selected provider
+is queried. Results distinguish evidence, no evidence, and unavailable
+evidence. They expose factual outcomes without a score or recommendation.
+
+See [Advisory Trust Evidence for Jidoka Agents](docs/advisory-trust-evidence.md)
+for source, revision, provider, privacy, and Jidoka integration rules.
 
 ### Presence Signals
 

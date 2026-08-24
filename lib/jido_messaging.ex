@@ -233,6 +233,31 @@ defmodule Jido.Messaging do
         )
       end
 
+      @doc "Build an exact authorization and membership scope for advisory trust evidence"
+      def trust_evidence_scope(attrs) do
+        Jido.Messaging.TrustEvidenceScope.new(__MODULE__, attrs)
+      end
+
+      @doc "Record one scoped advisory trust-evidence revision"
+      def record_trust_evidence(attrs, scope) do
+        Jido.Messaging.record_trust_evidence(
+          __MODULE__,
+          __jido_messaging__(:runtime),
+          attrs,
+          scope
+        )
+      end
+
+      @doc "Query advisory trust evidence without ranking or selecting an agent"
+      def query_trust_evidence(scope, opts \\ []) do
+        Jido.Messaging.query_trust_evidence(
+          __MODULE__,
+          __jido_messaging__(:runtime),
+          scope,
+          opts
+        )
+      end
+
       @doc "Search an optional transcript projection within the allowed history scope"
       def search_transcript(query, scope, opts \\ []) do
         Jido.Messaging.search_transcript(__MODULE__, query, scope, opts)
@@ -939,6 +964,16 @@ defmodule Jido.Messaging do
            persistence.get_participant_messages(persistence_state, participant_id, scope.room_ids, opts) do
       {:ok, Enum.map(messages, &Jido.Messaging.TranscriptEntry.new(instance_module, participant, &1))}
     end
+  end
+
+  @doc "Record one scoped advisory trust-evidence revision."
+  def record_trust_evidence(instance_module, runtime, attrs, scope) do
+    Jido.Messaging.TrustEvidenceService.record(instance_module, runtime, attrs, scope)
+  end
+
+  @doc "Query advisory trust evidence without ranking or selecting an agent."
+  def query_trust_evidence(instance_module, runtime, scope, opts \\ []) do
+    Jido.Messaging.TrustEvidenceService.query(instance_module, runtime, scope, opts)
   end
 
   @doc "Search a configured optional transcript projection."

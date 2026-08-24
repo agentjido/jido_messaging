@@ -22,7 +22,15 @@ defmodule Jido.Messaging.Persistence do
   """
 
   alias Jido.Chat.{Participant, Room}
-  alias Jido.Messaging.{BridgeConfig, IngressSubscription, Message, RoutingPolicy, Thread}
+
+  alias Jido.Messaging.{
+    BridgeConfig,
+    IngressSubscription,
+    Message,
+    RoutingPolicy,
+    Thread,
+    TrustEvidence
+  }
 
   @type state :: term()
   @type room_id :: String.t()
@@ -91,6 +99,16 @@ defmodule Jido.Messaging.Persistence do
               room_ids :: [room_id],
               opts :: keyword()
             ) :: {:ok, [Message.t()]} | {:error, term()}
+
+  # Advisory trust evidence
+
+  @doc "Persist one immutable trust-evidence revision."
+  @callback save_trust_evidence(state, TrustEvidence.t()) ::
+              {:ok, TrustEvidence.t()} | {:error, term()}
+
+  @doc "List trust evidence for one subject in one exact room."
+  @callback list_trust_evidence(state, participant_id(), room_id(), keyword()) ::
+              {:ok, [TrustEvidence.t()]} | {:error, term()}
 
   @doc "Atomically add a provider-confirmed read receipt to a message"
   @callback mark_message_read(state, message_id, participant_id, receipt :: map()) ::
@@ -260,7 +278,9 @@ defmodule Jido.Messaging.Persistence do
                       save_ingress_subscription: 2,
                       list_ingress_subscriptions: 3,
                       delete_ingress_subscription: 3,
-                      mark_message_read: 4
+                      mark_message_read: 4,
+                      save_trust_evidence: 2,
+                      list_trust_evidence: 4
 
   @doc "Persist routing policy."
   @callback save_routing_policy(state, RoutingPolicy.t()) :: {:ok, RoutingPolicy.t()} | {:error, term()}
