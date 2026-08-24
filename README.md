@@ -49,6 +49,9 @@ defmodule MyApp.Messaging do
 end
 ```
 
+ETS keeps this quick start small, but it loses data after a BEAM restart. Use
+PostgreSQL for production.
+
 ### 2. Add to Supervision Tree
 
 ```elixir
@@ -106,9 +109,45 @@ Subscribe to the instance Signal Bus for application UI or bridge notifications:
 :ok = MyApp.Messaging.unsubscribe_signals(subscription_id)
 ```
 
-### Durable SQLite Persistence
+### Production PostgreSQL Persistence
 
-Use the SQLite adapter when the host app needs durable local messaging state:
+PostgreSQL is the production persistence recommendation. It supports pooled
+connections, concurrent writers, package-owned migrations, and database
+transactions.
+
+```elixir
+defmodule MyApp.Messaging do
+  use Jido.Messaging,
+    persistence: Jido.Messaging.Persistence.Postgres
+end
+
+children = [
+  {MyApp.Messaging,
+   persistence_opts: [
+     url: System.fetch_env!("DATABASE_URL"),
+     instance_id: "my-app-messaging",
+     pool_size: 10,
+     migrate: false
+   ]}
+]
+```
+
+Install migrations before the runtime starts:
+
+```bash
+JIDO_MESSAGING_POSTGRES_URL="$DATABASE_URL" \
+  mix jido_messaging.postgres.migrate
+```
+
+The adapter can own its Postgrex pool or use a host-owned pool. See
+[PostgreSQL Persistence](docs/postgresql.md) for migration ownership, pool
+configuration, transactions, instance isolation, health checks, telemetry,
+and operations guidance.
+
+### Local SQLite Persistence
+
+Use SQLite for demos, local development, and tests that need restart
+persistence without a database server:
 
 ```elixir
 defmodule MyApp.Messaging do
@@ -121,6 +160,13 @@ end
 The SQLite adapter stores canonical rooms, participants, messages, threads,
 Jidoka continuity links, bridge bindings, routing policies, bridge configs,
 and ingress subscriptions.
+bridge bindings, routing policies, bridge configs, ingress subscriptions, and
+safe Jidoka agent directory projections.
+The SQLite adapter stores canonical rooms, participants, principals, scoped
+identity bindings, messages, threads, bridge bindings, Jidoka messaging
+endpoints, endpoint room memberships, thread routes, principal memberships,
+grants, invocation policies, routing policies, bridge configs, and ingress
+subscriptions.
 `room_timeline/2` returns top-level messages, grouped thread replies, and reply
 counts from the persisted message records.
 
@@ -131,13 +177,37 @@ reading or replacing each other's records. Set `persistence_opts: [instance_id:
 Direct SQLite adapter initialization uses the explicit default namespace
 `"default"` unless `:instance_id` is supplied.
 
+SQLite remains supported. It is not the production recommendation because it
+does not provide a server pool or the same concurrent-writer operation as
+PostgreSQL.
+
 Inbound participant identity is scoped by adapter and bridge ID. This prevents
 equal tenant-local provider IDs from merging participants across workspaces or
-server installations. Use `bind_participant_external_id/4` to link another
-provider identity to an existing canonical participant. Legacy unscoped calls
-use the explicit `"default"` bridge scope. SQLite assigns an unclaimed legacy
-participant record to the first matching scoped identity; applications can use
-the binding API before traffic starts when a different migration is required.
+server installations. Use `bind_external_identity/5` to link another provider
+identity to an existing canonical principal with explicit assurance data. The
+older `bind_participant_external_id/4` API remains available and creates an
+asserted binding. Legacy unscoped calls use the explicit `"default"` bridge
+scope. SQLite assigns an unclaimed legacy participant record to the first
+matching scoped identity. Applications can use the binding API before traffic
+starts when a different migration is required.
+
+### Optional Controller Identity Credentials
+
+Jido Messaging can store a revisioned controller credential for a messaging
+principal. The credential has an exact audience, room scope, validity window,
+and opaque provider proof references. Verification returns separate identity
+evidence. It does not change the message author and does not grant a messaging
+action.
+
+Credentials are optional. An agent without a credential can continue with
+short-lived `:uncredentialed` assurance. ETS and SQLite store credential
+lifecycle and replay records. A host-owned provider verifies transient proof
+data. Raw keys, tokens, and proof payloads are not stored.
+
+Jidoka is the first-party agent authoring and execution surface. A Jidoka-owned
+adapter can consume the evidence. The messaging core has no Jidoka or
+`jido_harness` dependency. See [Controller Identity Credentials](docs/identity-credentials.md)
+for the API, lifecycle, security limits, and integration boundary.
 
 ### Participant Transcripts and Search Projections
 
@@ -154,11 +224,12 @@ is allowed to read:
   )
 ```
 
-Each entry contains stable canonical message and participant IDs, the room ID,
-provider message and participant IDs, channel, bridge, timestamp, and the
-canonical message record. ETS and SQLite apply the same stable message cursor
-contract. A cursor outside the allowed rooms is reported as not found. A scope
-from one messaging instance cannot be used by another instance.
+Each entry contains stable canonical message, participant, and principal IDs,
+the room ID, scoped identity binding, authorship assurance, provider message and
+participant IDs, channel, bridge, timestamp, and the canonical message record.
+ETS, SQLite, and PostgreSQL apply the same stable
+message cursor contract. A cursor outside the allowed rooms is reported as not
+found. A scope from one messaging instance cannot be used by another instance.
 
 Full-text search is optional. Configure a module that implements
 `Jido.Messaging.SearchProjection`, or pass it as the `:projection` option. The
@@ -209,6 +280,60 @@ not call Jidoka and does not depend on Jidoka or `jido_harness`.
 
 See [Jidoka Continuity Integration Boundary](docs/jidoka-continuity-boundary.md)
 for lifecycle states, revision rules, replacement rules, and ownership.
+### Scoped Jidoka Agent Discovery
+
+A Jidoka-owned adapter can publish a strict display projection without making
+Jido Messaging an agent authoring or execution surface:
+
+```elixir
+{:ok, projection} =
+  MyApp.Messaging.project_jidoka_agent(%{
+    jidoka_agent_ref: %{system: :jidoka, id: "support-guide"},
+    principal_id: "principal:support-guide",
+    endpoint_ref: %{system: :jido_messaging, id: "endpoint:support-guide"},
+    name: "Support Guide",
+    description: "Answers product support questions.",
+    capabilities: ["support", "text"],
+    availability: :available,
+    version: "1.0.0",
+    invocation_summary: %{mode: :thread, approval: :may_require},
+    verification_state: :verified,
+    listing_state: :listed,
+    source_revision: 1,
+    source_updated_at: DateTime.utc_now(),
+    fresh_for_seconds: 300
+  })
+
+{:ok, scope} =
+  MyApp.Messaging.agent_directory_scope(%{
+    "endpoint:support-guide" => "principal:support-guide"
+  })
+
+{:ok, agents} =
+  MyApp.Messaging.search_jidoka_agents(%{capability: "support"}, scope)
+```
+
+The application must build the scope from current messaging membership and
+authorization results. An unbound or out-of-scope endpoint does not appear.
+Freshness, availability, verification, capability, and `invokable` values are
+display data. They do not grant invocation. See
+[Jidoka Agent Discovery Projection](docs/jidoka-agent-discovery.md) for the
+Jidoka ownership boundary, adapter callback, safe field set, and revision
+rules. The core package does not depend on Jidoka or `jido_harness`.
+### Jidoka-Linked Messaging Activity
+
+A trusted Jidoka-owned adapter can store a small messaging activity projection
+for a Jidoka request, turn, approval, handoff, or outcome. The projection links
+canonical room, thread, message, and agent principal IDs to opaque Jidoka
+execution references. It stores a bounded status summary, not the Jidoka event
+or trace.
+
+Activity queries require the same instance-bound `HistoryScope` as participant
+transcripts. Jidoka remains the source of truth for execution detail, and the
+host must authorize access before it resolves a detail reference. The core has
+no Jidoka or `jido_harness` dependency. See
+[Jidoka Activity Projection](docs/jidoka-activity-projection.md) for the input,
+revision, scope, retention, and privacy contracts.
 
 ### Presence Signals
 
@@ -476,17 +601,70 @@ not put the token in the stored bridge configuration.
 
 ### Agent Integration Boundary
 
-The messaging core does not own an agent implementation. `Jido.Messaging.AgentRunner`
-connects an agent process through an `agent_config.handler` function. The handler
-receives the canonical message and context and returns a reply or ignores the
-message. It returns `{:reply, text}`, `:noreply`, or `{:error, reason}`. This
-boundary supports Jido agents and other agent runtimes.
+Jido Messaging can enforce durable principal grants before a messaging action
+or Jidoka invocation. Membership does not grant an action. Invocation policy is
+an additional gate after an `:invoke_agent` grant.
+
+```elixir
+{:ok, decision} =
+  MyApp.Messaging.authorize(
+    caller_principal_id,
+    :invoke_agent,
+    %{
+      kind: :thread,
+      room_id: room.id,
+      thread_id: thread.id,
+      target_principal_id: agent_principal_id
+    }
+  )
+```
+
+`ChatActions.context/3` keeps `:legacy` mode for compatibility and supports an
+explicit fail-closed `:enforce` mode. See
+[Principal Messaging Authorization](docs/principal-authorization.md) for the
+grant, invocation, revision, Jidoka integration, and migration contracts.
+
+Jidoka is the intended first-party agent authoring and execution surface. Jido
+Messaging stores only the messaging-side endpoint, room membership, thread
+route, availability, and opaque Jidoka correlation references. It does not
+store or execute a Jidoka agent definition, and it has no Jidoka or
+`jido_harness` dependency.
+
+```elixir
+{:ok, endpoint} =
+  MyApp.Messaging.create_agent_messaging_endpoint(%{
+    principal_id: "support-agent-principal",
+    jidoka_agent_ref: %{"system" => "jidoka", "id" => "support-agent"}
+  })
+
+{:ok, _membership} =
+  MyApp.Messaging.add_agent_endpoint_to_room(endpoint.id, room.id)
+
+{:ok, _route} =
+  MyApp.Messaging.route_thread_to_agent_endpoint(thread.id, endpoint.id)
+
+{:ok, _endpoint} =
+  MyApp.Messaging.set_agent_endpoint_availability(endpoint.id, :available)
+```
+
+This route does not register a handler or start an agent. A Jidoka-owned
+integration first applies messaging authorization, resolves the route with
+`resolve_agent_thread_endpoint/1`, and then uses
+`Jido.Messaging.AgentEndpointDelivery.deliver/4`. The callback has a bounded
+timeout and a stable delivery ID for provider-side deduplication.
+
+`register_agent/3`, `assign_thread/3`, and `Jido.Messaging.AgentRunner` remain
+the legacy in-memory handler path. They are not endpoint registration facades.
+No new Jidoka runtime behavior is added to that path.
 
 The ReAct demo uses the optional `jido_ai` dependency. Add
 `{:jido_ai, "~> 2.2"}` to the host application to use
 `mix jido.messaging.demo --agent`. See
 [`examples/jido_ai/README.md`](examples/jido_ai/README.md) for the example and
 the handler contract. Echo and bridge modes do not load `jido_ai`.
+
+See [Durable Jidoka Agent Endpoints](docs/jidoka-agent-endpoints.md) for the
+complete ownership, recovery, security, and callback contracts.
 
 ## Architecture
 
@@ -511,10 +689,13 @@ Message Flow:
 - `mix test.integration`: integration-only tests (`@moduletag :integration`)
 - `mix test.story`: story/spec contract tests (`@moduletag :story`)
 - `mix test.all`: full suite except `:flaky`
+- `JIDO_MESSAGING_POSTGRES_URL=... mix test --only postgres`: PostgreSQL
+  conformance, concurrency, isolation, migration, and recovery tests
 
 ## Design RFCs
 
 - [RFC 0001: Durable Inbox, Outbox, and Delivery Recovery](docs/rfcs/0001-durable-delivery.md)
+- [PostgreSQL Persistence](docs/postgresql.md)
 
 ## Domain Model
 
@@ -557,14 +738,53 @@ Message Flow:
 }
 ```
 
+### Principal and external identity
+
+`Jido.Messaging.Principal` adds typed lifecycle, controller, verification, and
+credential state to a participant. During the additive compatibility phase,
+the principal ID and participant ID are equal. Provider identities are separate
+`Jido.Messaging.ExternalIdentityBinding` records keyed by the complete
+`{channel, bridge_id, external_id}` scope.
+
+```elixir
+{:ok, principal} = MyApp.Messaging.principal_for_participant("part_abc")
+
+{:ok, binding} =
+  MyApp.Messaging.bind_external_identity(
+    principal.id,
+    :slack,
+    "workspace-a",
+    "U123",
+    assurance: :application_verified,
+    proof_ref: "account-link:456"
+  )
+```
+
+The supported assurance values are `:asserted`, `:provider_verified`,
+`:application_verified`, and `:cryptographically_verified`. A `proof_ref` is an
+opaque reference. Do not put a credential, token, signature, or raw proof in
+it. A revoked binding stays available for audit, but ingest does not accept it.
+
+`Principal.agent_ref` is an opaque external reference. A Jidoka integration can
+store a stable Jidoka agent reference there. Jido Messaging does not import an
+agent definition, execute an agent, or depend on Jidoka or `jido_harness`.
+
+Each ingested message stores a `Jido.Messaging.Authorship` snapshot in message
+metadata. Existing messages without this snapshot have `:asserted` authorship.
+An inbound security adapter can return `identity_assurance`,
+`identity_proof_ref`, and `runtime_execution_id` metadata. The default is
+`:asserted`; a successful allow decision alone does not claim verification.
+
 ### Inbound author identity
 
-Trusted application or runtime code supplies the normalized `Jido.Chat.Author.id`.
-Ingest uses that ID only when it creates an unbound participant. An existing
-external binding remains authoritative, including its participant ID and type.
-Adapters do not infer stable identity and ingest does not merge participants
-across bindings or platforms. Runtime messages keep role `:user`; author type
-(`:human`, `:agent`, or `:system`) is stored on the participant.
+`Jido.Chat.Author.user_id` is the provider user identity. Ingest combines it
+with the channel and bridge ID before it resolves a participant. The optional
+`Jido.Chat.Author.id` is a trusted application candidate for the canonical
+participant ID only when no binding exists. An existing external binding stays
+authoritative, including its participant ID and type. Adapters do not infer
+stable identity. Ingest does not merge participants from names, display names,
+or email addresses. Runtime messages keep role `:user`; author type (`:human`,
+`:agent`, or `:system`) is stored on the participant.
 
 ## Documentation
 

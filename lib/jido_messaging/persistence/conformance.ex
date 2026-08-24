@@ -27,12 +27,28 @@ defmodule Jido.Messaging.Persistence.Conformance do
     factory = Keyword.fetch!(opts, :factory)
     cleanup = Keyword.fetch!(opts, :cleanup)
     async? = Keyword.get(opts, :async, false)
+    tags = Keyword.get(opts, :tags, [])
 
-    quote bind_quoted: [adapter: adapter, factory: factory, cleanup: cleanup, async?: async?] do
+    quote bind_quoted: [
+            adapter: adapter,
+            factory: factory,
+            cleanup: cleanup,
+            async?: async?,
+            tags: tags
+          ] do
       use ExUnit.Case, async: async?
 
+      if tags != [], do: @moduletag(tags)
+
       alias Jido.Chat.{Participant, Room}
-      alias Jido.Messaging.{Message, Thread}
+
+      alias Jido.Messaging.{
+        BridgeConfig,
+        IngressSubscription,
+        Message,
+        RoutingPolicy,
+        Thread
+      }
 
       @persistence_adapter adapter
       @persistence_factory factory
@@ -53,6 +69,11 @@ defmodule Jido.Messaging.Persistence.Conformance do
         assert {:error, :not_found} = @persistence_adapter.get_participant(state, "missing-participant")
         assert {:error, :not_found} = @persistence_adapter.get_thread(state, "missing-thread")
         assert {:error, :not_found} = @persistence_adapter.get_message(state, "missing-message")
+      end
+
+      test "reports capabilities and storage health", %{persistence: state} do
+        assert is_list(@persistence_adapter.capabilities(state))
+        assert :ok = @persistence_adapter.health_check(state)
       end
 
       test "keeps adapter instances isolated", %{persistence: first} do
@@ -267,6 +288,130 @@ defmodule Jido.Messaging.Persistence.Conformance do
 
         assert {:ok, [binding]} = @persistence_adapter.list_room_bindings(state, room.id)
         assert binding.external_room_id == external_id
+      end
+
+      test "concurrent participant binding claims return one participant", %{persistence: state} do
+        external_id = unique_id("external-participant")
+
+        participants =
+          1..12
+          |> Task.async_stream(
+            fn _index ->
+              @persistence_adapter.get_or_create_participant_by_external_binding(
+                state,
+                :slack,
+                "contract-bridge",
+                external_id,
+                %{type: :human, identity: %{name: "Contract participant"}}
+              )
+            end,
+            max_concurrency: 12,
+            ordered: false,
+            timeout: 10_000
+          )
+          |> Enum.map(fn {:ok, {:ok, participant}} -> participant end)
+
+        assert participants |> Enum.map(& &1.id) |> Enum.uniq() |> length() == 1
+
+        assert {:ok, [stored]} =
+                 @persistence_adapter.directory_search(
+                   state,
+                   :participant,
+                   %{channel: :slack, external_id: external_id},
+                   []
+                 )
+
+        assert stored.id == hd(participants).id
+      end
+
+      test "persists participant history and atomic read receipts", %{persistence: state} do
+        room = persist_room(state)
+        participant_id = unique_id("participant")
+
+        messages =
+          for offset <- 1..3 do
+            message =
+              contract_message(room.id, unique_id("history-message"), participant_id,
+                inserted_at: DateTime.add(~U[2026-08-20 12:00:00Z], offset)
+              )
+
+            assert {:ok, ^message} = @persistence_adapter.save_message(state, message)
+            message
+          end
+
+        assert {:ok, ^messages} =
+                 @persistence_adapter.get_participant_messages(
+                   state,
+                   participant_id,
+                   [room.id],
+                   limit: 10
+                 )
+
+        receipt = %{
+          bridge_id: "contract-bridge",
+          external_message_id: "provider-message",
+          read_at: ~U[2026-08-20 13:00:00Z]
+        }
+
+        message = List.last(messages)
+
+        assert {:ok, updated, :updated} =
+                 @persistence_adapter.mark_message_read(
+                   state,
+                   message.id,
+                   participant_id,
+                   receipt
+                 )
+
+        assert {:ok, ^updated, :unchanged} =
+                 @persistence_adapter.mark_message_read(
+                   state,
+                   message.id,
+                   participant_id,
+                   receipt
+                 )
+      end
+
+      test "round-trips directory and control-plane records", %{persistence: state} do
+        room = persist_room(state)
+        onboarding = %{onboarding_id: unique_id("onboarding"), step: :profile}
+
+        bridge =
+          BridgeConfig.new(%{
+            id: unique_id("bridge"),
+            adapter_module: Jido.Messaging.Adapters.Heartbeat
+          })
+
+        subscription =
+          IngressSubscription.new(%{
+            bridge_id: bridge.id,
+            adapter_name: :heartbeat,
+            subscription_id: unique_id("subscription"),
+            status: :active
+          })
+
+        policy = RoutingPolicy.new(%{room_id: room.id, delivery_mode: :primary})
+
+        assert {:ok, ^onboarding} = @persistence_adapter.save_onboarding(state, onboarding)
+        assert {:ok, ^bridge} = @persistence_adapter.save_bridge_config(state, bridge)
+
+        assert {:ok, ^subscription} =
+                 @persistence_adapter.save_ingress_subscription(state, subscription)
+
+        assert {:ok, ^policy} = @persistence_adapter.save_routing_policy(state, policy)
+
+        assert {:ok, ^onboarding} =
+                 @persistence_adapter.get_onboarding(state, onboarding.onboarding_id)
+
+        assert {:ok, ^bridge} = @persistence_adapter.get_bridge_config(state, bridge.id)
+
+        assert {:ok, [^subscription]} =
+                 @persistence_adapter.list_ingress_subscriptions(state, bridge.id, status: :active)
+
+        assert {:ok, ^policy} = @persistence_adapter.get_routing_policy(state, room.id)
+        assert :ok = @persistence_adapter.delete_ingress_subscription(state, bridge.id, subscription.subscription_id)
+        assert :ok = @persistence_adapter.delete_bridge_config(state, bridge.id)
+        assert :ok = @persistence_adapter.delete_routing_policy(state, room.id)
       end
 
       defp persist_room(state) do
