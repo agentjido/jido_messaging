@@ -3,7 +3,13 @@ defmodule Jido.Messaging.ChatActions.Executor do
 
   alias Jido.Chat.{Adapter, Message, PostPayload}
 
-  alias Jido.Messaging.{Directory, IngressSubscriptions}
+  alias Jido.Messaging.{
+    AuthorizationDecision,
+    AuthorizationScope,
+    Authorizer,
+    Directory,
+    IngressSubscriptions
+  }
 
   alias Jido.Messaging.ChatActions.{Policy, Resolver, Result, Scope}
 
@@ -51,9 +57,12 @@ defmodule Jido.Messaging.ChatActions.Executor do
          :ok <- authorize_scope(scope, target),
          :ok <- ensure_execution_scope(action, scope, target),
          audit = audit(action, target, scope),
+         {:ok, authorization_audit} <- authorize_principal(action, target, context),
+         audit = Map.merge(audit, authorization_audit),
+         {:ok, authorized_params} <- apply_authorization_constraints(action, params, authorization_audit),
          :ok <- authorize_write(action, audit, context),
-         {:ok, target} <- verify_message_scope(action, params, target, scope),
-         {:ok, data} <- invoke(action, params, target) do
+         {:ok, target} <- verify_message_scope(action, authorized_params, target, scope),
+         {:ok, data} <- invoke(action, authorized_params, target) do
       {:ok, Result.ok(action, target, data, audit)}
     else
       {:policy, :deny, audit} ->
@@ -64,6 +73,9 @@ defmodule Jido.Messaging.ChatActions.Executor do
 
       {:scope, code, audit} ->
         {:ok, Result.denied(action, code, audit)}
+
+      {:authorization, reason, audit} ->
+        {:ok, Result.denied(action, :authorization_denied, Map.put(audit, :reason, reason))}
 
       {:error, code, details} ->
         {:ok, Result.error(action, code, details)}
@@ -180,6 +192,79 @@ defmodule Jido.Messaging.ChatActions.Executor do
   end
 
   defp authorize_write(_action, _audit, _context), do: :ok
+
+  defp authorize_principal(action, target, context) do
+    runtime_context = Resolver.runtime_context(context)
+
+    case get(runtime_context, :authorization_mode) || :legacy do
+      :legacy ->
+        {:ok, %{authorization_mode: :legacy}}
+
+      :enforce ->
+        authorize_enforced(action, target, runtime_context)
+
+      _mode ->
+        {:authorization, :invalid_authorization_mode, target_audit(target)}
+    end
+  end
+
+  defp authorize_enforced(action, target, runtime_context) do
+    principal_id = get(runtime_context, :principal_id)
+    resource = normalize_authorization_scope(get(runtime_context, :authorization_scope))
+
+    cond do
+      not is_binary(principal_id) or principal_id == "" ->
+        {:authorization, :verified_principal_required, target_audit(target)}
+
+      not match?(%AuthorizationScope{}, resource) ->
+        {:authorization, :authorization_scope_required, target_audit(target)}
+
+      is_binary(resource.bridge_id) and resource.bridge_id != target.bridge_id ->
+        {:authorization, :authorization_scope_mismatch, target_audit(target)}
+
+      true ->
+        runtime = target.instance_module.__jido_messaging__(:runtime)
+
+        case Authorizer.check(runtime, principal_id, action, resource) do
+          {:ok, %AuthorizationDecision{} = decision} ->
+            {:ok,
+             %{
+               authorization_mode: :enforce,
+               authorization: AuthorizationDecision.to_map(decision)
+             }}
+
+          {:error, {:authorization_denied, reason, %AuthorizationDecision{} = decision}} ->
+            {:authorization, reason, %{authorization: AuthorizationDecision.to_map(decision)}}
+
+          {:error, reason} ->
+            {:authorization, reason, target_audit(target)}
+        end
+    end
+  end
+
+  defp normalize_authorization_scope(%AuthorizationScope{} = scope), do: scope
+
+  defp normalize_authorization_scope(scope) when is_map(scope) do
+    AuthorizationScope.new(scope)
+  rescue
+    ArgumentError -> nil
+  end
+
+  defp normalize_authorization_scope(_scope), do: nil
+
+  defp apply_authorization_constraints(
+         action,
+         params,
+         %{authorization: %{constraints: %{"max_results" => maximum}}}
+       )
+       when action in [:fetch_channel_messages, :fetch_thread_messages, :list_threads, :list_subscriptions] and
+              is_integer(maximum) and maximum > 0 do
+    requested = get(params, :limit)
+    effective = if is_integer(requested) and requested > 0, do: min(requested, maximum), else: maximum
+    {:ok, Map.put(params, :limit, effective)}
+  end
+
+  defp apply_authorization_constraints(_action, params, _authorization_audit), do: {:ok, params}
 
   defp invoke(:fetch_message, _params, %{verified_message: %Message{} = message}), do: {:ok, message}
 

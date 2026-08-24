@@ -35,3 +35,39 @@ jobs:
       validate_hex_package: false
       docs_command: mix docs -f html
       test_command: mix test.optional_jido_ai
+
+  postgres-persistence:
+    name: PostgreSQL persistence
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: jido_messaging
+          POSTGRES_PASSWORD: jido_messaging_test
+          POSTGRES_DB: jido_messaging_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U jido_messaging -d jido_messaging_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      MIX_ENV: test
+      JIDO_MESSAGING_POSTGRES_URL: postgresql://jido_messaging:jido_messaging_test@localhost:5432/jido_messaging_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: erlef/setup-beam@v1
+        with:
+          elixir-version: "1.18.4"
+          otp-version: "27.3"
+      - run: mix local.hex --force
+      - run: mix local.rebar --force
+      - run: mix deps.get
+      - name: Run PostgreSQL contract tests
+        run: >-
+          mix test
+          test/jido_messaging/persistence/conformance_test.exs
+          test/jido_messaging/persistence/postgres_test.exs
+          --only postgres
