@@ -79,6 +79,7 @@ defmodule Jido.Messaging.MixProject do
       {:yaml_elixir, "~> 2.12"},
       {:plug, "~> 1.16"},
       {:exqlite, "~> 0.39.0"},
+      {:postgrex, "~> 0.22.4"},
 
       # PubSub support (required by jido_signal, also used for integration tests)
       {:phoenix_pubsub, "~> 2.1"},
@@ -130,6 +131,7 @@ defmodule Jido.Messaging.MixProject do
         "lib",
         "examples/jido_ai",
         "docs",
+        "priv/postgres_migrations",
         "mix.exs",
         "README.md",
         "LICENSE",
@@ -158,6 +160,9 @@ defmodule Jido.Messaging.MixProject do
         "CHANGELOG.md",
         "CONTRIBUTING.md",
         "docs/principal-authorization.md",
+        "docs/jidoka-agent-endpoints.md",
+        "docs/agentic-identity.md",
+        "docs/postgresql.md",
         "docs/rfcs/0001-durable-delivery.md",
         "docs/message-correctness-hardening.md"
       ]

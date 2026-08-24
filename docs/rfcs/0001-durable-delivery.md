@@ -3,7 +3,7 @@
 - Status: Proposed
 - Owners: Jido Messaging maintainers
 - GitHub issue: [#56](https://github.com/agentjido/jido_messaging/issues/56)
-- Last updated: 2026-08-20
+- Last updated: 2026-08-23
 
 ## Summary
 
@@ -14,7 +14,8 @@ Jido Messaging will support two explicit delivery modes:
   stops.
 - `:durable` stores inbox, outbox, attempt, idempotency, and dead-letter state
   in a persistence adapter that supports atomic delivery transactions and
-  lease claims. SQLite is the first reference adapter.
+  lease claims. PostgreSQL is the production storage recommendation. SQLite is
+  the local reference for demos, development, and tests.
 
 Durable mode gives at-least-once processing. It gives effectively-once effects
 when the provider supports an idempotency key or a read-after-write lookup.
@@ -74,6 +75,11 @@ Startup must fail with `{:unsupported_persistence_capability,
 :transactional_delivery}` if durable mode is selected without this capability.
 It must not silently use in-memory safety state.
 
+The current PostgreSQL adapter reports `:durable`, `:transactions`, and
+`:concurrent_writers`. It does not report `:transactional_delivery` until the
+inbox, outbox, claim, fencing, attempt, and retention parts of this RFC are
+implemented. Canonical record durability alone is not durable delivery.
+
 ### ETS mode
 
 ETS implements `:memory` only. Its state machine and telemetry use the same
@@ -81,16 +87,25 @@ names as durable mode, but a BEAM restart can lose accepted or queued work.
 Tests can use ETS for fast state-machine tests. Crash-recovery conformance
 tests must use a durable adapter.
 
-### SQLite mode
+### SQLite storage
 
-SQLite is the first durable reference. It uses `BEGIN IMMEDIATE` transactions,
-unique indexes, and conditional updates. One active Jido Messaging writer owns
-one SQLite instance database. Process or host failover is supported after the
-old writer releases the database and its leases expire.
+SQLite is the local durable reference. It uses `BEGIN IMMEDIATE` transactions,
+unique indexes, and conditional updates. Use it for demos, local development,
+and tests. One active Jido Messaging writer owns one SQLite instance database.
+Process or host failover is supported after the old writer releases the
+database and its leases expire.
 
 Concurrent writers against SQLite on a network file system are not supported.
-A future server database adapter can support multiple active nodes with the
-same lease and fencing contract.
+
+### PostgreSQL storage
+
+PostgreSQL is the production persistence adapter. It uses a Postgrex pool,
+database transactions, instance-scoped keys, and unique binding constraints.
+It supports concurrent canonical record writers on multiple runtime nodes.
+
+The adapter exposes the transaction boundary needed for this RFC. Later
+delivery work must add the inbox and outbox schema, atomic claims, leases, and
+fencing before it enables `:transactional_delivery`.
 
 ## Inbound state machine
 
@@ -482,8 +497,10 @@ the worker process at named barriers and restart the full messaging instance.
    conformance tests.
 
 Each implementation pull request must keep ETS memory mode green and must add
-SQLite restart tests. The implementation can ship behind an experimental
-configuration flag until all recovery and conformance tests pass.
+SQLite restart tests. Server concurrency and multi-node claim changes must
+also run against PostgreSQL. The implementation can ship behind an
+experimental configuration flag until all recovery and conformance tests
+pass.
 
 Creation of new implementation issues is deferred until this RFC is accepted.
 This avoids publishing storage contracts before maintainers approve the record

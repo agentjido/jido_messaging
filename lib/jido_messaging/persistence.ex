@@ -6,6 +6,16 @@ defmodule Jido.Messaging.Persistence do
   Each adapter instance maintains its own state (e.g., ETS table references)
   to enable multiple isolated messaging instances in the same BEAM.
 
+  Use `Jido.Messaging.Persistence.Postgres` for production. Use
+  `Jido.Messaging.Persistence.SQLite` for demos, local development, and tests.
+  Use `Jido.Messaging.Persistence.ETS` for explicit in-memory operation.
+
+  Capabilities describe current guarantees. `:durable` means canonical records
+  survive a runtime restart. `:transactions` means the adapter can commit a
+  group of persistence calls atomically. `:concurrent_writers` means multiple
+  pools or nodes can write safely. These capabilities do not imply RFC 0001's
+  broader `:transactional_delivery` guarantee.
+
   ## Implementing an Adapter
 
       defmodule MyApp.CustomAdapter do
@@ -24,12 +34,17 @@ defmodule Jido.Messaging.Persistence do
   alias Jido.Chat.{Participant, Room}
 
   alias Jido.Messaging.{
+    AgentMessagingEndpoint,
+    AgentThreadRoute,
     BridgeConfig,
+    ExternalIdentityBinding,
     Grant,
     IngressSubscription,
     InvocationPolicy,
     Membership,
     Message,
+    Principal,
+    RoomMembership,
     RoutingPolicy,
     Thread
   }
@@ -45,10 +60,26 @@ defmodule Jido.Messaging.Persistence do
   @type directory_query :: map()
   @type onboarding_id :: String.t()
   @type onboarding_flow :: map()
+  @type capability ::
+          :memory | :durable | :transactions | :concurrent_writers | :transactional_delivery
+  @type transaction_result(value) :: {:ok, value} | {:error, term()}
 
   # Initialization
   @doc "Initialize the adapter with options. Returns adapter state."
   @callback init(opts :: keyword()) :: {:ok, state} | {:error, term()}
+
+  @doc "Report storage guarantees that the initialized adapter provides."
+  @callback capabilities(state) :: [capability]
+
+  @doc "Check the adapter connection and required schema."
+  @callback health_check(state) :: :ok | {:error, term()}
+
+  @doc "Run adapter operations in one storage transaction."
+  @callback transaction(state, (state -> transaction_result(value))) :: transaction_result(value)
+            when value: term()
+
+  @doc "Release resources that the adapter owns."
+  @callback close(state) :: :ok
 
   # Room operations
   @doc "Save a room (insert or update)"
@@ -72,6 +103,30 @@ defmodule Jido.Messaging.Persistence do
 
   @doc "Delete a participant by ID"
   @callback delete_participant(state, participant_id) :: :ok | {:error, term()}
+
+  # Canonical identity operations
+  @doc "Persist a canonical principal."
+  @callback save_principal(state, Principal.t()) :: {:ok, Principal.t()} | {:error, term()}
+
+  @doc "Get a canonical principal by ID."
+  @callback get_principal(state, String.t()) :: {:ok, Principal.t()} | {:error, :not_found}
+
+  @doc "Persist one bridge-scoped external identity binding."
+  @callback save_external_identity_binding(state, ExternalIdentityBinding.t()) ::
+              {:ok, ExternalIdentityBinding.t()}
+              | {:error, :not_found | :external_identity_revoked | {:external_identity_conflict, String.t()}}
+
+  @doc "Get an external identity binding by its stable record ID."
+  @callback get_external_identity_binding(state, String.t()) ::
+              {:ok, ExternalIdentityBinding.t()} | {:error, :not_found}
+
+  @doc "Get an external identity binding by its complete provider scope."
+  @callback get_external_identity_binding(state, channel, bridge_id, external_id) ::
+              {:ok, ExternalIdentityBinding.t()} | {:error, :not_found}
+
+  @doc "List the external identity bindings for one principal."
+  @callback list_external_identity_bindings(state, String.t(), keyword()) ::
+              {:ok, [ExternalIdentityBinding.t()]} | {:error, term()}
 
   # Message operations
   @doc "Save a message"
@@ -164,6 +219,50 @@ defmodule Jido.Messaging.Persistence do
   @doc "List invocation policies for an agent principal."
   @callback list_invocation_policies(state, participant_id(), keyword()) ::
               {:ok, [InvocationPolicy.t()]}
+  # Agent messaging endpoint operations
+  @doc "Persist a Jidoka agent messaging endpoint."
+  @callback save_agent_messaging_endpoint(state, AgentMessagingEndpoint.t()) ::
+              {:ok, AgentMessagingEndpoint.t()} | {:error, term()}
+
+  @doc "Get an agent messaging endpoint by record ID."
+  @callback get_agent_messaging_endpoint(state, String.t()) ::
+              {:ok, AgentMessagingEndpoint.t()} | {:error, :not_found}
+
+  @doc "Get an agent messaging endpoint by opaque Jidoka agent ID."
+  @callback get_agent_messaging_endpoint_by_ref(state, String.t()) ::
+              {:ok, AgentMessagingEndpoint.t()} | {:error, :not_found}
+
+  @doc "List agent messaging endpoints with optional filters."
+  @callback list_agent_messaging_endpoints(state, keyword()) ::
+              {:ok, [AgentMessagingEndpoint.t()]}
+
+  @doc "Persist a room membership for an agent endpoint."
+  @callback save_room_membership(state, RoomMembership.t()) ::
+              {:ok, RoomMembership.t()} | {:error, term()}
+
+  @doc "Get a room membership by record ID."
+  @callback get_room_membership(state, String.t()) ::
+              {:ok, RoomMembership.t()} | {:error, :not_found}
+
+  @doc "Get a room membership by room and endpoint."
+  @callback get_room_membership(state, String.t(), String.t()) ::
+              {:ok, RoomMembership.t()} | {:error, :not_found}
+
+  @doc "List room memberships for a room."
+  @callback list_room_memberships(state, String.t(), keyword()) ::
+              {:ok, [RoomMembership.t()]}
+
+  @doc "Persist a thread route to an agent endpoint."
+  @callback save_agent_thread_route(state, AgentThreadRoute.t()) ::
+              {:ok, AgentThreadRoute.t()} | {:error, term()}
+
+  @doc "Get an agent endpoint route by thread ID."
+  @callback get_agent_thread_route(state, String.t()) ::
+              {:ok, AgentThreadRoute.t()} | {:error, :not_found}
+
+  @doc "List thread routes for an agent endpoint."
+  @callback list_agent_thread_routes(state, String.t(), keyword()) ::
+              {:ok, [AgentThreadRoute.t()]}
 
   # External ID resolution (for channel mapping)
   @doc """
@@ -319,10 +418,31 @@ defmodule Jido.Messaging.Persistence do
                       get_invocation_policy: 2,
                       get_invocation_policy_by_scope: 3,
                       list_invocation_policies: 3,
+                      save_agent_messaging_endpoint: 2,
+                      get_agent_messaging_endpoint: 2,
+                      get_agent_messaging_endpoint_by_ref: 2,
+                      list_agent_messaging_endpoints: 2,
+                      save_room_membership: 2,
+                      get_room_membership: 2,
+                      get_room_membership: 3,
+                      list_room_memberships: 3,
+                      save_agent_thread_route: 2,
+                      get_agent_thread_route: 2,
+                      list_agent_thread_routes: 3,
+                      save_principal: 2,
+                      get_principal: 2,
+                      save_external_identity_binding: 2,
+                      get_external_identity_binding: 2,
+                      get_external_identity_binding: 4,
+                      list_external_identity_bindings: 3,
                       save_ingress_subscription: 2,
                       list_ingress_subscriptions: 3,
                       delete_ingress_subscription: 3,
-                      mark_message_read: 4
+                      mark_message_read: 4,
+                      capabilities: 1,
+                      health_check: 1,
+                      transaction: 2,
+                      close: 1
 
   @doc "Persist routing policy."
   @callback save_routing_policy(state, RoutingPolicy.t()) :: {:ok, RoutingPolicy.t()} | {:error, term()}
