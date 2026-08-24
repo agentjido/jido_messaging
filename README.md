@@ -119,7 +119,8 @@ end
 ```
 
 The SQLite adapter stores canonical rooms, participants, messages, threads,
-bridge bindings, routing policies, bridge configs, and ingress subscriptions.
+Jidoka delegation transport records, bridge bindings, routing policies,
+bridge configs, and ingress subscriptions.
 `room_timeline/2` returns top-level messages, grouped thread replies, and reply
 counts from the persisted message records.
 
@@ -127,8 +128,8 @@ Each `Jido.Messaging` runtime uses its module name as a SQLite instance
 namespace. Different runtimes can therefore share one database path without
 reading or replacing each other's records. Set `persistence_opts: [instance_id:
 "stable-name"]` when a namespace must remain stable across a module rename.
-Direct calls to `Jido.Messaging.Persistence.SQLite.init/1` use the explicit
-default namespace `"default"` unless `:instance_id` is supplied.
+Direct SQLite adapter initialization uses the explicit default namespace
+`"default"` unless `:instance_id` is supplied.
 
 Inbound participant identity is scoped by adapter and bridge ID. This prevents
 equal tenant-local provider IDs from merging participants across workspaces or
@@ -171,6 +172,65 @@ incremental index call `upsert_transcript_search/3` and
 helpers enforce the same instance and room scope before they invoke the
 projection. This keeps a failed optional index from changing canonical message
 commit behavior. Small deployments can omit a projection.
+
+### Jidoka Delegation Transport
+
+Jidoka owns subagent work and handoff ownership. Jido Messaging can record a
+strict transport reference when a Jidoka result or routing decision crosses a
+room, thread, bridge, or remote endpoint.
+
+```elixir
+{:ok, scope} =
+  MyApp.Messaging.jidoka_delegation_scope(%{
+    room_id: room.id,
+    thread_id: thread.id,
+    source_principal_id: parent_agent.id,
+    target_principal_id: specialist_agent.id,
+    source_authorization_refs: ["grant:parent:thread"],
+    target_authorization_refs: ["grant:specialist:thread"]
+  })
+
+{:ok, event} =
+  MyApp.Messaging.record_jidoka_delegation_event(
+    %{
+      action: :result,
+      room_id: room.id,
+      thread_id: thread.id,
+      source_principal_id: parent_agent.id,
+      target_principal_id: specialist_agent.id,
+      delegation_ref: %{
+        kind: :subagent,
+        id: effect_id,
+        effect_id: effect_id,
+        request_id: request_id,
+        source_agent_ref: %{system: :jidoka, id: "parent-agent"},
+        target_agent_ref: %{system: :jidoka, id: "specialist-agent"}
+      },
+      emission_ref: %{
+        source: :operation_result,
+        event: :operation_result,
+        request_id: request_id,
+        effect_id: effect_id,
+        loop_index: 0
+      },
+      related_message_ids: [message.id],
+      transport_id: transport_id,
+      visited_nodes: []
+    },
+    scope
+  )
+
+{:ok, context} = MyApp.Messaging.jidoka_delegation_context(event.id, scope)
+```
+
+The exact scope is checked before canonical messages are read. The event does
+not carry a Jidoka task, context, result, output, memory, or owner record. A
+Jidoka-owned adapter consumes this contract. Jido Messaging does not run an
+agent or apply handoff ownership directly.
+
+See [Jidoka-Backed Delegation Messaging](docs/jidoka-delegation-messaging.md)
+for source mapping, route boundaries, duplicate safety, cancellation, and
+loop protection.
 
 ### Presence Signals
 

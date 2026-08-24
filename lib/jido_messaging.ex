@@ -222,6 +222,41 @@ defmodule Jido.Messaging do
         Jido.Messaging.HistoryScope.new(__MODULE__, room_ids, metadata)
       end
 
+      @doc "Build an exact authorization scope for Jidoka delegation transport"
+      def jidoka_delegation_scope(attrs) do
+        Jido.Messaging.JidokaDelegationScope.new(__MODULE__, attrs)
+      end
+
+      @doc "Record one authorized Jidoka-emitted delegation observation"
+      def record_jidoka_delegation_event(attrs, scope) do
+        Jido.Messaging.record_jidoka_delegation_event(
+          __MODULE__,
+          __jido_messaging__(:runtime),
+          attrs,
+          scope
+        )
+      end
+
+      @doc "Get a Jidoka delegation event within its exact scope"
+      def get_jidoka_delegation_event(event_id, scope) do
+        Jido.Messaging.get_jidoka_delegation_event(
+          __MODULE__,
+          __jido_messaging__(:runtime),
+          event_id,
+          scope
+        )
+      end
+
+      @doc "Get authorized canonical messages named by a Jidoka delegation event"
+      def jidoka_delegation_context(event_id, scope) do
+        Jido.Messaging.jidoka_delegation_context(
+          __MODULE__,
+          __jido_messaging__(:runtime),
+          event_id,
+          scope
+        )
+      end
+
       @doc "Return messages sent by one canonical participant in the allowed history scope"
       def participant_transcript(participant_id, scope, opts \\ []) do
         Jido.Messaging.participant_transcript(
@@ -921,6 +956,21 @@ defmodule Jido.Messaging do
     with {:ok, messages} <- list_messages(runtime, room_id, opts) do
       {:ok, Jido.Messaging.Query.room_timeline(messages)}
     end
+  end
+
+  @doc "Record one authorized Jidoka-emitted delegation observation."
+  def record_jidoka_delegation_event(instance_module, runtime, attrs, scope) do
+    Jido.Messaging.DelegationTransport.record(instance_module, runtime, attrs, scope)
+  end
+
+  @doc "Get a Jidoka delegation event within its exact authorization scope."
+  def get_jidoka_delegation_event(instance_module, runtime, event_id, scope) do
+    Jido.Messaging.DelegationTransport.get(instance_module, runtime, event_id, scope)
+  end
+
+  @doc "Get only the authorized canonical messages named by a delegation event."
+  def jidoka_delegation_context(instance_module, runtime, event_id, scope) do
+    Jido.Messaging.DelegationTransport.context(instance_module, runtime, event_id, scope)
   end
 
   @doc """

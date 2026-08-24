@@ -158,7 +158,8 @@ defmodule Jido.Messaging.MixProject do
         "CHANGELOG.md",
         "CONTRIBUTING.md",
         "docs/rfcs/0001-durable-delivery.md",
-        "docs/message-correctness-hardening.md"
+        "docs/message-correctness-hardening.md",
+        "docs/jidoka-delegation-messaging.md"
       ]
     ]
   end

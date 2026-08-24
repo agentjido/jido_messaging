@@ -22,7 +22,15 @@ defmodule Jido.Messaging.Persistence do
   """
 
   alias Jido.Chat.{Participant, Room}
-  alias Jido.Messaging.{BridgeConfig, IngressSubscription, Message, RoutingPolicy, Thread}
+
+  alias Jido.Messaging.{
+    BridgeConfig,
+    IngressSubscription,
+    JidokaDelegationEvent,
+    Message,
+    RoutingPolicy,
+    Thread
+  }
 
   @type state :: term()
   @type room_id :: String.t()
@@ -113,6 +121,16 @@ defmodule Jido.Messaging.Persistence do
 
   @doc "List threads for a room"
   @callback list_threads(state, room_id(), opts :: keyword()) :: {:ok, [Thread.t()]}
+
+  # Jidoka delegation transport records
+
+  @doc "Persist an immutable Jidoka delegation transport record."
+  @callback save_jidoka_delegation_event(state, JidokaDelegationEvent.t()) ::
+              {:ok, JidokaDelegationEvent.t()} | {:error, term()}
+
+  @doc "Fetch a Jidoka delegation transport record by ID."
+  @callback get_jidoka_delegation_event(state, String.t()) ::
+              {:ok, JidokaDelegationEvent.t()} | {:error, :not_found | term()}
 
   # External ID resolution (for channel mapping)
   @doc """
@@ -260,7 +278,9 @@ defmodule Jido.Messaging.Persistence do
                       save_ingress_subscription: 2,
                       list_ingress_subscriptions: 3,
                       delete_ingress_subscription: 3,
-                      mark_message_read: 4
+                      mark_message_read: 4,
+                      save_jidoka_delegation_event: 2,
+                      get_jidoka_delegation_event: 2
 
   @doc "Persist routing policy."
   @callback save_routing_policy(state, RoutingPolicy.t()) :: {:ok, RoutingPolicy.t()} | {:error, term()}

@@ -49,7 +49,9 @@ defmodule Jido.Messaging.Persistence.ETS do
               onboarding_flows: Zoi.any(),
               bridge_configs: Zoi.any(),
               ingress_subscriptions: Zoi.any(),
-              routing_policies: Zoi.any()
+              routing_policies: Zoi.any(),
+              jidoka_delegation_events: Zoi.any(),
+              jidoka_delegation_cancellations: Zoi.any()
             },
             coerce: false
           )
@@ -63,7 +65,15 @@ defmodule Jido.Messaging.Persistence.ETS do
   def schema, do: @schema
 
   alias Jido.Chat.{Participant, Room}
-  alias Jido.Messaging.{BridgeConfig, IngressSubscription, Message, RoomBinding, Thread}
+
+  alias Jido.Messaging.{
+    BridgeConfig,
+    IngressSubscription,
+    JidokaDelegationEvent,
+    Message,
+    RoomBinding,
+    Thread
+  }
 
   @impl true
   def init(_opts) do
@@ -86,7 +96,9 @@ defmodule Jido.Messaging.Persistence.ETS do
         onboarding_flows: :ets.new(:onboarding_flows, [:set, :public]),
         bridge_configs: :ets.new(:bridge_configs, [:set, :public]),
         ingress_subscriptions: :ets.new(:ingress_subscriptions, [:set, :public]),
-        routing_policies: :ets.new(:routing_policies, [:set, :public])
+        routing_policies: :ets.new(:routing_policies, [:set, :public]),
+        jidoka_delegation_events: :ets.new(:jidoka_delegation_events, [:set, :public]),
+        jidoka_delegation_cancellations: :ets.new(:jidoka_delegation_cancellations, [:set, :public])
       })
 
     {:ok, state}
@@ -111,6 +123,7 @@ defmodule Jido.Messaging.Persistence.ETS do
   @impl true
   def delete_room(state, room_id) do
     true = :ets.delete(state.rooms, room_id)
+    delete_jidoka_delegation_records(state, room_id)
 
     message_ids = :ets.lookup(state.room_messages, room_id) |> Enum.map(&elem(&1, 1))
     Enum.each(message_ids, &delete_message(state, &1))
@@ -359,6 +372,43 @@ defmodule Jido.Messaging.Persistence.ETS do
       |> Enum.take(limit)
 
     {:ok, threads}
+  end
+
+  # Jidoka delegation transport records
+
+  @impl true
+  def save_jidoka_delegation_event(state, %JidokaDelegationEvent{} = incoming) do
+    lock_id = {{__MODULE__, state.jidoka_delegation_events, :save}, self()}
+
+    :global.trans(lock_id, fn ->
+      case lookup_jidoka_delegation_event(state, incoming.id) do
+        %JidokaDelegationEvent{} = stored ->
+          with :ok <- ensure_delegation_not_cancelled(state, incoming) do
+            if JidokaDelegationEvent.equivalent?(stored, incoming) do
+              {:ok, stored}
+            else
+              {:error, :jidoka_delegation_event_conflict}
+            end
+          end
+
+        nil ->
+          with :ok <- ensure_delegation_not_cancelled(state, incoming),
+               :ok <- ensure_delegation_transport_available(state, incoming),
+               :ok <- ensure_delegation_emission_available(state, incoming) do
+            true = :ets.insert(state.jidoka_delegation_events, {incoming.id, incoming})
+            maybe_mark_delegation_cancelled(state, incoming)
+            {:ok, incoming}
+          end
+      end
+    end)
+  end
+
+  @impl true
+  def get_jidoka_delegation_event(state, event_id) when is_binary(event_id) do
+    case lookup_jidoka_delegation_event(state, event_id) do
+      nil -> {:error, :not_found}
+      %JidokaDelegationEvent{} = event -> {:ok, event}
+    end
   end
 
   # External binding operations
@@ -944,6 +994,75 @@ defmodule Jido.Messaging.Persistence.ETS do
     end)
 
     true = :ets.delete(state.room_threads, room_id)
+    :ok
+  end
+
+  defp lookup_jidoka_delegation_event(state, event_id) do
+    case :ets.lookup(state.jidoka_delegation_events, event_id) do
+      [{^event_id, %JidokaDelegationEvent{} = event}] -> event
+      [] -> nil
+    end
+  end
+
+  defp ensure_delegation_not_cancelled(state, %JidokaDelegationEvent{} = event) do
+    if JidokaDelegationEvent.deliverable?(event) and
+         :ets.member(state.jidoka_delegation_cancellations, event.delegation_ref.id) do
+      {:error, :jidoka_delegation_cancelled}
+    else
+      :ok
+    end
+  end
+
+  defp ensure_delegation_transport_available(state, %JidokaDelegationEvent{} = event) do
+    state.jidoka_delegation_events
+    |> :ets.tab2list()
+    |> Enum.map(&elem(&1, 1))
+    |> Enum.find(&(&1.transport_id == event.transport_id))
+    |> case do
+      nil -> :ok
+      _existing -> {:error, :jidoka_delegation_transport_conflict}
+    end
+  end
+
+  defp ensure_delegation_emission_available(state, %JidokaDelegationEvent{} = event) do
+    claim = JidokaDelegationEvent.emission_claim(event)
+
+    state.jidoka_delegation_events
+    |> :ets.tab2list()
+    |> Enum.map(&elem(&1, 1))
+    |> Enum.find(&(JidokaDelegationEvent.emission_claim(&1) == claim))
+    |> case do
+      nil -> :ok
+      _existing -> {:error, :jidoka_delegation_emission_conflict}
+    end
+  end
+
+  defp maybe_mark_delegation_cancelled(state, %JidokaDelegationEvent{action: :cancelled} = event) do
+    true =
+      :ets.insert(
+        state.jidoka_delegation_cancellations,
+        {event.delegation_ref.id, event.room_id, event.id}
+      )
+
+    :ok
+  end
+
+  defp maybe_mark_delegation_cancelled(_state, %JidokaDelegationEvent{}), do: :ok
+
+  defp delete_jidoka_delegation_records(state, room_id) do
+    state.jidoka_delegation_events
+    |> :ets.tab2list()
+    |> Enum.map(&elem(&1, 1))
+    |> Enum.filter(&(&1.room_id == room_id))
+    |> Enum.each(&:ets.delete(state.jidoka_delegation_events, &1.id))
+
+    state.jidoka_delegation_cancellations
+    |> :ets.tab2list()
+    |> Enum.filter(fn {_delegation_id, marker_room_id, _event_id} -> marker_room_id == room_id end)
+    |> Enum.each(fn {delegation_id, _marker_room_id, _event_id} ->
+      :ets.delete(state.jidoka_delegation_cancellations, delegation_id)
+    end)
+
     :ok
   end
 
