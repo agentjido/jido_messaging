@@ -1,6 +1,10 @@
 defmodule Jido.Messaging.Persistence.SQLite do
   @moduledoc """
-  Durable SQLite persistence adapter for `Jido.Messaging`.
+  Lightweight SQLite persistence adapter for `Jido.Messaging`.
+
+  Use this adapter for demos, local development, and tests. Use
+  `Jido.Messaging.Persistence.Postgres` for production deployments that need a
+  connection pool and concurrent writers.
 
   This adapter stores canonical messaging records directly in SQLite. It is
   intentionally simple: each record is serialized as an Erlang term with a small
@@ -23,12 +27,21 @@ defmodule Jido.Messaging.Persistence.SQLite do
   alias Jido.Chat.{Participant, Room}
 
   alias Jido.Messaging.{
+    AgentMessagingEndpoint,
+    AgentThreadRoute,
+    AuthorizationScope,
     BridgeConfig,
+    ExternalIdentityBinding,
+    Grant,
     IdentityAssertionUse,
     IdentityCredential,
     IngressSubscription,
+    InvocationPolicy,
+    Membership,
     Message,
+    Principal,
     RoomBinding,
+    RoomMembership,
     RoutingPolicy,
     Thread
   }
@@ -65,6 +78,25 @@ defmodule Jido.Messaging.Persistence.SQLite do
   end
 
   @impl true
+  def capabilities(_state), do: [:durable, :transactions]
+
+  @impl true
+  def health_check(state) do
+    case query_all(state.db, "SELECT 1", []) do
+      {:ok, [[1]]} -> :ok
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  @impl true
+  def close(state) do
+    case Sqlite3.close(state.db) do
+      :ok -> :ok
+      {:error, _reason} -> :ok
+    end
+  end
+
+  @impl true
   def save_room(state, %Room{} = room) do
     persist(state, "room", room.id, room, room_id: room.id)
   end
@@ -80,7 +112,17 @@ defmodule Jido.Messaging.Persistence.SQLite do
       DELETE FROM #{@table}
       WHERE instance_id = ?1
         AND ((kind = 'room' AND id = ?2)
-         OR (kind IN ('message', 'thread', 'room_binding', 'routing_policy') AND room_id = ?2))
+         OR (kind IN (
+           'message',
+           'thread',
+           'room_binding',
+           'routing_policy',
+           'membership',
+           'principal_grant',
+           'invocation_policy',
+           'room_membership',
+           'agent_thread_route'
+         ) AND room_id = ?2))
       """,
       [state.instance_id, room_id]
     )
@@ -93,7 +135,11 @@ defmodule Jido.Messaging.Persistence.SQLite do
 
   @impl true
   def save_participant(state, %Participant{} = participant) do
-    persist(state, "participant", participant.id, participant)
+    with :ok <- validate_existing_principal(state, participant),
+         {:ok, participant} <- persist(state, "participant", participant.id, participant),
+         {:ok, _principal} <- ensure_principal(state, participant) do
+      {:ok, participant}
+    end
   end
 
   @impl true
@@ -113,10 +159,94 @@ defmodule Jido.Messaging.Persistence.SQLite do
             WHERE instance_id = ?1 AND kind = 'identity_credential'
               AND (sender_id = ?2 OR room_id = ?2)
           ))
-          OR (kind = 'identity_credential' AND (sender_id = ?2 OR room_id = ?2)))
+          OR (kind = 'identity_credential' AND (sender_id = ?2 OR room_id = ?2))
+          OR (kind IN ('membership', 'principal_grant', 'invocation_policy') AND sender_id = ?2))
       """,
       [state.instance_id, participant_id]
     )
+
+    with :ok <-
+           run(
+             state.db,
+             """
+             DELETE FROM #{@table}
+             WHERE instance_id = ?1
+               AND kind = 'agent_thread_route'
+               AND external_id IN (
+                 SELECT id
+                 FROM #{@table}
+                 WHERE instance_id = ?1
+                   AND kind = 'agent_endpoint'
+                   AND sender_id = ?2
+               )
+             """,
+             [state.instance_id, participant_id]
+           ) do
+      run(
+        state.db,
+        """
+        DELETE FROM #{@table}
+        WHERE instance_id = ?1
+          AND ((kind = 'participant' AND id = ?2)
+            OR (kind = 'principal' AND id = ?2)
+            OR (kind = 'participant_binding' AND room_id = ?2)
+            OR (kind = 'agent_endpoint' AND sender_id = ?2)
+            OR (kind = 'room_membership' AND sender_id = ?2))
+        """,
+        [state.instance_id, participant_id]
+      )
+    end
+  end
+
+  # Canonical identity operations
+
+  @impl true
+  def save_principal(state, %Principal{} = principal) do
+    with {:ok, participant} <- get_participant(state, principal.participant_id),
+         :ok <- validate_principal_projection(principal, participant),
+         :ok <- validate_principal_controller(state, principal) do
+      persist(state, "principal", principal.id, principal, room_id: principal.participant_id)
+    end
+  end
+
+  @impl true
+  def get_principal(state, principal_id), do: fetch_record(state, "principal", principal_id)
+
+  @impl true
+  def save_external_identity_binding(state, %ExternalIdentityBinding{} = binding) do
+    participant_binding_lock(state, binding.channel, binding.external_id, fn ->
+      transaction(state, fn transaction_state ->
+        do_save_external_identity_binding(transaction_state, binding)
+      end)
+    end)
+  end
+
+  @impl true
+  def get_external_identity_binding(state, binding_id) do
+    state
+    |> fetch_record("participant_binding", binding_id)
+    |> normalize_external_identity_binding_result()
+  end
+
+  @impl true
+  def get_external_identity_binding(state, channel, bridge_id, external_id) do
+    find_participant_binding_record(state, channel, bridge_id, external_id)
+  end
+
+  @impl true
+  def list_external_identity_bindings(state, principal_id, opts \\ []) do
+    limit = Keyword.get(opts, :limit, 100)
+
+    with {:ok, records} <-
+           query_records(
+             state,
+             "kind = ?1 AND room_id = ?2",
+             ["participant_binding", principal_id],
+             limit: limit,
+             order: "inserted_at ASC, id ASC"
+           ) do
+      {:ok, Enum.map(records, &normalize_external_identity_binding/1)}
+    end
   end
 
   @impl true
@@ -382,6 +512,283 @@ defmodule Jido.Messaging.Persistence.SQLite do
     )
   end
 
+  # Principal authorization operations
+
+  @impl true
+  def save_membership(state, %Membership{} = membership) do
+    binding_lock(state, {:membership, membership.room_id, membership.principal_id}, fn ->
+      transaction(state, fn transaction_state ->
+        with :ok <-
+               validate_sqlite_revision(
+                 transaction_state,
+                 "membership",
+                 membership,
+                 &membership_identity?/2
+               ),
+             :ok <- validate_sqlite_membership_scope(transaction_state, membership) do
+          persist(transaction_state, "membership", membership.id, membership,
+            room_id: membership.room_id,
+            sender_id: membership.principal_id,
+            inserted_at: membership.inserted_at,
+            external_id: membership.principal_id
+          )
+        end
+      end)
+    end)
+  end
+
+  # Agent messaging endpoint operations
+
+  @impl true
+  def save_agent_messaging_endpoint(state, %AgentMessagingEndpoint{} = endpoint) do
+    binding_lock(state, :agent_endpoint, fn ->
+      transaction(state, fn transaction_state ->
+        do_save_agent_messaging_endpoint(transaction_state, endpoint)
+      end)
+    end)
+  end
+
+  @impl true
+  def get_membership(state, membership_id), do: fetch_record(state, "membership", membership_id)
+
+  @impl true
+  def get_membership_by_scope(state, room_id, principal_id) do
+    fetch_one(state, "membership", [{"room_id", room_id}, {"sender_id", principal_id}])
+  end
+
+  @impl true
+  def list_memberships(state, room_id, opts \\ []) do
+    with {:ok, records} <-
+           query_records(
+             state,
+             "kind = ?1 AND room_id = ?2",
+             ["membership", room_id],
+             order: "inserted_at ASC, id ASC",
+             limit: 500
+           ) do
+      {:ok,
+       records
+       |> filter_authorization_record(:principal_id, Keyword.get(opts, :principal_id))
+       |> filter_authorization_record(:status, Keyword.get(opts, :status))
+       |> take_authorization_records(opts)}
+    end
+  end
+
+  @impl true
+  def get_agent_messaging_endpoint(state, endpoint_id),
+    do: fetch_record(state, "agent_endpoint", endpoint_id)
+
+  @impl true
+  def get_agent_messaging_endpoint_by_ref(state, jidoka_agent_id) do
+    fetch_one(state, "agent_endpoint", [{"external_id", normalize_term(jidoka_agent_id)}])
+  end
+
+  @impl true
+  def list_agent_messaging_endpoints(state, opts \\ []) do
+    limit = Keyword.get(opts, :limit, 100)
+
+    with {:ok, endpoints} <- list_records(state, "agent_endpoint", limit: 500, order: "inserted_at ASC, id ASC") do
+      endpoints =
+        endpoints
+        |> maybe_filter_record(:principal_id, Keyword.get(opts, :principal_id))
+        |> maybe_filter_record(:status, Keyword.get(opts, :status))
+        |> maybe_filter_record(:availability, Keyword.get(opts, :availability))
+        |> Enum.take(limit)
+
+      {:ok, endpoints}
+    end
+  end
+
+  @impl true
+  def save_principal_grant(state, %Grant{} = grant) do
+    binding_lock(state, {:principal_grant, grant.id}, fn ->
+      transaction(state, fn transaction_state ->
+        with :ok <-
+               validate_sqlite_revision(
+                 transaction_state,
+                 "principal_grant",
+                 grant,
+                 &grant_identity?/2
+               ) do
+          persist(transaction_state, "principal_grant", grant.id, grant,
+            room_id: grant.scope.room_id,
+            thread_id: grant.scope.thread_id,
+            sender_id: grant.principal_id,
+            inserted_at: grant.inserted_at,
+            bridge_id: grant.scope.bridge_id,
+            external_id: AuthorizationScope.key(grant.scope)
+          )
+        end
+      end)
+    end)
+  end
+
+  @impl true
+  def save_room_membership(state, %RoomMembership{} = membership) do
+    binding_lock(state, {:room_membership, membership.room_id, membership.endpoint_id}, fn ->
+      transaction(state, fn transaction_state ->
+        do_save_room_membership(transaction_state, membership)
+      end)
+    end)
+  end
+
+  @impl true
+  def get_principal_grant(state, grant_id), do: fetch_record(state, "principal_grant", grant_id)
+
+  @impl true
+  def list_principal_grants(state, principal_id, opts \\ []) do
+    with {:ok, records} <-
+           query_records(
+             state,
+             "kind = ?1 AND sender_id = ?2",
+             ["principal_grant", principal_id],
+             order: "inserted_at ASC, id ASC",
+             limit: 501
+           ) do
+      {:ok,
+       records
+       |> filter_authorization_record(:status, Keyword.get(opts, :status))
+       |> filter_authorization_action(Keyword.get(opts, :action))
+       |> take_authorization_records(opts)}
+    end
+  end
+
+  @impl true
+  def save_invocation_policy(state, %InvocationPolicy{} = policy) do
+    scope_key = AuthorizationScope.key(policy.scope)
+
+    binding_lock(state, {:invocation_policy, policy.target_principal_id, scope_key}, fn ->
+      transaction(state, fn transaction_state ->
+        with :ok <-
+               validate_sqlite_revision(
+                 transaction_state,
+                 "invocation_policy",
+                 policy,
+                 &policy_identity?/2
+               ),
+             :ok <- validate_sqlite_policy_scope(transaction_state, policy, scope_key) do
+          persist(transaction_state, "invocation_policy", policy.id, policy,
+            room_id: policy.scope.room_id,
+            thread_id: policy.scope.thread_id,
+            sender_id: policy.target_principal_id,
+            inserted_at: policy.inserted_at,
+            bridge_id: policy.scope.bridge_id,
+            external_id: scope_key
+          )
+        end
+      end)
+    end)
+  end
+
+  @impl true
+  def get_invocation_policy(state, policy_id),
+    do: fetch_record(state, "invocation_policy", policy_id)
+
+  @impl true
+  def get_invocation_policy_by_scope(state, target_principal_id, scope_key) do
+    fetch_one(state, "invocation_policy", [
+      {"sender_id", target_principal_id},
+      {"external_id", scope_key}
+    ])
+  end
+
+  @impl true
+  def get_room_membership(state, membership_id),
+    do: fetch_record(state, "room_membership", membership_id)
+
+  @impl true
+  def get_room_membership(state, room_id, endpoint_id) do
+    fetch_one(state, "room_membership", [
+      {"room_id", room_id},
+      {"external_id", endpoint_id}
+    ])
+  end
+
+  @impl true
+  def list_invocation_policies(state, target_principal_id, opts \\ []) do
+    with {:ok, records} <-
+           query_records(
+             state,
+             "kind = ?1 AND sender_id = ?2",
+             ["invocation_policy", target_principal_id],
+             order: "inserted_at ASC, id ASC",
+             limit: 501
+           ) do
+      {:ok,
+       records
+       |> filter_authorization_record(:status, Keyword.get(opts, :status))
+       |> take_authorization_records(opts)}
+    end
+  end
+
+  @impl true
+  def list_room_memberships(state, room_id, opts \\ []) do
+    limit = Keyword.get(opts, :limit, 100)
+
+    with {:ok, memberships} <-
+           query_records(
+             state,
+             "kind = ?1 AND room_id = ?2",
+             ["room_membership", room_id],
+             order: "inserted_at ASC, id ASC",
+             limit: 500
+           ) do
+      memberships =
+        memberships
+        |> maybe_filter_record(:endpoint_id, Keyword.get(opts, :endpoint_id))
+        |> maybe_filter_record(:principal_id, Keyword.get(opts, :principal_id))
+        |> maybe_filter_record(:status, Keyword.get(opts, :status))
+        |> Enum.take(limit)
+
+      {:ok, memberships}
+    end
+  end
+
+  @impl true
+  def save_agent_thread_route(state, %AgentThreadRoute{} = route) do
+    binding_lock(state, {:agent_thread_route, route.thread_id}, fn ->
+      transaction(state, fn transaction_state ->
+        case get_agent_thread_route(transaction_state, route.thread_id) do
+          {:ok, %AgentThreadRoute{id: route_id}} when route_id != route.id ->
+            {:error, {:agent_thread_route_conflict, route_id}}
+
+          {:ok, _existing} ->
+            persist_agent_thread_route(transaction_state, route)
+
+          {:error, :not_found} ->
+            persist_agent_thread_route(transaction_state, route)
+        end
+      end)
+    end)
+  end
+
+  @impl true
+  def get_agent_thread_route(state, thread_id) do
+    fetch_one(state, "agent_thread_route", [{"thread_id", thread_id}])
+  end
+
+  @impl true
+  def list_agent_thread_routes(state, endpoint_id, opts \\ []) do
+    limit = Keyword.get(opts, :limit, 100)
+
+    with {:ok, routes} <-
+           query_records(
+             state,
+             "kind = ?1 AND external_id = ?2",
+             ["agent_thread_route", endpoint_id],
+             order: "inserted_at ASC, id ASC",
+             limit: 500
+           ) do
+      routes =
+        routes
+        |> maybe_filter_record(:room_id, Keyword.get(opts, :room_id))
+        |> maybe_filter_record(:status, Keyword.get(opts, :status))
+        |> Enum.take(limit)
+
+      {:ok, routes}
+    end
+  end
+
   @impl true
   def get_or_create_room_by_external_binding(state, channel, bridge_id, external_id, attrs) do
     binding_lock(state, {:room, channel, bridge_id, external_id}, fn ->
@@ -425,6 +832,9 @@ defmodule Jido.Messaging.Persistence.SQLite do
               external_id,
               attrs
             )
+
+          {:error, :external_identity_revoked} = error ->
+            error
         end
       end)
     end)
@@ -447,8 +857,12 @@ defmodule Jido.Messaging.Persistence.SQLite do
   end
 
   defp do_bind_participant_external_id(state, participant_id, channel, bridge_id, external_id) do
-    with {:ok, _participant} <- get_participant(state, participant_id) do
+    with {:ok, participant} <- get_participant(state, participant_id),
+         {:ok, _principal} <- ensure_principal(state, participant) do
       case find_participant_binding_record(state, channel, bridge_id, external_id) do
+        {:ok, %{participant_id: ^participant_id, status: :revoked}} ->
+          {:error, :external_identity_revoked}
+
         {:ok, %{participant_id: ^participant_id}} ->
           {:ok, :bound}
 
@@ -568,7 +982,7 @@ defmodule Jido.Messaging.Persistence.SQLite do
     with {:ok, participants} <- list_records(state, "participant", limit: limit) do
       participants =
         participants
-        |> Enum.filter(&participant_matches?(&1, query))
+        |> Enum.filter(&participant_matches?(&1, state, query))
         |> Enum.sort_by(& &1.id)
 
       {:ok, participants}
@@ -827,6 +1241,34 @@ defmodule Jido.Messaging.Persistence.SQLite do
     end
   end
 
+  defp validate_sqlite_revision(state, kind, record, identity?) do
+    case fetch_record(state, kind, record.id) do
+      {:error, :not_found} when record.revision == 1 ->
+        :ok
+
+      {:error, :not_found} ->
+        {:error, {:invalid_initial_revision, record.revision}}
+
+      {:ok, stored} when stored == record ->
+        :ok
+
+      {:ok, stored} ->
+        cond do
+          not identity?.(stored, record) ->
+            {:error, :authorization_identity_immutable}
+
+          stored.status == :revoked and record.status != :revoked ->
+            {:error, :authorization_revocation_terminal}
+
+          record.revision == stored.revision + 1 ->
+            :ok
+
+          true ->
+            {:error, {:stale_revision, stored.revision}}
+        end
+    end
+  end
+
   defp identity_credential_identity?(left, right) do
     left.id == right.id and
       identity_credential_relation?(left, right) and
@@ -894,6 +1336,144 @@ defmodule Jido.Messaging.Persistence.SQLite do
 
   defp bounded_identity_limit(limit) when is_integer(limit) and limit > 0, do: min(limit, 500)
   defp bounded_identity_limit(_limit), do: 100
+
+  defp validate_sqlite_membership_scope(state, membership) do
+    case get_membership_by_scope(state, membership.room_id, membership.principal_id) do
+      {:ok, %{id: membership_id}} when membership_id == membership.id -> :ok
+      {:ok, %{id: membership_id}} -> {:error, {:membership_scope_conflict, membership_id}}
+      {:error, :not_found} -> :ok
+    end
+  end
+
+  defp do_save_agent_messaging_endpoint(state, endpoint) do
+    jidoka_id = endpoint.jidoka_agent_ref["id"]
+
+    with :ok <- validate_stored_endpoint_identity(state, endpoint),
+         :ok <- validate_endpoint_principal(state, endpoint),
+         :ok <- validate_endpoint_ref(state, endpoint, jidoka_id) do
+      persist(state, "agent_endpoint", endpoint.id, endpoint,
+        sender_id: endpoint.principal_id,
+        inserted_at: endpoint.inserted_at,
+        external_id: jidoka_id
+      )
+    end
+  end
+
+  defp validate_stored_endpoint_identity(state, endpoint) do
+    case get_agent_messaging_endpoint(state, endpoint.id) do
+      {:ok, stored} ->
+        if stored.principal_id == endpoint.principal_id and
+             stored.jidoka_agent_ref == endpoint.jidoka_agent_ref do
+          :ok
+        else
+          {:error, :agent_endpoint_identity_immutable}
+        end
+
+      {:error, :not_found} ->
+        :ok
+    end
+  end
+
+  defp validate_endpoint_principal(state, endpoint) do
+    case fetch_one(state, "agent_endpoint", [{"sender_id", endpoint.principal_id}]) do
+      {:ok, %{id: endpoint_id}} when endpoint_id == endpoint.id -> :ok
+      {:ok, %{id: endpoint_id}} -> {:error, {:agent_endpoint_principal_conflict, endpoint_id}}
+      {:error, :not_found} -> :ok
+    end
+  end
+
+  defp validate_endpoint_ref(state, endpoint, jidoka_id) do
+    case get_agent_messaging_endpoint_by_ref(state, jidoka_id) do
+      {:ok, %{id: endpoint_id}} when endpoint_id == endpoint.id -> :ok
+      {:ok, %{id: endpoint_id}} -> {:error, {:jidoka_agent_ref_conflict, endpoint_id}}
+      {:error, :not_found} -> :ok
+    end
+  end
+
+  defp do_save_room_membership(state, membership) do
+    with :ok <- validate_stored_membership_identity(state, membership),
+         :ok <- validate_membership_scope(state, membership) do
+      persist(state, "room_membership", membership.id, membership,
+        room_id: membership.room_id,
+        sender_id: membership.principal_id,
+        inserted_at: membership.inserted_at,
+        external_id: membership.endpoint_id
+      )
+    end
+  end
+
+  defp validate_stored_membership_identity(state, membership) do
+    case get_room_membership(state, membership.id) do
+      {:ok, stored} ->
+        if stored.room_id == membership.room_id and
+             stored.endpoint_id == membership.endpoint_id and
+             stored.principal_id == membership.principal_id do
+          :ok
+        else
+          {:error, :room_membership_identity_immutable}
+        end
+
+      {:error, :not_found} ->
+        :ok
+    end
+  end
+
+  defp validate_membership_scope(state, membership) do
+    case get_room_membership(state, membership.room_id, membership.endpoint_id) do
+      {:ok, %{id: membership_id}} when membership_id == membership.id -> :ok
+      {:ok, %{id: membership_id}} -> {:error, {:room_membership_conflict, membership_id}}
+      {:error, :not_found} -> :ok
+    end
+  end
+
+  defp validate_sqlite_policy_scope(state, policy, scope_key) do
+    case get_invocation_policy_by_scope(state, policy.target_principal_id, scope_key) do
+      {:ok, %{id: policy_id}} when policy_id == policy.id -> :ok
+      {:ok, %{id: policy_id}} -> {:error, {:invocation_policy_scope_conflict, policy_id}}
+      {:error, :not_found} -> :ok
+    end
+  end
+
+  defp membership_identity?(stored, record) do
+    stored.principal_id == record.principal_id and stored.room_id == record.room_id and
+      stored.issuer_principal_id == record.issuer_principal_id
+  end
+
+  defp grant_identity?(stored, record) do
+    stored.principal_id == record.principal_id and
+      stored.issuer_principal_id == record.issuer_principal_id
+  end
+
+  defp policy_identity?(stored, record) do
+    stored.target_principal_id == record.target_principal_id and
+      stored.issuer_principal_id == record.issuer_principal_id and stored.scope == record.scope
+  end
+
+  defp filter_authorization_record(records, _field, nil), do: records
+
+  defp filter_authorization_record(records, field, value),
+    do: Enum.filter(records, &(Map.get(&1, field) == value))
+
+  defp filter_authorization_action(records, nil), do: records
+  defp filter_authorization_action(records, action), do: Enum.filter(records, &(action in &1.actions))
+
+  defp take_authorization_records(records, opts) do
+    limit = Keyword.get(opts, :limit, 100)
+    limit = if is_integer(limit) and limit > 0, do: min(limit, 501), else: 100
+    Enum.take(records, limit)
+  end
+
+  defp persist_agent_thread_route(state, route) do
+    persist(state, "agent_thread_route", route.id, route,
+      room_id: route.room_id,
+      thread_id: route.thread_id,
+      inserted_at: route.inserted_at,
+      external_id: route.endpoint_id
+    )
+  end
+
+  defp maybe_filter_record(records, _field, nil), do: records
+  defp maybe_filter_record(records, field, value), do: Enum.filter(records, &(Map.get(&1, field) == value))
 
   defp ensure_parent_dir(":memory:"), do: :ok
 
@@ -1067,6 +1647,25 @@ defmodule Jido.Messaging.Persistence.SQLite do
     CREATE UNIQUE INDEX IF NOT EXISTS #{@table}_identity_assertion_unique_idx
       ON #{@table} (instance_id, kind, room_id, external_id)
       WHERE kind = 'identity_assertion';
+    CREATE UNIQUE INDEX IF NOT EXISTS #{@table}_membership_unique_idx
+      ON #{@table} (instance_id, room_id, sender_id)
+      WHERE kind = 'membership';
+
+    CREATE UNIQUE INDEX IF NOT EXISTS #{@table}_invocation_policy_unique_idx
+      ON #{@table} (instance_id, sender_id, external_id)
+      WHERE kind = 'invocation_policy';
+
+    CREATE UNIQUE INDEX IF NOT EXISTS #{@table}_agent_endpoint_ref_unique_idx
+      ON #{@table} (instance_id, external_id)
+      WHERE kind = 'agent_endpoint';
+
+    CREATE UNIQUE INDEX IF NOT EXISTS #{@table}_room_membership_unique_idx
+      ON #{@table} (instance_id, room_id, external_id)
+      WHERE kind = 'room_membership';
+
+    CREATE UNIQUE INDEX IF NOT EXISTS #{@table}_agent_thread_route_unique_idx
+      ON #{@table} (instance_id, thread_id)
+      WHERE kind = 'agent_thread_route';
     """)
   end
 
@@ -1233,7 +1832,8 @@ defmodule Jido.Messaging.Persistence.SQLite do
     end
   end
 
-  defp transaction(state, fun) do
+  @impl true
+  def transaction(state, fun) do
     case transaction_connection(state) do
       {:ok, transaction_db, close?} ->
         transaction_state = %{state | db: transaction_db}
@@ -1317,28 +1917,34 @@ defmodule Jido.Messaging.Persistence.SQLite do
   defp find_participant_by_external_id(state, channel, external_id) do
     state
     |> list_records("participant", limit: 500)
-    |> find_record(&participant_external_id_matches?(&1, %{channel: channel, external_id: external_id}))
+    |> find_record(&legacy_participant_external_id_matches?(&1, channel, external_id))
   end
 
   defp find_participant_binding(state, channel, bridge_id, external_id) do
     with {:ok, binding} <- find_participant_binding_record(state, channel, bridge_id, external_id) do
-      case get_participant(state, binding.participant_id) do
-        {:ok, participant} ->
-          {:ok, participant}
+      if binding.status == :revoked do
+        {:error, :external_identity_revoked}
+      else
+        case get_participant(state, binding.participant_id) do
+          {:ok, participant} ->
+            {:ok, participant}
 
-        {:error, :not_found} ->
-          :ok = delete_participant_binding_record(state, channel, bridge_id, external_id)
-          {:error, :not_found}
+          {:error, :not_found} ->
+            :ok = delete_participant_binding_record(state, channel, bridge_id, external_id)
+            {:error, :not_found}
+        end
       end
     end
   end
 
   defp find_participant_binding_record(state, channel, bridge_id, external_id) do
-    fetch_one(state, "participant_binding", [
+    state
+    |> fetch_one("participant_binding", [
       {"channel", normalize_term(channel)},
       {"bridge_id", normalize_term(bridge_id)},
       {"external_id", normalize_term(external_id)}
     ])
+    |> normalize_external_identity_binding_result()
   end
 
   defp find_unclaimed_legacy_participant(state, channel, external_id) do
@@ -1352,44 +1958,18 @@ defmodule Jido.Messaging.Persistence.SQLite do
   end
 
   defp save_participant_binding(state, participant_id, channel, bridge_id, external_id) do
-    normalized_channel = normalize_term(channel)
-    normalized_bridge_id = normalize_term(bridge_id)
-    normalized_external_id = normalize_term(external_id)
+    binding =
+      ExternalIdentityBinding.new(%{
+        principal_id: participant_id,
+        participant_id: participant_id,
+        channel: channel,
+        bridge_id: bridge_id,
+        external_id: external_id
+      })
 
-    binding = %{
-      participant_id: participant_id,
-      channel: normalized_channel,
-      bridge_id: normalized_bridge_id,
-      external_id: normalized_external_id
-    }
-
-    id = participant_binding_id(normalized_channel, normalized_bridge_id, normalized_external_id)
-
-    with :ok <-
-           run(
-             state.db,
-             """
-             INSERT INTO #{@table}
-               (instance_id, kind, id, room_id, channel, bridge_id, external_id, payload)
-             VALUES (?1, 'participant_binding', ?2, ?3, ?4, ?5, ?6, ?7)
-             ON CONFLICT DO NOTHING
-             """,
-             [
-               state.instance_id,
-               id,
-               participant_id,
-               normalized_channel,
-               normalized_bridge_id,
-               normalized_external_id,
-               {:blob, :erlang.term_to_binary(binding)}
-             ]
-           ),
-         {:ok, stored_binding} <- find_participant_binding_record(state, channel, bridge_id, external_id) do
-      if stored_binding.participant_id == participant_id do
-        :ok
-      else
-        {:error, {:external_identity_conflict, stored_binding.participant_id}}
-      end
+    case do_save_external_identity_binding(state, binding) do
+      {:ok, _binding} -> :ok
+      {:error, _reason} = error -> error
     end
   end
 
@@ -1423,11 +2003,10 @@ defmodule Jido.Messaging.Persistence.SQLite do
   end
 
   defp delete_participant_binding_record(state, channel, bridge_id, external_id) do
-    delete_record(
-      state,
-      "participant_binding",
-      participant_binding_id(normalize_term(channel), normalize_term(bridge_id), normalize_term(external_id))
-    )
+    case find_participant_binding_record(state, channel, bridge_id, external_id) do
+      {:ok, binding} -> delete_record(state, "participant_binding", binding.id)
+      {:error, :not_found} -> :ok
+    end
   end
 
   defp participant_binding_lock(state, channel, external_id, fun) do
@@ -1446,15 +2025,114 @@ defmodule Jido.Messaging.Persistence.SQLite do
     end
   end
 
-  defp participant_binding_id(channel, bridge_id, external_id) do
-    digest = :crypto.hash(:sha256, :erlang.term_to_binary({channel, bridge_id, external_id}))
-    "participant_binding:" <> Base.url_encode64(digest, padding: false)
+  defp do_save_external_identity_binding(state, %ExternalIdentityBinding{} = binding) do
+    with {:ok, participant} <- get_participant(state, binding.participant_id),
+         {:ok, principal} <- ensure_principal(state, participant),
+         :ok <- validate_identity_binding(binding, participant, principal) do
+      case find_participant_binding_record(
+             state,
+             binding.channel,
+             binding.bridge_id,
+             binding.external_id
+           ) do
+        {:ok, existing} ->
+          if existing.principal_id == binding.principal_id and
+               existing.participant_id == binding.participant_id do
+            updated = %{binding | id: existing.id, inserted_at: existing.inserted_at}
+            persist_external_identity_binding(state, updated)
+          else
+            {:error, {:external_identity_conflict, existing.principal_id}}
+          end
+
+        {:error, :not_found} ->
+          persist_external_identity_binding(state, binding)
+      end
+    end
   end
 
-  defp participant_matches?(participant, query) do
+  defp persist_external_identity_binding(state, binding) do
+    persist(state, "participant_binding", binding.id, binding,
+      room_id: binding.participant_id,
+      inserted_at: binding.inserted_at,
+      channel: binding.channel,
+      bridge_id: binding.bridge_id,
+      external_id: binding.external_id
+    )
+  end
+
+  defp normalize_external_identity_binding_result({:ok, binding}),
+    do: {:ok, normalize_external_identity_binding(binding)}
+
+  defp normalize_external_identity_binding_result({:error, _reason} = error), do: error
+
+  defp normalize_external_identity_binding(%ExternalIdentityBinding{} = binding), do: binding
+
+  defp normalize_external_identity_binding(binding) when is_map(binding),
+    do: ExternalIdentityBinding.from_legacy(binding)
+
+  defp ensure_principal(state, %Participant{} = participant) do
+    case get_principal(state, participant.id) do
+      {:ok, principal} ->
+        {:ok, principal}
+
+      {:error, :not_found} ->
+        principal = Principal.from_participant(participant)
+        persist(state, "principal", principal.id, principal, room_id: principal.participant_id)
+    end
+  end
+
+  defp validate_principal_projection(%Principal{} = principal, %Participant{} = participant) do
+    if principal.id == participant.id and
+         principal.participant_id == participant.id and
+         principal.type == participant.type do
+      :ok
+    else
+      {:error, :principal_participant_mismatch}
+    end
+  end
+
+  defp validate_existing_principal(state, %Participant{} = participant) do
+    case get_principal(state, participant.id) do
+      {:ok, principal} -> validate_principal_projection(principal, participant)
+      {:error, :not_found} -> :ok
+    end
+  end
+
+  defp validate_identity_binding(binding, participant, principal) do
+    if binding.participant_id == participant.id and
+         binding.principal_id == principal.id and
+         principal.participant_id == participant.id do
+      :ok
+    else
+      {:error, :principal_participant_mismatch}
+    end
+  end
+
+  defp validate_principal_controller(_state, %Principal{controller_principal_id: nil}), do: :ok
+
+  defp validate_principal_controller(_state, %Principal{id: id, controller_principal_id: id}),
+    do: {:error, :principal_cannot_control_itself}
+
+  defp validate_principal_controller(state, %Principal{controller_principal_id: controller_id}) do
+    case get_principal(state, controller_id) do
+      {:ok, %Principal{status: :active, verification_state: :revoked}} ->
+        {:error, :controller_principal_verification_revoked}
+
+      {:ok, %Principal{status: :active}} ->
+        :ok
+
+      {:ok, %Principal{status: status}} ->
+        {:error, {:controller_principal_inactive, status}}
+
+      {:error, :not_found} ->
+        {:error, :controller_principal_not_found}
+    end
+  end
+
+  defp participant_matches?(participant, state, query) do
     id_matches?(participant.id, query) and
       name_matches?(participant_name(participant), query) and
-      participant_external_id_matches?(participant, query)
+      participant_external_id_matches?(participant, state, query)
   end
 
   defp room_matches?(state, room, query) do
@@ -1463,25 +2141,36 @@ defmodule Jido.Messaging.Persistence.SQLite do
       room_external_binding_matches?(state, room.id, query)
   end
 
-  defp participant_external_id_matches?(participant, query) do
+  defp participant_external_id_matches?(participant, state, query) do
     channel = query_value(query, :channel)
+    bridge_id = query_value(query, :bridge_id)
     external_id = query_value(query, :external_id)
 
     cond do
-      is_nil(channel) and is_nil(external_id) ->
+      is_nil(channel) and is_nil(bridge_id) and is_nil(external_id) ->
         true
 
       is_nil(channel) or is_nil(external_id) ->
         false
 
-      true ->
-        expected_channel = normalize_term(channel)
-        expected_external_id = normalize_term(external_id)
+      not is_nil(bridge_id) ->
+        case get_external_identity_binding(state, channel, bridge_id, external_id) do
+          {:ok, binding} -> binding.participant_id == participant.id and binding.status == :active
+          {:error, _reason} -> false
+        end
 
-        Enum.any?(participant.external_ids || %{}, fn {key, value} ->
-          normalize_term(key) == expected_channel and normalize_term(value) == expected_external_id
-        end)
+      true ->
+        legacy_participant_external_id_matches?(participant, channel, external_id)
     end
+  end
+
+  defp legacy_participant_external_id_matches?(participant, channel, external_id) do
+    expected_channel = normalize_term(channel)
+    expected_external_id = normalize_term(external_id)
+
+    Enum.any?(participant.external_ids || %{}, fn {key, value} ->
+      normalize_term(key) == expected_channel and normalize_term(value) == expected_external_id
+    end)
   end
 
   defp room_external_binding_matches?(state, room_id, query) do
