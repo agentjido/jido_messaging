@@ -38,6 +38,7 @@ defmodule Jido.Messaging.Persistence.SQLite do
     IdentityAssertionUse,
     IdentityCredential,
     IngressSubscription,
+    JidokaDelegationEvent,
     InvocationPolicy,
     Membership,
     Message,
@@ -121,6 +122,8 @@ defmodule Jido.Messaging.Persistence.SQLite do
            'thread',
            'room_binding',
            'routing_policy',
+           'jidoka_delegation_event',
+           'jidoka_delegation_cancellation',
            'thread_continuity_link',
            'messaging_activity',
            'membership',
@@ -560,6 +563,38 @@ defmodule Jido.Messaging.Persistence.SQLite do
     )
   end
 
+  # Jidoka delegation transport records
+
+  @impl true
+  def save_jidoka_delegation_event(state, %JidokaDelegationEvent{} = incoming) do
+    binding_lock(state, :jidoka_delegation, fn ->
+      transaction(state, fn transaction_state ->
+        case optional_jidoka_delegation_event(transaction_state, incoming.id) do
+          {:ok, %JidokaDelegationEvent{} = stored} ->
+            with :ok <- ensure_delegation_not_cancelled(transaction_state, incoming) do
+              if JidokaDelegationEvent.equivalent?(stored, incoming) do
+                {:ok, stored}
+              else
+                {:error, :jidoka_delegation_event_conflict}
+              end
+            end
+
+          {:ok, nil} ->
+            with :ok <- ensure_delegation_not_cancelled(transaction_state, incoming),
+                 :ok <- ensure_delegation_transport_available(transaction_state, incoming),
+                 :ok <- ensure_delegation_emission_available(transaction_state, incoming),
+                 {:ok, saved} <- persist_jidoka_delegation_event(transaction_state, incoming),
+                 :ok <- maybe_mark_delegation_cancelled(transaction_state, incoming) do
+              {:ok, saved}
+            end
+
+          {:error, _reason} = error ->
+            error
+        end
+      end)
+    end)
+  end
+
   # Jidoka continuity correlation
 
   @impl true
@@ -686,6 +721,11 @@ defmodule Jido.Messaging.Persistence.SQLite do
         end
       end)
     end)
+  end
+
+  @impl true
+  def get_jidoka_delegation_event(state, event_id) when is_binary(event_id) do
+    fetch_record(state, "jidoka_delegation_event", event_id)
   end
 
   @impl true
@@ -1859,6 +1899,13 @@ defmodule Jido.Messaging.Persistence.SQLite do
       ON #{@table} (instance_id, channel, bridge_id, external_id)
       WHERE kind = 'participant_binding';
 
+    CREATE UNIQUE INDEX IF NOT EXISTS #{@table}_jidoka_delegation_transport_unique_idx
+      ON #{@table} (instance_id, bridge_id)
+      WHERE kind = 'jidoka_delegation_event';
+
+    CREATE UNIQUE INDEX IF NOT EXISTS #{@table}_jidoka_delegation_emission_unique_idx
+      ON #{@table} (instance_id, external_id)
+      WHERE kind = 'jidoka_delegation_event';
     CREATE UNIQUE INDEX IF NOT EXISTS #{@table}_continuity_session_unique_idx
       ON #{@table} (instance_id, bridge_id, external_id)
       WHERE kind = 'thread_continuity_link' AND external_id IS NOT NULL;
@@ -1934,11 +1981,31 @@ defmodule Jido.Messaging.Persistence.SQLite do
     """)
   end
 
+  defp optional_jidoka_delegation_event(state, event_id) do
+    case get_jidoka_delegation_event(state, event_id) do
+      {:ok, %JidokaDelegationEvent{} = event} -> {:ok, event}
+      {:error, :not_found} -> {:ok, nil}
+      {:error, _reason} = error -> error
+    end
+  end
+
   defp optional_continuity_link(state, thread_id) do
     case get_thread_continuity_link(state, thread_id) do
       {:ok, %ThreadContinuityLink{} = link} -> {:ok, link}
       {:error, :not_found} -> {:ok, nil}
       {:error, _reason} = error -> error
+    end
+  end
+
+  defp ensure_delegation_not_cancelled(state, %JidokaDelegationEvent{} = event) do
+    if JidokaDelegationEvent.deliverable?(event) do
+      case fetch_record(state, "jidoka_delegation_cancellation", event.delegation_ref.id) do
+        {:ok, _marker} -> {:error, :jidoka_delegation_cancelled}
+        {:error, :not_found} -> :ok
+        {:error, _reason} = error -> error
+      end
+    else
+      :ok
     end
   end
 
@@ -1968,6 +2035,57 @@ defmodule Jido.Messaging.Persistence.SQLite do
       :ok
     end
   end
+
+  defp ensure_delegation_transport_available(state, %JidokaDelegationEvent{} = event) do
+    case fetch_one(state, "jidoka_delegation_event", [{"bridge_id", event.transport_id}]) do
+      {:ok, _existing} -> {:error, :jidoka_delegation_transport_conflict}
+      {:error, :not_found} -> :ok
+      {:error, _reason} = error -> error
+    end
+  end
+
+  defp ensure_delegation_emission_available(state, %JidokaDelegationEvent{} = event) do
+    emission_claim = delegation_emission_claim(event)
+
+    case fetch_one(state, "jidoka_delegation_event", [{"external_id", emission_claim}]) do
+      {:ok, _existing} -> {:error, :jidoka_delegation_emission_conflict}
+      {:error, :not_found} -> :ok
+      {:error, _reason} = error -> error
+    end
+  end
+
+  defp persist_jidoka_delegation_event(state, %JidokaDelegationEvent{} = event) do
+    persist(state, "jidoka_delegation_event", event.id, event,
+      room_id: event.room_id,
+      thread_id: event.thread_id,
+      sender_id: event.source_principal_id,
+      inserted_at: event.observed_at,
+      channel: event.action,
+      bridge_id: event.transport_id,
+      external_id: delegation_emission_claim(event)
+    )
+  end
+
+  defp delegation_emission_claim(%JidokaDelegationEvent{} = event) do
+    JidokaDelegationEvent.emission_claim(event)
+  end
+
+  defp maybe_mark_delegation_cancelled(state, %JidokaDelegationEvent{action: :cancelled} = event) do
+    marker = %{delegation_id: event.delegation_ref.id, event_id: event.id, room_id: event.room_id}
+
+    with {:ok, ^marker} <-
+           persist(
+             state,
+             "jidoka_delegation_cancellation",
+             event.delegation_ref.id,
+             marker,
+             room_id: event.room_id
+           ) do
+      :ok
+    end
+  end
+
+  defp maybe_mark_delegation_cancelled(_state, %JidokaDelegationEvent{}), do: :ok
 
   defp persist_continuity_link(state, %ThreadContinuityLink{} = link) do
     reference = link.continuity_ref

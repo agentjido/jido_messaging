@@ -43,6 +43,7 @@ defmodule Jido.Messaging.Persistence do
     IdentityCredential,
     IngressSubscription,
     InvocationPolicy,
+    JidokaDelegationEvent,
     Membership,
     MessagingActivityEntry,
     Message,
@@ -183,6 +184,15 @@ defmodule Jido.Messaging.Persistence do
   @doc "List threads for a room"
   @callback list_threads(state, room_id(), opts :: keyword()) :: {:ok, [Thread.t()]}
 
+  # Jidoka delegation transport records
+
+  @doc "Persist an immutable Jidoka delegation transport record."
+  @callback save_jidoka_delegation_event(state, JidokaDelegationEvent.t()) ::
+              {:ok, JidokaDelegationEvent.t()} | {:error, term()}
+
+  @doc "Fetch a Jidoka delegation transport record by ID."
+  @callback get_jidoka_delegation_event(state, String.t()) ::
+              {:ok, JidokaDelegationEvent.t()} | {:error, :not_found | term()}
   # Jidoka continuity correlation
 
   @doc "Persist a messaging thread link to Jidoka-owned continuity state."
@@ -507,6 +517,8 @@ defmodule Jido.Messaging.Persistence do
                       list_ingress_subscriptions: 3,
                       delete_ingress_subscription: 3,
                       mark_message_read: 4,
+                      save_jidoka_delegation_event: 2,
+                      get_jidoka_delegation_event: 2,
                       save_thread_continuity_link: 2,
                       get_thread_continuity_link: 2,
                       save_agent_directory_projection: 2,
