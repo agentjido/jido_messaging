@@ -2,15 +2,15 @@ defmodule Jido.Messaging.Directory do
   @moduledoc """
   Unified directory lookup and search APIs.
 
-  Directory adapters expose consistent behavior for participant and room
-  resolution. Lookup returns a single deterministic match and reports
+  Directory adapters expose consistent behavior for participant, room, and
+  scoped Jidoka agent resolution. Lookup returns a single deterministic match and reports
   `{:ambiguous, matches}` when a query maps to multiple entities.
   """
 
   alias Jido.Messaging.Runtime
 
   @typedoc "Supported directory entity targets."
-  @type target :: :participant | :room
+  @type target :: :participant | :room | :agent
 
   @typedoc "Directory query map consumed by adapters."
   @type query :: map()
@@ -28,17 +28,49 @@ defmodule Jido.Messaging.Directory do
   @spec lookup(module(), target(), query(), keyword()) :: lookup_result()
   def lookup(instance_module, target, query, opts \\ [])
       when is_atom(instance_module) and is_atom(target) and is_map(query) and is_list(opts) do
-    runtime = instance_module.__jido_messaging__(:runtime)
-    {adapter, adapter_state} = Runtime.get_persistence(runtime)
-    adapter.directory_lookup(adapter_state, target, query, opts)
+    if target == :agent do
+      case Keyword.fetch(opts, :scope) do
+        {:ok, scope} ->
+          Jido.Messaging.AgentDirectory.lookup(
+            instance_module,
+            instance_module.__jido_messaging__(:runtime),
+            query,
+            scope,
+            Keyword.delete(opts, :scope)
+          )
+
+        :error ->
+          {:error, :agent_directory_scope_required}
+      end
+    else
+      runtime = instance_module.__jido_messaging__(:runtime)
+      {adapter, adapter_state} = Runtime.get_persistence(runtime)
+      adapter.directory_lookup(adapter_state, target, query, opts)
+    end
   end
 
   @doc "Search directory entities for an instance module."
   @spec search(module(), target(), query(), keyword()) :: search_result()
   def search(instance_module, target, query, opts \\ [])
       when is_atom(instance_module) and is_atom(target) and is_map(query) and is_list(opts) do
-    runtime = instance_module.__jido_messaging__(:runtime)
-    {adapter, adapter_state} = Runtime.get_persistence(runtime)
-    adapter.directory_search(adapter_state, target, query, opts)
+    if target == :agent do
+      case Keyword.fetch(opts, :scope) do
+        {:ok, scope} ->
+          Jido.Messaging.AgentDirectory.search(
+            instance_module,
+            instance_module.__jido_messaging__(:runtime),
+            query,
+            scope,
+            Keyword.delete(opts, :scope)
+          )
+
+        :error ->
+          {:error, :agent_directory_scope_required}
+      end
+    else
+      runtime = instance_module.__jido_messaging__(:runtime)
+      {adapter, adapter_state} = Runtime.get_persistence(runtime)
+      adapter.directory_search(adapter_state, target, query, opts)
+    end
   end
 end
