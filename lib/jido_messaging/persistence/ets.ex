@@ -24,6 +24,7 @@ defmodule Jido.Messaging.Persistence.ETS do
   - `:participant_bindings` - External ID to participant_id mapping
   - `:onboarding_flows` - Onboarding flow records keyed by onboarding_id
   - `:ingress_subscriptions` - Bridge/provider subscription metadata
+  - `:agent_directory_projections` - Safe revisioned Jidoka discovery records
   """
 
   @behaviour Jido.Messaging.Persistence
@@ -49,7 +50,8 @@ defmodule Jido.Messaging.Persistence.ETS do
               onboarding_flows: Zoi.any(),
               bridge_configs: Zoi.any(),
               ingress_subscriptions: Zoi.any(),
-              routing_policies: Zoi.any()
+              routing_policies: Zoi.any(),
+              agent_directory_projections: Zoi.any()
             },
             coerce: false
           )
@@ -63,7 +65,15 @@ defmodule Jido.Messaging.Persistence.ETS do
   def schema, do: @schema
 
   alias Jido.Chat.{Participant, Room}
-  alias Jido.Messaging.{BridgeConfig, IngressSubscription, Message, RoomBinding, Thread}
+
+  alias Jido.Messaging.{
+    AgentDirectoryProjection,
+    BridgeConfig,
+    IngressSubscription,
+    Message,
+    RoomBinding,
+    Thread
+  }
 
   @impl true
   def init(_opts) do
@@ -86,7 +96,8 @@ defmodule Jido.Messaging.Persistence.ETS do
         onboarding_flows: :ets.new(:onboarding_flows, [:set, :public]),
         bridge_configs: :ets.new(:bridge_configs, [:set, :public]),
         ingress_subscriptions: :ets.new(:ingress_subscriptions, [:set, :public]),
-        routing_policies: :ets.new(:routing_policies, [:set, :public])
+        routing_policies: :ets.new(:routing_policies, [:set, :public]),
+        agent_directory_projections: :ets.new(:agent_directory_projections, [:set, :public])
       })
 
     {:ok, state}
@@ -152,6 +163,7 @@ defmodule Jido.Messaging.Persistence.ETS do
 
   @impl true
   def delete_participant(state, participant_id) do
+    delete_participant_agent_projections(state, participant_id)
     true = :ets.delete(state.participants, participant_id)
     :ok
   end
@@ -608,8 +620,79 @@ defmodule Jido.Messaging.Persistence.ETS do
     {:ok, rooms}
   end
 
+  def directory_search(state, :agent, query, opts) when is_map(query) do
+    case Keyword.fetch(opts, :scope) do
+      {:ok, %Jido.Messaging.AgentDirectoryScope{} = scope} ->
+        with {:ok, projections} <-
+               list_agent_directory_projections(state,
+                 endpoint_ids: Map.keys(scope.endpoint_principals),
+                 limit: 500
+               ) do
+          Jido.Messaging.AgentDirectory.filter_projections(
+            projections,
+            query,
+            scope,
+            Keyword.delete(opts, :scope)
+          )
+        end
+
+      _other ->
+        {:error, :agent_directory_scope_required}
+    end
+  end
+
   def directory_search(_state, target, _query, _opts) do
     {:error, {:invalid_directory_target, target}}
+  end
+
+  # Jidoka agent directory projection operations
+
+  @impl true
+  def save_agent_directory_projection(state, %AgentDirectoryProjection{} = projection) do
+    lock_id = {{__MODULE__, state.agent_directory_projections, projection.id}, self()}
+
+    case :global.trans(lock_id, fn ->
+           case validate_agent_directory_revision(state.agent_directory_projections, projection) do
+             {:store, accepted} ->
+               true = :ets.insert(state.agent_directory_projections, {accepted.id, accepted})
+               {:ok, accepted}
+
+             {:ok, _stored} = result ->
+               result
+
+             {:error, _reason} = error ->
+               error
+           end
+         end) do
+      :aborted -> {:error, :agent_directory_lock_aborted}
+      result -> result
+    end
+  end
+
+  @impl true
+  def get_agent_directory_projection(state, projection_id) when is_binary(projection_id) do
+    case :ets.lookup(state.agent_directory_projections, projection_id) do
+      [{^projection_id, projection}] -> {:ok, projection}
+      [] -> {:error, :not_found}
+    end
+  end
+
+  @impl true
+  def list_agent_directory_projections(state, opts \\ []) when is_list(opts) do
+    limit = opts |> Keyword.get(:limit, 100) |> bounded_agent_directory_limit()
+
+    with {:ok, endpoint_ids} <-
+           opts |> Keyword.get(:endpoint_ids) |> normalize_agent_directory_endpoint_filter() do
+      projections =
+        state.agent_directory_projections
+        |> :ets.tab2list()
+        |> Enum.map(&elem(&1, 1))
+        |> Enum.filter(&agent_directory_endpoint_matches?(&1, endpoint_ids))
+        |> Enum.sort_by(& &1.id)
+        |> Enum.take(limit)
+
+      {:ok, projections}
+    end
   end
 
   # Onboarding operations
@@ -945,6 +1028,69 @@ defmodule Jido.Messaging.Persistence.ETS do
 
     true = :ets.delete(state.room_threads, room_id)
     :ok
+  end
+
+  defp validate_agent_directory_revision(table, projection) do
+    case :ets.lookup(table, projection.id) do
+      [] when projection.source_revision == 1 ->
+        {:store, projection}
+
+      [] ->
+        {:error, {:invalid_initial_revision, projection.source_revision}}
+
+      [{_id, stored}] ->
+        cond do
+          AgentDirectoryProjection.equivalent?(stored, projection) ->
+            {:ok, stored}
+
+          not AgentDirectoryProjection.same_identity?(stored, projection) ->
+            {:error, :agent_directory_identity_immutable}
+
+          projection.source_revision == stored.source_revision ->
+            {:error, :agent_directory_revision_conflict}
+
+          projection.source_revision < stored.source_revision ->
+            {:error, {:stale_revision, stored.source_revision}}
+
+          projection.source_revision != stored.source_revision + 1 ->
+            {:error, {:revision_gap, stored.source_revision, projection.source_revision}}
+
+          true ->
+            {:store, AgentDirectoryProjection.preserve_insertion(projection, stored)}
+        end
+    end
+  end
+
+  defp delete_participant_agent_projections(state, participant_id) do
+    state.agent_directory_projections
+    |> :ets.tab2list()
+    |> Enum.each(fn
+      {projection_id, %AgentDirectoryProjection{principal_id: ^participant_id}} ->
+        true = :ets.delete(state.agent_directory_projections, projection_id)
+
+      _record ->
+        :ok
+    end)
+  end
+
+  defp bounded_agent_directory_limit(limit) when is_integer(limit) and limit > 0, do: min(limit, 500)
+  defp bounded_agent_directory_limit(_limit), do: 100
+
+  defp normalize_agent_directory_endpoint_filter(nil), do: {:ok, nil}
+
+  defp normalize_agent_directory_endpoint_filter(endpoint_ids)
+       when is_list(endpoint_ids) and length(endpoint_ids) <= 500,
+       do: {:ok, MapSet.new(endpoint_ids)}
+
+  defp normalize_agent_directory_endpoint_filter(_endpoint_ids),
+    do: {:error, :invalid_agent_directory_endpoint_filter}
+
+  defp agent_directory_endpoint_matches?(_projection, nil), do: true
+
+  defp agent_directory_endpoint_matches?(%AgentDirectoryProjection{endpoint_ref: nil}, _endpoint_ids), do: false
+
+  defp agent_directory_endpoint_matches?(projection, endpoint_ids) do
+    MapSet.member?(endpoint_ids, projection.endpoint_ref.id)
   end
 
   defp normalize_term(value) when is_binary(value), do: value
