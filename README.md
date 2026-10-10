@@ -892,6 +892,10 @@ or email addresses. Runtime messages keep role `:user`; author type (`:human`,
 
 Full documentation is available at [HexDocs](https://hexdocs.pm/jido_messaging).
 
+## Local Documentation
+
+Run `mix docs` to generate HTML and Markdown documentation in `doc/`, including Markdown pages and `llms.txt`.
+
 ## License
 
 This project is licensed under the Apache 2.0 License - see the LICENSE file for details.
