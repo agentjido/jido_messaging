@@ -149,8 +149,7 @@ defmodule Jido.Messaging.Demo.Supervisor do
        instance_module: Jido.Messaging.Demo.Messaging},
 
       # HeartbeatSensor sends periodic messages every minute
-      {Jido.Sensor.Runtime,
-       sensor: Jido.Messaging.Demo.HeartbeatSensor,
+      {Jido.Messaging.Demo.HeartbeatSensor,
        config: %{
          interval: 60_000,
          room_id: @shared_room_id,
