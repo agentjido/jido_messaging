@@ -60,7 +60,11 @@ defmodule Jido.Messaging.AgentSupervisor do
           {:ok, pid}
 
         {:error, {:already_started, pid}} ->
-          {:ok, pid}
+          if owned_runner?(supervisor, pid) do
+            {:ok, pid}
+          else
+            await_stale_runner(instance_module, room_id, thread_id, agent_id, agent_config, pid)
+          end
 
         {:error, :already_present} ->
           case AgentRunner.whereis(instance_module, room_id, thread_id, agent_id) do
@@ -155,6 +159,31 @@ defmodule Jido.Messaging.AgentSupervisor do
         else
           :ok
         end
+    end
+  end
+
+  defp owned_runner?(supervisor, pid) do
+    Enum.any?(DynamicSupervisor.which_children(supervisor), fn {_, child, _, _} -> child == pid end)
+  end
+
+  defp await_stale_runner(instance_module, room_id, thread_id, agent_id, agent_config, pid) do
+    ref = Process.monitor(pid)
+
+    :telemetry.execute([:jido_messaging, :agent, :stale_runner], %{}, %{
+      instance_module: instance_module,
+      room_id: room_id,
+      thread_id: thread_id,
+      agent_id: agent_id,
+      pid: pid
+    })
+
+    receive do
+      {:DOWN, ^ref, :process, ^pid, _reason} ->
+        start_agent(instance_module, room_id, thread_id, agent_id, agent_config)
+    after
+      1_000 ->
+        Process.demonitor(ref, [:flush])
+        {:error, :stale_runner_timeout}
     end
   end
 

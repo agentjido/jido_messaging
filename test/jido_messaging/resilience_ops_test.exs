@@ -29,7 +29,11 @@ defmodule Jido.Messaging.ResilienceOpsTest do
     def channel_type, do: :replay_channel
 
     @impl true
-    def transform_incoming(_raw), do: {:error, :not_implemented}
+    def signal_protocol, do: 1
+    @impl true
+    def configure_binding(opts), do: {:ok, opts}
+    @impl true
+    def normalize_event(_binding, _payload), do: Jido.Chat.Signal.Policy.error(:invalid_delivery)
 
     @impl true
     def send_message(room_id, text, _opts) do
@@ -52,7 +56,11 @@ defmodule Jido.Messaging.ResilienceOpsTest do
     def channel_type, do: :slow_pressure_channel
 
     @impl true
-    def transform_incoming(_raw), do: {:error, :not_implemented}
+    def signal_protocol, do: 1
+    @impl true
+    def configure_binding(opts), do: {:ok, opts}
+    @impl true
+    def normalize_event(_binding, _payload), do: Jido.Chat.Signal.Policy.error(:invalid_delivery)
 
     @impl true
     def send_message(room_id, text, _opts) do

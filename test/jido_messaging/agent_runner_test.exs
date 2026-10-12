@@ -10,13 +10,17 @@ defmodule Jido.Messaging.AgentRunnerTest do
   end
 
   defmodule NotifyChannel do
-    @behaviour Jido.Chat.Adapter
+    use Jido.Chat.Adapter
 
     @impl true
     def channel_type, do: :notify
 
     @impl true
-    def transform_incoming(_), do: {:error, :not_implemented}
+    def signal_protocol, do: 1
+    @impl true
+    def configure_binding(opts), do: {:ok, opts}
+    @impl true
+    def normalize_event(binding, _), do: Jido.Chat.Delivery.new(binding, "empty", [])
 
     @impl true
     def send_message(room_id, text, opts) do
@@ -220,6 +224,60 @@ defmodule Jido.Messaging.AgentRunnerTest do
       end)
     end
 
+    test "restoration waits for a stale registered runner outside the current supervisor" do
+      room = create_room!("stale-runner-room")
+      thread = create_thread!(room.id, "stale-thread")
+      parent = self()
+      registry = Module.concat(TestMessaging, Registry.Agents)
+
+      stale =
+        start_supervised!(
+          {Task,
+           fn ->
+             {:ok, _} = Registry.register(registry, {room.id, thread.id, "alpha"}, nil)
+             send(parent, :stale_registered)
+
+             receive do
+               :release -> :ok
+             end
+           end}
+        )
+
+      assert_receive :stale_registered
+      handler_id = {__MODULE__, make_ref()}
+
+      :telemetry.attach(
+        handler_id,
+        [:jido_messaging, :agent, :stale_runner],
+        fn _, _, metadata, observer -> send(observer, {:stale_runner, metadata.pid}) end,
+        parent
+      )
+
+      on_exit(fn -> :telemetry.detach(handler_id) end)
+
+      task =
+        Task.async(fn ->
+          Jido.Messaging.AgentSupervisor.start_agent(TestMessaging, room.id, thread.id, "alpha", %{
+            agent_id: "alpha",
+            name: "Alpha",
+            handler: fn _, _ -> :noreply end
+          })
+        end)
+
+      assert_receive {:stale_runner, ^stale}
+      ref = Process.monitor(stale)
+      send(stale, :release)
+      assert_receive {:DOWN, ^ref, :process, ^stale, :normal}
+      assert {:ok, restored} = Task.await(task)
+      assert restored != stale
+      assert AgentRunner.whereis(TestMessaging, room.id, thread.id, "alpha") == restored
+
+      assert Enum.any?(Jido.Messaging.AgentSupervisor.list_agents(TestMessaging, room.id), fn
+               {{thread_id, "alpha"}, pid} -> thread_id == thread.id and pid == restored
+               _ -> false
+             end)
+    end
+
     test "agent supervisor restart rehydrates assigned runners" do
       room = create_room!("runner-supervisor-restart-room")
       thread = create_thread!(room.id, "ext-thread-restart")
@@ -309,6 +367,36 @@ defmodule Jido.Messaging.AgentRunnerTest do
   end
 
   describe "thread-scoped message handling" do
+    test "a Bus fact with unknown schema cannot start an agent handler" do
+      observer = self()
+      room = create_room!("schema-room")
+      thread = create_thread!(room.id, "schema-thread")
+
+      {:ok, _} =
+        TestMessaging.register_agent(room.id, %{
+          agent_id: "schema-agent",
+          name: "SchemaAgent",
+          handler: fn message, _context ->
+            send(observer, {:handled_schema_message, message.id})
+            :noreply
+          end
+        })
+
+      {:ok, _} = TestMessaging.assign_thread(room.id, thread.id, "schema-agent")
+      runner = AgentRunner.whereis(TestMessaging, room.id, thread.id, "schema-agent")
+      assert_eventually(fn -> AgentRunner.get_state(runner).subscribed end)
+      stored = message(room.id, "user-1", thread.id, "hello")
+      {:ok, fact} = Jido.Messaging.Events.message_added(TestMessaging, stored)
+
+      assert {:ok, _} =
+               Jido.Signal.Bus.publish(TestMessaging.signal_bus_name(), [%{fact | dataschema: "urn:unknown:1"}])
+
+      refute_receive {:handled_schema_message, _}
+      assert {:ok, _} = Jido.Signal.Bus.publish(TestMessaging.signal_bus_name(), [fact])
+      assert_receive {:handled_schema_message, id}
+      assert id == stored.id
+    end
+
     test "runners only receive messages from their assigned thread" do
       test_pid = self()
       room = create_room!("routing-room")
@@ -340,19 +428,34 @@ defmodule Jido.Messaging.AgentRunnerTest do
 
       room_pid = ensure_room_server!(room)
 
-      :ok =
-        Jido.Messaging.RoomServer.add_message(
-          room_pid,
-          message(room.id, "user-1", thread_a.id, "hello alpha"),
-          nil
-        )
+      for thread <- [thread_a, thread_b] do
+        agent = if thread == thread_a, do: "alpha", else: "beta"
+        runner = AgentRunner.whereis(TestMessaging, room.id, thread.id, agent)
+        assert_eventually(fn -> AgentRunner.get_state(runner).subscribed end)
+      end
 
-      :ok =
-        Jido.Messaging.RoomServer.add_message(
-          room_pid,
-          message(room.id, "user-2", thread_b.id, "hello beta"),
-          nil
-        )
+      selector = [
+        source: Jido.Messaging.Events.source(TestMessaging),
+        subject: Jido.Messaging.Signal.Identity.room_subject(room.id)
+      ]
+
+      {:ok, _} = TestMessaging.subscribe_signals("jido.messaging.room.message_added", selector: selector)
+      {:ok, _} = TestMessaging.subscribe_signals("jido.messaging.agent.started", selector: selector)
+      message_a = message(room.id, "user-1", thread_a.id, "hello alpha")
+      message_b = message(room.id, "user-2", thread_b.id, "hello beta")
+      :ok = Jido.Messaging.RoomServer.add_message(room_pid, message_a, nil)
+      :ok = Jido.Messaging.RoomServer.add_message(room_pid, message_b, nil)
+      message_a_id = message_a.id
+
+      assert_receive {:signal,
+                      %Jido.Signal{type: "jido.messaging.room.message_added", data: %{"message_id" => ^message_a_id}} =
+                        parent}
+
+      assert_receive {:signal,
+                      %Jido.Signal{type: "jido.messaging.agent.started", data: %{"message_id" => ^message_a_id}} = child}
+
+      assert Jido.Signal.Context.get(child, "causationid") == parent.id
+      assert Jido.Signal.Trace.get(child).trace_id == Jido.Signal.Trace.get(parent).trace_id
 
       thread_a_id = thread_a.id
       thread_b_id = thread_b.id
@@ -361,6 +464,16 @@ defmodule Jido.Messaging.AgentRunnerTest do
       assert_receive {:beta_received, ^thread_b_id, _message_id}, 1_000
       refute_receive {:alpha_received, ^thread_b_id, _message_id}, 100
       refute_receive {:beta_received, ^thread_a_id, _message_id}, 100
+
+      assert {:ok, _} =
+               Jido.Signal.Bus.publish(TestMessaging.signal_bus_name(), [
+                 parent,
+                 parent,
+                 %{parent | id: Jido.Chat.ID.generate!()}
+               ])
+
+      refute_receive {:alpha_received, _, _}, 100
+      refute_receive {:beta_received, _, _}, 100
     end
   end
 
@@ -400,7 +513,8 @@ defmodule Jido.Messaging.AgentRunnerTest do
       assert message.thread_id
       assert context.thread_id == message.thread_id
 
-      assert_receive {:thread_opened, "room-auto", "root-1", _opts, result}, 1_000
+      assert_receive {:thread_opened, "room-auto", "root-1", thread_opts, result}, 1_000
+      assert thread_opts[:topic_name] =~ "@alpha"
       assert result.external_thread_id == "thread-root-1"
 
       assert {:ok, [thread]} = TestMessaging.list_threads(room.id)
@@ -415,8 +529,8 @@ defmodule Jido.Messaging.AgentRunnerTest do
       assert_receive {:agent_handled, ^message_id, ^thread_id}, 1_000
 
       assert_receive {:channel_send, "delivery-root-1", "handled by alpha", opts}, 1_000
-      assert opts[:external_thread_id] == "thread-root-1"
-      assert opts[:delivery_external_room_id] == "delivery-root-1"
+      assert opts[:thread_id] == "thread-root-1"
+      assert thread.delivery_external_room_id == "delivery-root-1"
     end
 
     test "ambiguous agent mentions do not auto-assign a thread" do
@@ -543,13 +657,17 @@ defmodule Jido.Messaging.AgentRunnerTest do
   end
 
   defp message(room_id, sender_id, thread_id, text) do
-    Message.new(%{
-      room_id: room_id,
-      sender_id: sender_id,
-      role: :user,
-      content: [%{type: :text, text: text}],
-      thread_id: thread_id
-    })
+    message =
+      Message.new(%{
+        room_id: room_id,
+        sender_id: sender_id,
+        role: :user,
+        content: [%{type: :text, text: text}],
+        thread_id: thread_id
+      })
+
+    {:ok, stored} = TestMessaging.save_message_struct(message)
+    stored
   end
 
   defp with_agent_supervisor_unavailable(instance_module, fun) when is_atom(instance_module) and is_function(fun, 0) do

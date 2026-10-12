@@ -28,7 +28,11 @@ defmodule Jido.Messaging.SecretResolverTest do
     def channel_type, do: :secret_test
 
     @impl true
-    def transform_incoming(_raw), do: {:error, :not_implemented}
+    def signal_protocol, do: 1
+    @impl true
+    def configure_binding(opts), do: {:ok, Keyword.merge(opts, Map.to_list(opts[:settings] || %{}))}
+    @impl true
+    def normalize_event(_binding, _payload), do: Jido.Chat.Signal.Policy.error(:invalid_delivery)
 
     @impl true
     def send_message(_room_id, text, opts) do
@@ -47,7 +51,11 @@ defmodule Jido.Messaging.SecretResolverTest do
     def channel_type, do: :other_secret_test
 
     @impl true
-    def transform_incoming(_raw), do: {:error, :not_implemented}
+    def signal_protocol, do: 1
+    @impl true
+    def configure_binding(opts), do: {:ok, opts}
+    @impl true
+    def normalize_event(_binding, _payload), do: Jido.Chat.Signal.Policy.error(:invalid_delivery)
 
     @impl true
     def send_message(_room_id, _text, _opts), do: {:ok, %{message_id: "wrong-adapter"}}
@@ -78,7 +86,7 @@ defmodule Jido.Messaging.SecretResolverTest do
     :ok
   end
 
-  test "resolves secrets for each outbound operation and observes rotation" do
+  test "captures secrets once and observes rotation after binding reconfiguration" do
     start_supervised!(ETSMessaging)
     Application.put_env(Resolver, :telegram_token, @marker)
 
@@ -86,7 +94,8 @@ defmodule Jido.Messaging.SecretResolverTest do
              ETSMessaging.put_bridge_config(%{
                id: "secret-rotation",
                adapter_module: Adapter,
-               secret_refs: %{token: :telegram_token}
+               secret_refs: %{token: :telegram_token},
+               opts: %{test_pid: self()}
              })
 
     assert stored.credentials == %{}
@@ -106,7 +115,20 @@ defmodule Jido.Messaging.SecretResolverTest do
     assert {:ok, _result} =
              OutboundGateway.send_message(ETSMessaging, context, "second", test_pid: self())
 
-    assert_receive {:adapter_credentials, "second", %{token: ^rotated}}
+    assert_receive {:adapter_credentials, "second", %{token: @marker}}
+
+    assert {:ok, _updated} =
+             ETSMessaging.put_bridge_config(%{
+               id: stored.id,
+               adapter_module: Adapter,
+               revision: stored.revision,
+               secret_refs: stored.secret_refs,
+               opts: stored.opts
+             })
+
+    :ok = Jido.Messaging.BridgeSupervisor.reconcile(ETSMessaging)
+    assert {:ok, _} = OutboundGateway.send_message(ETSMessaging, context, "third")
+    assert_receive {:adapter_credentials, "third", %{token: ^rotated}}
 
     assert {:ok, fetched} = ETSMessaging.get_bridge_config(stored.id)
     assert fetched.secret_refs == stored.secret_refs

@@ -451,7 +451,13 @@ defmodule Jido.Messaging.ConfigStore do
   defp trigger_reconcile(instance_module) do
     _ =
       Task.start(fn ->
-        reconcile_bridges(instance_module)
+        try do
+          reconcile_bridges(instance_module)
+        catch
+          :exit, {:noproc, _call} -> :ok
+          :exit, {:normal, _call} -> :ok
+          :exit, {:shutdown, _call} -> :ok
+        end
       end)
 
     :ok

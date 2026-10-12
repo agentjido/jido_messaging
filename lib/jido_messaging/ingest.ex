@@ -41,7 +41,7 @@ defmodule Jido.Messaging.Ingest do
     Thread
   }
 
-  @type incoming :: Jido.Chat.Incoming.t() | map()
+  @type incoming :: map()
   @type policy_stage :: :gating | :moderation
   @type policy_denial :: {:policy_denied, policy_stage(), atom(), String.t()}
   @type security_denial :: Security.security_denial()
@@ -52,6 +52,74 @@ defmodule Jido.Messaging.Ingest do
 
   @default_policy_timeout_ms 50
   @default_timeout_fallback :deny
+
+  @doc false
+  @spec accept_fact(module(), Jido.Chat.Binding.t(), Jido.Signal.t()) ::
+          {:ok, Message.t(), context()} | {:ok, :duplicate} | {:error, term()}
+  def accept_fact(instance, binding, %Jido.Signal{type: "jido.chat.message.received"} = signal) do
+    data = signal.data
+    sender = data["sender"]
+
+    author = %{
+      user_id: sender["id"],
+      user_name: sender["username"] || sender["id"],
+      full_name: sender["display_name"],
+      is_bot: sender["is_bot"] || false,
+      is_self: sender["is_self"] || false
+    }
+
+    media =
+      Enum.map(data["media"] || [], fn item ->
+        kind = Enum.find([:image, :audio, :video, :file], &(Atom.to_string(&1) == item["kind"]))
+
+        Jido.Chat.Media.new(%{
+          kind: kind,
+          media_type: item["media_type"],
+          filename: item["name"],
+          metadata: %{resource_ref: item["resource_ref"]}
+        })
+      end)
+
+    mentions =
+      Enum.map(data["mention_details"] || [], fn item ->
+        %{user_id: item["id"], username: item["username"], offset: item["offset"], length: item["length"]}
+      end)
+
+    kind = Enum.find([:direct, :group, :channel, :thread], &(Atom.to_string(&1) == data["conversation_kind"]))
+
+    incoming = %{
+      external_room_id: data["room_id"],
+      external_message_id: data["message_id"],
+      external_user_id: sender["id"],
+      external_thread_id: data["thread_id"],
+      external_reply_to_id: data["reply_to_id"],
+      text: data["text"],
+      author: author,
+      username: sender["username"],
+      display_name: sender["display_name"],
+      chat_type: kind,
+      chat_title: data["conversation_name"],
+      media: media,
+      mentions: mentions,
+      was_mentioned: data["mentioned"] || false,
+      raw: %{},
+      signal_media: data["media"],
+      reply_context: data["reply_context"],
+      provider_self: sender["is_self"] || false,
+      timestamp: provider_timestamp(data["timestamp"])
+    }
+
+    ingest_incoming(instance, binding.adapter, binding.id, incoming, parent_signal: signal, emit_received: false)
+  end
+
+  defp provider_timestamp(value) when is_binary(value) do
+    case DateTime.from_iso8601(value) do
+      {:ok, timestamp, _} -> DateTime.to_unix(timestamp, :millisecond)
+      _ -> nil
+    end
+  end
+
+  defp provider_timestamp(_), do: nil
 
   @doc """
   Process an incoming message from a channel.
@@ -274,6 +342,7 @@ defmodule Jido.Messaging.Ingest do
           thread_id: resolved_msg_context.thread_id,
           participant_id: participant.id,
           instance_module: messaging_module,
+          parent_signal: opts[:parent_signal],
           msg_context: resolved_msg_context
         })
 
@@ -291,7 +360,7 @@ defmodule Jido.Messaging.Ingest do
 
       Logger.debug("[Jido.Messaging.Ingest] Message #{persisted_message.id} ingested in room #{room.id}")
 
-      Signal.emit_received(persisted_message, context)
+      if Keyword.get(opts, :emit_received, true), do: Signal.emit_received(persisted_message, context)
 
       {:ok, persisted_message, context}
     end
@@ -443,7 +512,7 @@ defmodule Jido.Messaging.Ingest do
 
   defp build_message(messaging_module, room, participant, thread, incoming, channel_type, bridge_id, opts) do
     with {:ok, content, media_metadata} <- build_content(incoming, opts) do
-      reply_to_id = resolve_reply_to_id(messaging_module, channel_type, bridge_id, incoming)
+      reply_to_id = resolve_reply_to_id(messaging_module, channel_type, bridge_id, room.id, incoming)
 
       message_attrs = %{
         room_id: room.id,
@@ -458,7 +527,11 @@ defmodule Jido.Messaging.Ingest do
         delivery_external_room_id:
           Map.get(incoming, :delivery_external_room_id) || (thread && thread.delivery_external_room_id),
         status: :sent,
-        metadata: build_metadata(incoming, channel_type, bridge_id, media_metadata)
+        metadata:
+          build_metadata(incoming, channel_type, bridge_id, media_metadata)
+          |> Map.put(:signal_media, incoming[:signal_media])
+          |> Map.put(:reply_context, incoming[:reply_context])
+          |> Map.put(:provider_self, incoming[:provider_self] || false)
       }
 
       {:ok, Message.new(message_attrs)}
@@ -531,6 +604,8 @@ defmodule Jido.Messaging.Ingest do
                    incoming.external_room_id,
                    incoming.external_message_id,
                    open_thread_opts(msg_context, incoming)
+                   |> Keyword.put(:instance_module, messaging_module)
+                   |> Keyword.put(:bridge_id, msg_context.bridge_id)
                  ),
                {:ok, thread} <-
                  get_or_create_thread(messaging_module, room.id, %{
@@ -559,21 +634,12 @@ defmodule Jido.Messaging.Ingest do
   end
 
   defp open_thread(channel_module, external_room_id, external_message_id, opts) do
-    cond do
-      function_exported?(Jido.Chat.Adapter, :open_thread, 4) ->
-        apply(Jido.Chat.Adapter, :open_thread, [
-          channel_module,
-          external_room_id,
-          external_message_id,
-          opts
-        ])
-
-      function_exported?(channel_module, :open_thread, 3) ->
-        apply(channel_module, :open_thread, [external_room_id, external_message_id, opts])
-
-      true ->
-        {:error, :unsupported}
-    end
+    Jido.Messaging.AdapterBridge.operation(
+      channel_module,
+      :open_thread,
+      %{"room_id" => to_string(external_room_id), "message_id" => to_string(external_message_id)},
+      opts
+    )
   end
 
   defp get_or_create_thread(messaging_module, room_id, attrs) do
@@ -679,7 +745,6 @@ defmodule Jido.Messaging.Ingest do
   end
 
   defp result_value(result, key) when is_map(result), do: Map.get(result, key) || Map.get(result, Atom.to_string(key))
-  defp result_value(_result, _key), do: nil
 
   defp maybe_backfill_thread_root(_messaging_module, nil, _message), do: nil
 
@@ -732,11 +797,11 @@ defmodule Jido.Messaging.Ingest do
 
   defp ensure_thread_runner(_messaging_module, _room, _room_server, _thread), do: :ok
 
-  defp resolve_reply_to_id(messaging_module, channel_type, bridge_id, incoming) do
+  defp resolve_reply_to_id(messaging_module, channel_type, bridge_id, room_id, incoming) do
     external_reply_to_id = Map.get(incoming, :external_reply_to_id)
 
     if external_reply_to_id do
-      case messaging_module.get_message_by_external_id(channel_type, bridge_id, external_reply_to_id) do
+      case messaging_module.get_message_by_external_id(channel_type, bridge_id, external_reply_to_id, room_id) do
         {:ok, msg} -> msg.id
         _ -> nil
       end
@@ -819,6 +884,8 @@ defmodule Jido.Messaging.Ingest do
     end
   end
 
+  defp map_chat_type(:thread), do: :thread
+  defp map_chat_type(:direct), do: :direct
   defp map_chat_type(:private), do: :direct
   defp map_chat_type(:group), do: :group
   defp map_chat_type(:supergroup), do: :group

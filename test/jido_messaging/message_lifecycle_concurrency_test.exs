@@ -1,7 +1,7 @@
 defmodule Jido.Messaging.MessageLifecycleConcurrencyTest do
   use ExUnit.Case, async: false
 
-  alias Jido.Chat.{MessageDeletedEvent, MessageUpdatedEvent}
+  alias Jido.Chat.Signal.{MessageDeleted, MessageUpdated}
   alias Jido.Chat.Content.Text
   alias Jido.Messaging.MessageLifecycle
 
@@ -41,9 +41,12 @@ defmodule Jido.Messaging.MessageLifecycleConcurrencyTest do
   end
 
   defmodule InterleavingETS do
-    def get_message_by_external_id(channel, bridge_id, external_id) do
+    defdelegate get_room(id), to: ETSMessaging
+    defdelegate get_room_by_external_binding(channel, bridge_id, external_id), to: ETSMessaging
+
+    def get_message_by_external_id(channel, bridge_id, external_id, room_id) do
       LifecycleGate.notify(:lookup)
-      ETSMessaging.get_message_by_external_id(channel, bridge_id, external_id)
+      ETSMessaging.get_message_by_external_id(channel, bridge_id, external_id, room_id)
     end
 
     def save_message_struct(message) do
@@ -58,9 +61,12 @@ defmodule Jido.Messaging.MessageLifecycleConcurrencyTest do
   end
 
   defmodule InterleavingSQLite do
-    def get_message_by_external_id(channel, bridge_id, external_id) do
+    defdelegate get_room(id), to: SQLiteMessaging
+    defdelegate get_room_by_external_binding(channel, bridge_id, external_id), to: SQLiteMessaging
+
+    def get_message_by_external_id(channel, bridge_id, external_id, room_id) do
       LifecycleGate.notify(:lookup)
-      SQLiteMessaging.get_message_by_external_id(channel, bridge_id, external_id)
+      SQLiteMessaging.get_message_by_external_id(channel, bridge_id, external_id, room_id)
     end
 
     def save_message_struct(message) do
@@ -103,7 +109,7 @@ defmodule Jido.Messaging.MessageLifecycleConcurrencyTest do
     external_id = "provider-message-race"
 
     {:ok, room} =
-      messaging_module.create_room(%{
+      messaging_module.get_or_create_room_by_external_binding(:telegram, bridge_id, "provider-room-race", %{
         id: "room:#{inspect(messaging_module)}",
         type: :channel,
         name: "lifecycle race"
@@ -122,16 +128,22 @@ defmodule Jido.Messaging.MessageLifecycleConcurrencyTest do
       })
 
     update =
-      MessageUpdatedEvent.new(%{
-        message_id: external_id,
-        message: %{id: external_id, text: "draft two"},
-        timestamp: "2026-08-20T12:00:00Z"
+      MessageUpdated.new!(%{
+        "item_id" => "update",
+        "delivery_id" => "update",
+        "room_id" => "provider-room-race",
+        "message_id" => external_id,
+        "text" => "draft two",
+        "timestamp" => "2026-08-20T12:00:00Z"
       })
 
     delete =
-      MessageDeletedEvent.new(%{
-        message_id: external_id,
-        timestamp: "2026-08-20T12:00:01Z"
+      MessageDeleted.new!(%{
+        "item_id" => "delete",
+        "delivery_id" => "delete",
+        "room_id" => "provider-room-race",
+        "message_id" => external_id,
+        "timestamp" => "2026-08-20T12:00:01Z"
       })
 
     update_task =

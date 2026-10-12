@@ -18,6 +18,7 @@ defmodule Jido.Messaging.EventOptions do
     "external_thread_id" => :external_thread_id,
     "instance_id" => :instance_id,
     "message_id" => :message_id,
+    "parent_signal" => :parent_signal,
     "payload_kind" => :payload_kind,
     "target_kind" => :target_kind,
     "thread_id" => :thread_id

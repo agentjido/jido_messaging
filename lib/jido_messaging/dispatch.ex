@@ -1,104 +1,65 @@
 defmodule Jido.Messaging.Dispatch do
-  @moduledoc """
-  Dispatches `Jido.Messaging` signals through Jido Signal primitives.
+  @moduledoc "Native Catalog validation and ordered Dispatch to one instance Bus."
 
-  The canonical path is `Jido.Signal.Dispatch` to the instance Signal Bus. A
-  legacy room PubSub mirror is still supported for older LiveView/demo code, but
-  new code should subscribe to Signal Bus paths such as
-  `"jido.messaging.room.**"`.
-  """
-
-  require Logger
-
+  alias Jido.Chat.Signal.Policy
+  alias Jido.Messaging.Runtime
   alias Jido.Messaging.Supervisor, as: MessagingSupervisor
-  alias Jido.Signal.Dispatch, as: SignalDispatch
+  alias Jido.Signal.{Catalog, Dispatch}
 
-  @type emit_opts :: [
-          telemetry_event: [atom()] | nil,
-          telemetry_metadata: map(),
-          telemetry_measurements: map(),
-          room_id: String.t() | nil,
-          legacy_event: term() | nil
-        ]
+  @type emit_opts :: keyword()
 
-  @doc """
-  Emits a messaging signal to telemetry, the instance Signal Bus, and the optional legacy PubSub mirror.
-  """
-  @spec emit(module() | nil, Jido.Signal.t(), emit_opts()) ::
-          {:ok, Jido.Signal.t()} | {:error, term()}
-  def emit(instance_module, %Jido.Signal{} = signal, opts \\ []) do
-    maybe_emit_telemetry(signal, opts)
+  @doc "Publishes a registered fact or result. This path cannot execute a request."
+  @spec emit(module() | nil, Jido.Signal.t(), emit_opts()) :: {:ok, Jido.Signal.t()} | {:error, term()}
+  def emit(instance, signal, opts \\ [])
 
-    result =
-      case dispatch_signal(instance_module, signal) do
-        :ok ->
-          {:ok, signal}
+  def emit(instance, %Jido.Signal{} = signal, opts) do
+    with {:ok, catalog} <- catalog(instance),
+         {:ok, ^signal} <- Catalog.validate(catalog, signal),
+         {:ok, ^signal} <- Policy.validate(signal),
+         :ok <- observable(signal) do
+      telemetry(opts)
 
-        {:error, reason} = error ->
-          Logger.debug("[Jido.Messaging.Dispatch] Failed to dispatch #{signal.type}: #{inspect(reason)}")
-          error
+      case dispatch(instance, signal) do
+        :ok -> {:ok, signal}
+        {:error, _} = error -> error
       end
-
-    maybe_emit_legacy_pubsub(instance_module, signal, opts)
-
-    result
-  end
-
-  @doc """
-  Subscribes a process to an instance Signal Bus path such as `"jido.messaging.room.**"`.
-  """
-  @spec subscribe(module(), String.t(), keyword()) ::
-          {:ok, Jido.Signal.Bus.subscription_id()} | {:error, term()}
-  def subscribe(instance_module, path, opts \\ []) when is_atom(instance_module) and is_binary(path) do
-    instance_module
-    |> MessagingSupervisor.signal_bus_name()
-    |> Jido.Signal.Bus.subscribe(path, opts)
-  end
-
-  @doc """
-  Removes a Signal Bus subscription created by `subscribe/3`.
-  """
-  @spec unsubscribe(module(), Jido.Signal.Bus.subscription_id(), keyword()) :: :ok | {:error, term()}
-  def unsubscribe(instance_module, subscription_id, opts \\ []) when is_atom(instance_module) do
-    instance_module
-    |> MessagingSupervisor.signal_bus_name()
-    |> Jido.Signal.Bus.unsubscribe(subscription_id, opts)
-  end
-
-  defp dispatch_signal(nil, _signal), do: :ok
-
-  defp dispatch_signal(instance_module, signal) do
-    signal
-    |> SignalDispatch.dispatch({:bus, target: MessagingSupervisor.signal_bus_name(instance_module)})
-    |> normalize_dispatch_result()
-  end
-
-  defp normalize_dispatch_result(:ok), do: :ok
-  defp normalize_dispatch_result({:error, reason}), do: {:error, reason}
-
-  defp maybe_emit_telemetry(_signal, opts) do
-    case Keyword.get(opts, :telemetry_event) do
-      nil ->
-        :ok
-
-      event ->
-        measurements = Keyword.get(opts, :telemetry_measurements, %{timestamp: DateTime.utc_now()})
-        metadata = Keyword.get(opts, :telemetry_metadata, %{})
-        :telemetry.execute(event, measurements, metadata)
     end
   end
 
-  defp maybe_emit_legacy_pubsub(nil, _signal, _opts), do: :ok
+  def emit(_instance, _signal, _opts), do: Policy.error(:invalid_request)
 
-  defp maybe_emit_legacy_pubsub(instance_module, signal, opts) do
-    with legacy_event when not is_nil(legacy_event) <- Keyword.get(opts, :legacy_event),
-         room_id when is_binary(room_id) <- Keyword.get(opts, :room_id) || signal.subject do
-      case Jido.Messaging.PubSub.broadcast(instance_module, room_id, legacy_event) do
-        :ok -> :ok
-        {:error, :not_configured} -> :ok
-      end
-    else
-      _other -> :ok
+  @doc "Subscribes to a native type path and optional exact source/subject selector."
+  @spec subscribe(module(), String.t(), keyword()) :: {:ok, Jido.Signal.Bus.subscription_id()} | {:error, term()}
+  def subscribe(instance, path, opts \\ []),
+    do: Jido.Signal.Bus.subscribe(MessagingSupervisor.signal_bus_name(instance), path, opts)
+
+  @doc "Removes an ordinary instance Bus subscription."
+  @spec unsubscribe(module(), Jido.Signal.Bus.subscription_id(), keyword()) :: :ok | {:error, term()}
+  def unsubscribe(instance, id, opts \\ []),
+    do: Jido.Signal.Bus.unsubscribe(MessagingSupervisor.signal_bus_name(instance), id, opts)
+
+  defp catalog(nil), do: {:ok, Catalog.new!(Jido.Chat.signal_definitions() ++ Jido.Messaging.signal_definitions())}
+  defp catalog(instance), do: Runtime.catalog(instance.__jido_messaging__(:runtime))
+
+  defp observable(signal) do
+    definition =
+      Enum.find(Jido.Chat.signal_definitions() ++ Jido.Messaging.signal_definitions(), &(&1.type() == signal.type))
+
+    if definition.__signal_kind__() in [:fact, :result], do: :ok, else: Policy.error(:invalid_request)
+  end
+
+  defp dispatch(nil, _signal), do: :ok
+
+  defp dispatch(instance, signal),
+    do: Dispatch.dispatch(signal, {:bus, target: MessagingSupervisor.signal_bus_name(instance)})
+
+  defp telemetry(opts) do
+    if event = opts[:telemetry_event] do
+      :telemetry.execute(
+        event,
+        Keyword.get(opts, :telemetry_measurements, %{timestamp: DateTime.utc_now()}),
+        Keyword.get(opts, :telemetry_metadata, %{})
+      )
     end
   end
 end

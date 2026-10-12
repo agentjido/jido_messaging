@@ -1,157 +1,93 @@
 defmodule Jido.Messaging.Events do
-  @moduledoc """
-  Constructors for `Jido.Messaging` domain events as `Jido.Signal` CloudEvents.
+  @moduledoc "Typed Messaging facts from committed records and explicit runtime events."
 
-  These events describe committed local messaging state. `jido_chat` still owns
-  adapter-facing envelopes and payloads; this module carries the normalized
-  runtime facts that small chat apps, bridges, agents, and UIs can subscribe to.
-  """
-
-  alias Jido.Chat.Wire
+  alias Jido.Chat.Signal.Policy
   alias Jido.Messaging.Message
+  alias Jido.Messaging.Signal.{Context, Identity}
 
-  @type event_type ::
-          :message_added
-          | :message_received
-          | :message_sent
-          | :message_failed
-          | :room_created
-          | :participant_joined
-          | :participant_left
-          | :presence_changed
-          | :typing
-          | :reaction_added
-          | :reaction_removed
-          | :message_delivered
-          | :message_read
-          | :thread_created
-          | :thread_reply_added
-          | atom()
+  @fact_fields Jason.decode!(
+                 ~S|{"jido.messaging.room.message_added":["message","message_id","room_id","thread_id","reply_to_id","sender_id","text","role","status","external_room_id","external_message_id","bridge_id"],"jido.messaging.message.received":["message","message_id","room_id","thread_id","reply_to_id","sender_id","text","role","status","external_room_id","external_message_id","bridge_id"],"jido.messaging.message.sent":["message","message_id","room_id","thread_id","reply_to_id","sender_id","text","role","status","external_room_id","external_message_id","bridge_id"],"jido.messaging.message.failed":["room_id","message_id","bridge_id","code"],"jido.messaging.room.created":["room_id","name","kind"],"jido.messaging.room.participant_joined":["room_id","participant_id","reason"],"jido.messaging.room.participant_left":["room_id","participant_id","reason"],"jido.messaging.participant.presence_changed":["room_id","participant_id","presence"],"jido.messaging.participant.typing":["room_id","participant_id","typing","thread_id"],"jido.messaging.message.reaction_added":["room_id","message_id","participant_id","reaction"],"jido.messaging.message.reaction_removed":["room_id","message_id","participant_id","reaction"],"jido.messaging.message.delivered":["room_id","message_id","participant_id","timestamp"],"jido.messaging.message.read":["room_id","message_id","participant_id","timestamp"],"jido.messaging.thread.created":["room_id","thread_id","message_id","participant_id"],"jido.messaging.thread.reply_added":["room_id","thread_id","message_id","participant_id"],"jido.messaging.agent.triggered":["room_id","agent_id","message_id","thread_id","code"],"jido.messaging.agent.started":["room_id","agent_id","message_id","thread_id","code"],"jido.messaging.agent.completed":["room_id","agent_id","message_id","thread_id","code"],"jido.messaging.agent.failed":["room_id","agent_id","message_id","thread_id","code"],"jido.messaging.instance.started":["instance_id","bridge_id","code"],"jido.messaging.instance.connecting":["instance_id","bridge_id","code"],"jido.messaging.instance.connected":["instance_id","bridge_id","code"],"jido.messaging.instance.disconnected":["instance_id","bridge_id","code"],"jido.messaging.instance.stopped":["instance_id","bridge_id","code"],"jido.messaging.instance.error":["instance_id","bridge_id","code"],"jido.messaging.membership.observed":["binding_id","external_room_id","room_id","participant_id","actor_id","bot_self","transition","evidence","previous","current"],"jido.messaging.thread.changed":["room_id","thread_id","message_id","participant_id","change"]}|
+               )
+  @type event_type :: atom() | String.t()
 
-  @spec message_added(module(), Message.t(), keyword() | map()) ::
-          {:ok, Jido.Signal.t()} | {:error, term()}
-  @doc """
-  Builds the canonical signal for a locally committed room message.
-  """
-  def message_added(instance_module, %Message{} = message, opts \\ []) do
-    opts = normalize_opts(opts)
+  @doc "Builds a registered fact from a committed canonical message."
+  @spec message_added(module(), Message.t(), keyword() | map()) :: {:ok, Jido.Signal.t()} | {:error, term()}
+  def message_added(instance, message, opts \\ []),
+    do: new(:message_added, instance, message.room_id, message_data(message, opts), opts)
 
-    data =
-      message
-      |> message_data(opts)
-      |> Map.put("event", "message_added")
+  @doc "Builds a received fact from a committed canonical message."
+  @spec message_received(module(), Message.t(), keyword() | map()) :: {:ok, Jido.Signal.t()} | {:error, term()}
+  def message_received(instance, message, opts \\ []),
+    do: new(:message_received, instance, message.room_id, message_data(message, opts), opts)
 
-    new(:message_added, instance_module, message.room_id, data, opts)
+  @doc "Builds a sent fact from a committed canonical message."
+  @spec message_sent(module(), Message.t(), keyword() | map()) :: {:ok, Jido.Signal.t()} | {:error, term()}
+  def message_sent(instance, message, opts \\ []),
+    do: new(:message_sent, instance, message.room_id, message_data(message, opts), opts)
+
+  @doc "Builds a failure fact without a private error value."
+  @spec message_failed(module(), String.t(), term(), keyword() | map()) :: {:ok, Jido.Signal.t()} | {:error, term()}
+  def message_failed(instance, room, reason, opts \\ []) do
+    opts = options(opts)
+
+    new(
+      :message_failed,
+      instance,
+      room,
+      %{room_id: room, code: failure_code(reason), message_id: opts[:message_id], bridge_id: opts[:bridge_id]},
+      opts
+    )
   end
 
-  @spec message_received(module() | nil, Message.t(), keyword() | map()) ::
-          {:ok, Jido.Signal.t()} | {:error, term()}
-  @doc """
-  Builds the canonical signal for an inbound platform message.
-  """
-  def message_received(instance_module, %Message{} = message, opts \\ []) do
-    opts = normalize_opts(opts)
-
-    data =
-      message
-      |> message_data(opts)
-      |> Map.put("event", "message_received")
-
-    new(:message_received, instance_module, message.room_id, data, opts)
-  end
-
-  @spec message_sent(module() | nil, Message.t(), keyword() | map()) ::
-          {:ok, Jido.Signal.t()} | {:error, term()}
-  @doc """
-  Builds the canonical signal for a successful outbound platform delivery.
-  """
-  def message_sent(instance_module, %Message{} = message, opts \\ []) do
-    opts = normalize_opts(opts)
-
-    data =
-      message
-      |> message_data(opts)
-      |> Map.put("event", "message_sent")
-
-    new(:message_sent, instance_module, message.room_id, data, opts)
-  end
-
-  @spec message_failed(module() | nil, String.t(), term(), keyword() | map()) ::
-          {:ok, Jido.Signal.t()} | {:error, term()}
-  @doc """
-  Builds the canonical signal for a failed outbound platform delivery.
-  """
-  def message_failed(instance_module, room_id, reason, opts \\ []) do
-    opts = normalize_opts(opts)
-
-    data =
-      %{
-        "event" => "message_failed",
-        "room_id" => room_id,
-        "message_id" => opts[:message_id],
-        "reason" => inspect(reason)
-      }
-      |> merge_platform(opts)
-
-    new(:message_failed, instance_module, room_id, data, opts)
-  end
-
+  @doc "Builds a registered reaction fact."
   @spec reaction_added(module(), Message.t(), String.t(), String.t(), keyword() | map()) ::
           {:ok, Jido.Signal.t()} | {:error, term()}
-  @doc """
-  Builds the canonical signal for a message reaction being added.
-  """
-  def reaction_added(instance_module, %Message{} = message, participant_id, reaction, opts \\ []) do
-    reaction_event(:reaction_added, instance_module, message, participant_id, reaction, opts)
-  end
+  def reaction_added(instance, message, participant, reaction, opts \\ []),
+    do: reaction(:reaction_added, instance, message, participant, reaction, opts)
 
+  @doc "Builds a registered reaction removal fact."
   @spec reaction_removed(module(), Message.t(), String.t(), String.t(), keyword() | map()) ::
           {:ok, Jido.Signal.t()} | {:error, term()}
-  @doc """
-  Builds the canonical signal for a message reaction being removed.
-  """
-  def reaction_removed(instance_module, %Message{} = message, participant_id, reaction, opts \\ []) do
-    reaction_event(:reaction_removed, instance_module, message, participant_id, reaction, opts)
+  def reaction_removed(instance, message, participant, reaction, opts \\ []),
+    do: reaction(:reaction_removed, instance, message, participant, reaction, opts)
+
+  @doc "Builds a registered room fact from private runtime data."
+  @spec room_event(module(), event_type(), String.t() | nil, map(), keyword() | map()) ::
+          {:ok, Jido.Signal.t()} | {:error, term()}
+  def room_event(instance, event, room, data, opts \\ []),
+    do: new(event, instance, room, Map.put(data, :room_id, room), opts)
+
+  @doc false
+  @spec new(event_type(), module() | nil, String.t() | nil, map(), keyword() | map()) ::
+          {:ok, Jido.Signal.t()} | {:error, term()}
+  def new(event, instance, room, data, opts \\ []) when is_map(data) do
+    type = type_for(event)
+    opts = options(opts)
+    definition = Enum.find(Jido.Messaging.signal_definitions(), &(&1.type() == type and &1.__signal_kind__() == :fact))
+
+    with true <- not is_nil(definition),
+         true <- is_nil(opts[:dataschema]),
+         {:ok, signal} <-
+           definition.new(project(type, data, room, opts),
+             source: source(instance, opts),
+             subject: Identity.room_subject(room)
+           ),
+         {:ok, signal} <- Context.attach(signal, opts),
+         {:ok, signal} <- Policy.validate(signal) do
+      {:ok, signal}
+    else
+      {:error, _} = error -> error
+      _ -> Policy.error(:unknown_definition)
+    end
+  rescue
+    _ -> Policy.error(:invalid_request)
   end
 
-  @spec room_event(module(), event_type(), String.t(), map(), keyword() | map()) ::
-          {:ok, Jido.Signal.t()} | {:error, term()}
-  @doc """
-  Builds a canonical room-scoped signal from arbitrary event data.
-  """
-  def room_event(instance_module, event_type, room_id, data, opts \\ [])
-      when is_atom(event_type) and is_map(data) do
-    opts = normalize_opts(opts)
-
-    data =
-      data
-      |> Wire.to_plain()
-      |> Map.put_new("event", Atom.to_string(event_type))
-      |> Map.put_new("room_id", room_id)
-      |> merge_platform(opts)
-
-    new(event_type, instance_module, room_id, data, opts)
-  end
-
-  @spec new(String.t() | event_type(), module() | nil, String.t() | nil, map(), keyword() | map()) ::
-          {:ok, Jido.Signal.t()} | {:error, term()}
-  @doc """
-  Builds a `Jido.Signal` CloudEvent for a normalized messaging event type.
-  """
-  def new(type_or_event, instance_module, subject, data, opts \\ []) when is_map(data) do
-    opts = normalize_opts(opts)
-    type = type_for(type_or_event)
-
-    signal_opts =
-      %{
-        source: build_source(instance_module, opts[:bridge_id] || opts[:instance_id]),
-        subject: subject
-      }
-      |> maybe_put(:correlationid, correlation_id(type_or_event, data, opts))
-      |> maybe_put(:causation_id, opts[:causation_id])
-      |> maybe_put(:dataschema, opts[:dataschema])
-
-    Jido.Signal.new(type, data, signal_opts)
+  @doc "Returns the stable source for a runtime instance."
+  @spec source(module() | nil, keyword()) :: String.t()
+  def source(instance, opts \\ []) do
+    id = opts[:instance_id] || if(is_nil(instance), do: "local", else: Atom.to_string(instance))
+    Identity.instance_source(id)
   end
 
   @spec type_for(String.t() | event_type()) :: String.t()
@@ -195,6 +131,10 @@ defmodule Jido.Messaging.Events do
   def telemetry_event_for("jido.messaging.message.read"), do: telemetry_event_for(:message_read)
   def telemetry_event_for("jido.messaging.thread.created"), do: telemetry_event_for(:thread_created)
   def telemetry_event_for("jido.messaging.thread.reply_added"), do: telemetry_event_for(:thread_reply_added)
+  def telemetry_event_for("jido.messaging.agent.triggered"), do: [:jido_messaging, :agent, :triggered]
+  def telemetry_event_for("jido.messaging.agent.started"), do: [:jido_messaging, :agent, :started]
+  def telemetry_event_for("jido.messaging.agent.completed"), do: [:jido_messaging, :agent, :completed]
+  def telemetry_event_for("jido.messaging.agent.failed"), do: [:jido_messaging, :agent, :failed]
   def telemetry_event_for(type) when is_binary(type), do: [:jido_messaging, :signal, :custom]
 
   def telemetry_event_for(:message_added), do: [:jido_messaging, :room, :message_added]
@@ -214,132 +154,140 @@ defmodule Jido.Messaging.Events do
   def telemetry_event_for(:thread_reply_added), do: [:jido_messaging, :thread, :reply_added]
   def telemetry_event_for(event_type) when is_atom(event_type), do: [:jido_messaging, :room, event_type]
 
+  @doc "Builds the safe public message summary and canonical identity fields."
   @spec message_data(Message.t(), keyword() | map()) :: map()
-  @doc """
-  Converts a messaging record into the plain event payload used by message signals.
-  """
   def message_data(%Message{} = message, opts \\ []) do
-    opts = normalize_opts(opts)
-    text = text_from_content(message.content)
+    opts = options(opts)
 
     %{
-      "message" => Wire.to_plain(message),
+      "message" => message_summary(message),
       "message_id" => message.id,
       "room_id" => message.room_id,
+      "sender_id" => message.sender_id,
+      "text" => text(message.content),
+      "role" => Atom.to_string(message.role),
+      "status" => Atom.to_string(message.status),
       "thread_id" => message.thread_id,
       "reply_to_id" => message.reply_to_id,
-      "sender_id" => message.sender_id,
-      "role" => message.role,
-      "status" => message.status,
-      "text" => text,
-      "content" => message.content,
-      "reactions" => message.reactions || %{},
-      "target" => target_data(message, opts),
-      "payload" => payload_data(message, text, opts)
+      "external_message_id" => message.external_id,
+      "external_room_id" => opts[:external_room_id],
+      "bridge_id" => opts[:bridge_id]
     }
-    |> merge_platform(opts)
-    |> Wire.to_plain()
+    |> compact()
   end
 
-  defp reaction_event(event_type, instance_module, message, participant_id, reaction, opts) do
-    opts = normalize_opts(opts)
+  @doc "Builds the safe public subset of a canonical message record."
+  @spec message_summary(Message.t()) :: map()
+  def message_summary(%Message{} = message) do
+    %{
+      "id" => message.id,
+      "room_id" => message.room_id,
+      "text" => text(message.content),
+      "sender" => %{"id" => message.sender_id},
+      "role" => Atom.to_string(message.role),
+      "status" => Atom.to_string(message.status),
+      "thread_id" => message.thread_id,
+      "reply_to_id" => message.reply_to_id,
+      "timestamp" => scalar(message.inserted_at),
+      "media" => Map.get(message.metadata, :signal_media)
+    }
+    |> compact()
+  end
+
+  defp project(type, data, room, opts) do
+    data = enrich(type, data, room, opts)
+    Map.new(@fact_fields[type], fn field -> {field, scalar(value(data, field))} end) |> compact_fact(type)
+  end
+
+  defp enrich(type, data, room, opts) do
+    data = data |> Map.delete("room_id") |> Map.put(:room_id, room)
 
     data =
-      message
-      |> message_data(opts)
-      |> Map.merge(%{
-        "event" => Atom.to_string(event_type),
-        "participant_id" => participant_id,
-        "reaction" => reaction
-      })
+      if match?(%Message{}, value(data, "message")),
+        do: Map.merge(data, message_data(value(data, "message"), opts)),
+        else: data
 
-    new(event_type, instance_module, message.room_id, data, opts)
-  end
+    cond do
+      type in [type_for(:participant_joined), type_for(:participant_left)] ->
+        data
+        |> Map.put(:participant_id, value(data, "participant_id") || record_id(value(data, "participant")))
+        |> Map.put(:reason, value(data, "reason") || opts[:reason] || "observed")
 
-  defp target_data(message, opts) do
-    external_id =
-      opts[:external_room_id] || message.delivery_external_room_id ||
-        get_in(message.metadata || %{}, [:external_room_id]) || message.room_id
+      type == type_for(:presence_changed) ->
+        Map.put(data, :presence, value(data, "presence") || value(data, "to"))
 
-    %{
-      "kind" => target_kind(message, opts),
-      "external_id" => metadata_value(external_id),
-      "thread_id" => metadata_value(message.external_thread_id || message.thread_id),
-      "reply_to_id" => metadata_value(message.external_reply_to_id || message.reply_to_id),
-      "instance_id" => metadata_value(opts[:bridge_id] || opts[:instance_id]),
-      "channel_type" => metadata_value(opts[:channel_type] || channel_name(opts[:channel]))
-    }
-    |> Map.reject(fn {_key, value} -> is_nil(value) end)
-  end
+      type == type_for(:typing) ->
+        Map.put(data, :typing, first(data, ["typing", "is_typing"]))
 
-  defp payload_data(message, text, opts) do
-    %{
-      "kind" => payload_kind(message, opts),
-      "text" => text,
-      "metadata" =>
-        %{
-          "message_id" => message.id,
-          "room_id" => message.room_id,
-          "source" => (message.metadata || %{})[:source]
-        }
-        |> Map.reject(fn {_key, value} -> is_nil(value) end)
-    }
-  end
+      type in [type_for(:thread_created), type_for(:thread_reply_added)] ->
+        Map.put(data, :thread_id, value(data, "thread_id") || value(data, "root_message_id"))
 
-  defp merge_platform(data, opts) do
-    platform =
-      %{
-        "channel" => channel_name(opts[:channel]),
-        "channel_type" => metadata_value(opts[:channel_type]),
-        "bridge_id" => metadata_value(opts[:bridge_id]),
-        "external_room_id" => metadata_value(opts[:external_room_id]),
-        "external_message_id" => metadata_value(opts[:external_message_id]),
-        "external_thread_id" => metadata_value(opts[:external_thread_id]),
-        "delivery_external_room_id" => metadata_value(opts[:delivery_external_room_id]),
-        "adapter_event_type" => metadata_value(opts[:adapter_event_type])
-      }
-      |> Map.reject(fn {_key, value} -> is_nil(value) end)
-
-    if platform == %{}, do: data, else: Map.put(data, "platform", platform)
-  end
-
-  defp target_kind(%Message{thread_id: thread_id}, _opts) when is_binary(thread_id), do: "thread"
-  defp target_kind(_message, opts), do: metadata_value(Keyword.get(opts, :target_kind, opts[:chat_type] || "room"))
-
-  defp payload_kind(_message, opts), do: metadata_value(opts[:payload_kind]) || "text"
-
-  defp metadata_value(nil), do: nil
-  defp metadata_value(value) when is_binary(value), do: value
-  defp metadata_value(value) when is_atom(value), do: Atom.to_string(value)
-  defp metadata_value(value), do: inspect(value)
-
-  defp text_from_content([%{text: text} | _]) when is_binary(text), do: text
-  defp text_from_content([%{"text" => text} | _]) when is_binary(text), do: text
-  defp text_from_content([%{type: "text", text: text} | _]) when is_binary(text), do: text
-  defp text_from_content([%{"type" => "text", "text" => text} | _]) when is_binary(text), do: text
-  defp text_from_content(_content), do: nil
-
-  defp build_source(nil, nil), do: "jido_messaging/local"
-  defp build_source(nil, instance_id), do: "jido_messaging/local/#{instance_id}"
-
-  defp build_source(instance_module, instance_id) do
-    base = "jido_messaging/#{inspect(instance_module)}"
-    if instance_id, do: "#{base}/#{instance_id}", else: base
-  end
-
-  defp correlation_id(_type, _data, opts) do
-    case opts[:correlation_id] || opts[:message_id] do
-      nil -> nil
-      value -> %{id: value}
+      true ->
+        data
     end
   end
 
-  defp maybe_put(opts, _key, nil), do: opts
-  defp maybe_put(opts, key, value), do: Map.put(opts, key, value)
+  defp reaction(event, instance, message, participant, reaction, opts),
+    do:
+      room_event(
+        instance,
+        event,
+        message.room_id,
+        %{message_id: message.id, participant_id: participant, reaction: reaction},
+        opts
+      )
 
-  defp channel_name(nil), do: nil
-  defp channel_name(module) when is_atom(module), do: to_string(module)
-  defp channel_name(other), do: inspect(other)
+  defp first(data, keys) do
+    result =
+      Enum.find_value(keys, fn key ->
+        case value(data, key) do
+          nil -> nil
+          value -> {:present, value}
+        end
+      end)
 
-  defp normalize_opts(opts), do: Jido.Messaging.EventOptions.normalize(opts)
+    case result do
+      {:present, value} -> value
+      _ -> nil
+    end
+  end
+
+  defp value(data, key) do
+    case Map.fetch(data, key) do
+      {:ok, value} ->
+        value
+
+      :error ->
+        Enum.find_value(data, fn {field, value} ->
+          if is_atom(field) and Atom.to_string(field) == key, do: {:present, value}
+        end)
+        |> unwrap()
+    end
+  end
+
+  defp unwrap({:present, value}), do: value
+  defp unwrap(_), do: nil
+  defp record_id(value) when is_map(value), do: Map.get(value, :id) || Map.get(value, "id")
+  defp record_id(_), do: nil
+  defp scalar(%DateTime{} = value), do: DateTime.to_iso8601(value)
+  defp scalar(value) when is_atom(value) and not is_nil(value) and not is_boolean(value), do: Atom.to_string(value)
+  defp scalar(value), do: value
+
+  defp compact_fact(map, "jido.messaging.membership.observed"),
+    do: Map.reject(map, fn {key, value} -> is_nil(value) and key not in ["room_id", "previous"] end)
+
+  defp compact_fact(map, _type), do: compact(map)
+
+  defp compact(map), do: Map.reject(map, fn {_key, value} -> is_nil(value) end)
+
+  defp text(content),
+    do:
+      Enum.find_value(content, "", fn block -> if is_map(block), do: Map.get(block, :text) || Map.get(block, "text") end)
+
+  defp failure_code(:persistence_failed), do: "persistence_failed"
+  defp failure_code(:authorization_denied), do: "authorization_denied"
+  defp failure_code(:observation_failed), do: "observation_failed"
+  defp failure_code(reason) when reason in [:unsupported, :timeout, :provider_failure], do: "provider_failure"
+  defp failure_code(_), do: "delivery_failed"
+  defp options(opts), do: Jido.Messaging.EventOptions.normalize(opts)
 end

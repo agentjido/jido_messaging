@@ -132,11 +132,16 @@ defmodule Jido.Messaging.Demo.Bridge do
   # Signal handling
 
   defp handle_signal(%{type: "jido.messaging.room.message_added"} = signal, state) do
-    message = signal.data.message
-    room_id = signal.data.room_id
+    room_id = signal.data["room_id"]
+
+    message =
+      case state.instance_module.get_message(signal.data["message_id"]) do
+        {:ok, message} -> message
+        {:error, _} -> nil
+      end
 
     # If room_id filter is set, only handle messages for that room
-    if state.room_id == nil or room_id == state.room_id do
+    if message && (state.room_id == nil or room_id == state.room_id) do
       origin = get_origin(message)
 
       # Forward to all bindings except origin

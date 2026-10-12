@@ -2,12 +2,11 @@ defmodule Jido.Messaging.MessageLifecycle do
   @moduledoc """
   Applies normalized provider message lifecycle events to persisted messages.
 
-  Messages are resolved by the channel type, bridge ID, and provider message
-  ID. An unknown provider message ID returns `{:ok, :not_found}`. This result is
+  Messages are resolved by the channel type, bridge ID, provider room, and
+  provider message ID. An unknown provider message ID returns `{:ok, :not_found}`. This result is
   safe for late or duplicate delete deliveries and does not create a message.
   """
 
-  alias Jido.Chat.{MessageDeletedEvent, MessageUpdatedEvent}
   alias Jido.Chat.Content.Text
   alias Jido.Messaging.Message
 
@@ -34,39 +33,25 @@ defmodule Jido.Messaging.MessageLifecycle do
       iex> classify.({:error, :database_busy})
       {:error, :database_busy}
   """
-  @spec apply(module(), atom(), String.t(), MessageUpdatedEvent.t() | MessageDeletedEvent.t()) :: result()
-  def apply(messaging_module, channel_type, bridge_id, %MessageUpdatedEvent{} = event) do
-    with_lifecycle_lock(messaging_module, channel_type, bridge_id, event.message_id, fn ->
+  @spec apply(module(), atom(), String.t(), Jido.Signal.t()) :: result()
+  def apply(messaging_module, channel_type, bridge_id, %Jido.Signal{type: "jido.chat.message.updated"} = event) do
+    with_lifecycle_lock(messaging_module, channel_type, bridge_id, event, fn ->
       apply_update(messaging_module, channel_type, bridge_id, event)
     end)
   end
 
-  def apply(messaging_module, channel_type, bridge_id, %MessageDeletedEvent{} = event) do
-    with_lifecycle_lock(messaging_module, channel_type, bridge_id, event.message_id, fn ->
+  def apply(messaging_module, channel_type, bridge_id, %Jido.Signal{type: "jido.chat.message.deleted"} = event) do
+    with_lifecycle_lock(messaging_module, channel_type, bridge_id, event, fn ->
       apply_delete(messaging_module, channel_type, bridge_id, event)
     end)
   end
 
   defp apply_update(messaging_module, channel_type, bridge_id, event) do
-    case resolve_message(messaging_module, channel_type, bridge_id, event.message_id) do
+    case resolve_message(messaging_module, channel_type, bridge_id, event) do
       {:ok, %Message{} = message} ->
-        updated_message = update_message(message, event)
-        save_updated_message(messaging_module, message, updated_message)
-
-      {:error, :not_found} ->
-        {:ok, :not_found}
-
-      {:error, _reason} = error ->
-        error
-    end
-  end
-
-  defp apply_delete(messaging_module, channel_type, bridge_id, event) do
-    case resolve_message(messaging_module, channel_type, bridge_id, event.message_id) do
-      {:ok, %Message{} = message} ->
-        case messaging_module.delete_message(message.id) do
-          :ok -> {:ok, {:deleted, message}}
-          {:error, _reason} = error -> error
+        with :ok <- message_scope(messaging_module, channel_type, bridge_id, message, event) do
+          updated_message = update_message(message, event)
+          save_updated_message(messaging_module, message, updated_message)
         end
 
       {:error, :not_found} ->
@@ -77,13 +62,43 @@ defmodule Jido.Messaging.MessageLifecycle do
     end
   end
 
-  defp with_lifecycle_lock(messaging_module, channel_type, bridge_id, external_message_id, fun) do
+  defp apply_delete(messaging_module, channel_type, bridge_id, event) do
+    case resolve_message(messaging_module, channel_type, bridge_id, event) do
+      {:ok, %Message{} = message} ->
+        with :ok <- message_scope(messaging_module, channel_type, bridge_id, message, event) do
+          case messaging_module.delete_message(message.id) do
+            :ok -> {:ok, {:deleted, message}}
+            {:error, _reason} = error -> error
+          end
+        end
+
+      {:error, :not_found} ->
+        {:ok, :not_found}
+
+      {:error, _reason} = error ->
+        error
+    end
+  end
+
+  defp message_scope(instance, channel, bridge, message, event) do
+    with {:ok, room} <- instance.get_room(message.room_id) do
+      bindings = Map.get(room.external_bindings, channel, Map.get(room.external_bindings, Atom.to_string(channel), %{}))
+      expected = Map.get(bindings, bridge)
+
+      if event.data["room_id"] in [expected, message.delivery_external_room_id],
+        do: :ok,
+        else: Jido.Chat.Signal.Policy.error(:context_mismatch)
+    end
+  end
+
+  defp with_lifecycle_lock(messaging_module, channel_type, bridge_id, event, fun) do
     resource = {
       __MODULE__,
       messaging_module,
       channel_type,
       bridge_id,
-      to_string(external_message_id)
+      event.data["room_id"],
+      event.data["message_id"]
     }
 
     case :global.trans({resource, self()}, fn -> {:lifecycle_result, fun.()} end) do
@@ -93,17 +108,20 @@ defmodule Jido.Messaging.MessageLifecycle do
     end
   end
 
-  defp resolve_message(messaging_module, channel_type, bridge_id, external_message_id) do
-    messaging_module.get_message_by_external_id(
-      channel_type,
-      bridge_id,
-      to_string(external_message_id)
-    )
+  defp resolve_message(messaging_module, channel_type, bridge_id, event) do
+    with {:ok, room} <- messaging_module.get_room_by_external_binding(channel_type, bridge_id, event.data["room_id"]) do
+      messaging_module.get_message_by_external_id(
+        channel_type,
+        bridge_id,
+        event.data["message_id"],
+        room.id
+      )
+    end
   end
 
-  defp update_message(%Message{} = message, %MessageUpdatedEvent{} = event) do
+  defp update_message(%Message{} = message, %Jido.Signal{type: "jido.chat.message.updated"} = event) do
     message
-    |> put_updated_content(event.message)
+    |> put_updated_content(event.data)
     |> Map.put(:updated_at, lifecycle_timestamp(event, message.updated_at))
   end
 
@@ -116,7 +134,7 @@ defmodule Jido.Messaging.MessageLifecycle do
     end
   end
 
-  defp put_updated_content(%Message{} = message, %{text: text}) when is_binary(text) do
+  defp put_updated_content(%Message{} = message, %{"text" => text}) when is_binary(text) do
     %{message | content: replace_text_content(message.content, text)}
   end
 
@@ -139,9 +157,9 @@ defmodule Jido.Messaging.MessageLifecycle do
   defp text_content?(%{"type" => type}) when type in [:text, "text"], do: true
   defp text_content?(_content), do: false
 
-  defp lifecycle_timestamp(%MessageUpdatedEvent{} = event, fallback) do
-    event.message
-    |> message_timestamp(event.timestamp)
+  defp lifecycle_timestamp(%Jido.Signal{type: "jido.chat.message.updated"} = event, fallback) do
+    event.data
+    |> message_timestamp(event.data["timestamp"])
     |> normalize_timestamp(fallback)
   end
 

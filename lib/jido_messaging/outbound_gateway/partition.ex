@@ -13,7 +13,6 @@ defmodule Jido.Messaging.OutboundGateway.Partition do
   alias Jido.Messaging.MediaPolicy
   alias Jido.Messaging.OutboundGateway
   alias Jido.Messaging.Security
-  alias Jido.Messaging.SecretResolver
 
   @default_call_timeout 15_000
 
@@ -397,13 +396,17 @@ defmodule Jido.Messaging.OutboundGateway.Partition do
   end
 
   defp adapter_opts(instance_module, request) do
-    SecretResolver.adapter_opts(
-      instance_module,
-      request.bridge_id,
-      request.channel,
-      request.operation,
-      request.opts
-    )
+    runtime = instance_module.__jido_messaging__(:runtime)
+
+    with {:ok, binding} <-
+           Jido.Messaging.Runtime.ensure_binding(runtime, request.channel, request.bridge_id, request.opts) do
+      {:ok,
+       request.opts
+       |> Keyword.merge(binding.options)
+       |> Keyword.put(:binding, binding)
+       |> Keyword.put(:instance_module, instance_module)
+       |> Keyword.put(:bridge_id, request.bridge_id)}
+    end
   end
 
   defp media_preflight(request) do

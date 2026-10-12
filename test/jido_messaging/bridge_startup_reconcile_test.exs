@@ -11,7 +11,11 @@ defmodule Jido.Messaging.BridgeStartupReconcileTest do
     def channel_type, do: :startup_reconcile
 
     @impl true
-    def transform_incoming(_payload), do: {:error, :not_implemented}
+    def signal_protocol, do: 1
+    @impl true
+    def configure_binding(opts), do: {:ok, opts}
+    @impl true
+    def normalize_event(_binding, _payload), do: Jido.Chat.Signal.Policy.error(:invalid_delivery)
 
     @impl true
     def send_message(_room_id, _text, _opts), do: {:ok, %{message_id: "sent"}}
@@ -24,7 +28,11 @@ defmodule Jido.Messaging.BridgeStartupReconcileTest do
     def channel_type, do: :startup_dependency
 
     @impl true
-    def transform_incoming(_payload), do: {:error, :not_implemented}
+    def signal_protocol, do: 1
+    @impl true
+    def configure_binding(opts), do: {:ok, opts}
+    @impl true
+    def normalize_event(_binding, _payload), do: Jido.Chat.Signal.Policy.error(:invalid_delivery)
 
     @impl true
     def send_message(_room_id, _text, _opts), do: {:ok, %{message_id: "sent"}}
@@ -48,7 +56,11 @@ defmodule Jido.Messaging.BridgeStartupReconcileTest do
     def channel_type, do: :startup_failure
 
     @impl true
-    def transform_incoming(_payload), do: {:error, :not_implemented}
+    def signal_protocol, do: 1
+    @impl true
+    def configure_binding(opts), do: {:ok, opts}
+    @impl true
+    def normalize_event(_binding, _payload), do: Jido.Chat.Signal.Policy.error(:invalid_delivery)
 
     @impl true
     def send_message(_room_id, _text, _opts), do: {:ok, %{message_id: "sent"}}

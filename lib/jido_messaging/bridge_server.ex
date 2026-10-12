@@ -7,12 +7,13 @@ defmodule Jido.Messaging.BridgeServer do
 
   use GenServer
 
-  alias Jido.Messaging.{AdapterBridge, BridgeConfig, BridgeStatus, SecretResolver}
+  alias Jido.Messaging.{AdapterBridge, BridgeConfig, BridgeStatus, Runtime}
 
   @type state :: %{
           instance_module: module(),
           bridge_id: String.t(),
           config: BridgeConfig.t(),
+          binding: Jido.Chat.Binding.t(),
           listener_supervisor: pid() | nil,
           last_ingress_at: DateTime.t() | nil,
           last_outbound_at: DateTime.t() | nil,
@@ -89,13 +90,14 @@ defmodule Jido.Messaging.BridgeServer do
     bridge_id = Keyword.fetch!(opts, :bridge_id)
     config = Keyword.fetch!(opts, :config)
 
-    with {:ok, listener_specs} <- resolve_listener_specs(instance_module, bridge_id, config),
+    with {:ok, binding, listener_specs} <- resolve_listener_specs(instance_module, bridge_id, config),
          {:ok, listener_supervisor} <- start_listener_supervisor(listener_specs) do
       {:ok,
        %{
          instance_module: instance_module,
          bridge_id: bridge_id,
          config: config,
+         binding: binding,
          listener_supervisor: listener_supervisor,
          last_ingress_at: nil,
          last_outbound_at: nil,
@@ -153,9 +155,20 @@ defmodule Jido.Messaging.BridgeServer do
       sink_mfa: {Jido.Messaging.IngressSink, :emit, [instance_module, bridge_id]}
     ]
 
-    with {:ok, adapter_opts} <-
-           SecretResolver.adapter_opts_for_config(instance_module, config, :listener_start, base_opts) do
-      AdapterBridge.listener_child_specs(config.adapter_module, bridge_id, adapter_opts)
+    with {:ok, binding} <-
+           Runtime.ensure_binding(
+             instance_module.__jido_messaging__(:runtime),
+             config.adapter_module,
+             bridge_id,
+             Keyword.put(base_opts, :bridge_config, config)
+           ),
+         {:ok, specs} <-
+           AdapterBridge.listener_child_specs(
+             config.adapter_module,
+             bridge_id,
+             binding.options |> Keyword.merge(base_opts) |> Keyword.put(:binding, binding)
+           ) do
+      {:ok, binding, specs}
     end
   end
 

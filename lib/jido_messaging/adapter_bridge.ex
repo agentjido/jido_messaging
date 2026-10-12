@@ -6,7 +6,8 @@ defmodule Jido.Messaging.AdapterBridge do
   operations and adapter capability/failure normalization.
   """
 
-  alias Jido.Chat.{Adapter, Capabilities, FileUpload, PostPayload, Response}
+  alias Jido.Chat.{Binding, Capabilities, FileUpload, PostPayload}
+  alias Jido.Messaging.Runtime
 
   @type failure_class :: :recoverable | :degraded | :fatal
   @type failure_disposition :: :retry | :degrade | :crash
@@ -57,95 +58,153 @@ defmodule Jido.Messaging.AdapterBridge do
     capability in capabilities(adapter_module)
   end
 
-  @doc "Normalizes outbound send through canonical adapter boundary."
-  @spec send_message(module(), String.t() | integer(), String.t(), keyword()) ::
-          {:ok, map()} | {:error, term()}
-  def send_message(adapter_module, external_room_id, text, opts \\ [])
-      when is_atom(adapter_module) and is_binary(text) and is_list(opts) do
-    with {:ok, response} <- Adapter.send_message(adapter_module, external_room_id, text, opts) do
-      {:ok, response_to_map(response)}
-    end
-  end
+  @doc false
+  @spec send_message(module(), term(), String.t(), keyword()) :: {:ok, map()} | {:error, term()}
+  def send_message(adapter, room, text, opts \\ []),
+    do: operation(adapter, :send_message, %{"room_id" => to_string(room), "text" => text}, opts)
 
-  @doc "Normalizes outbound edit through canonical adapter boundary."
-  @spec edit_message(module(), String.t() | integer(), String.t() | integer(), String.t(), keyword()) ::
-          {:ok, map()} | {:error, term()}
-  def edit_message(adapter_module, external_room_id, external_message_id, text, opts \\ [])
-      when is_atom(adapter_module) and is_binary(text) and is_list(opts) do
-    with {:ok, response} <-
-           Adapter.edit_message(adapter_module, external_room_id, external_message_id, text, opts) do
-      {:ok, response_to_map(response)}
-    end
-  end
+  @doc false
+  @spec edit_message(module(), term(), term(), String.t(), keyword()) :: {:ok, map()} | {:error, term()}
+  def edit_message(adapter, room, message, text, opts \\ []),
+    do:
+      operation(
+        adapter,
+        :edit_message,
+        %{"room_id" => to_string(room), "message_id" => to_string(message), "text" => text},
+        opts
+      )
 
-  @doc "Marks a provider message as read through the canonical adapter boundary."
+  @doc false
   @spec mark_as_read(module(), term(), term(), keyword()) :: :ok | {:error, term()}
-  def mark_as_read(adapter_module, external_room_id, external_message_id, opts \\ [])
-      when is_atom(adapter_module) and is_list(opts) do
-    Adapter.mark_as_read(adapter_module, external_room_id, external_message_id, opts)
-  end
-
-  @doc """
-  Sends media payload through the canonical adapter boundary.
-
-  Preference order:
-
-  1. adapter-native `send_media/3`
-  2. canonical `post_message/4` or `send_file/4` fallback through `Jido.Chat.Adapter`
-  """
-  @spec send_media(module(), String.t() | integer(), map(), keyword()) ::
-          {:ok, map()} | {:error, term()}
-  def send_media(adapter_module, external_room_id, payload, opts \\ [])
-      when is_atom(adapter_module) and is_map(payload) and is_list(opts) do
-    cond do
-      callback_exported?(adapter_module, :send_media, 3) ->
-        normalize_send_result(adapter_module.send_media(external_room_id, payload, opts))
-
-      canonical_media_send_available?(adapter_module) ->
-        payload
-        |> media_payload_to_post_payload()
-        |> then(&Adapter.post_message(adapter_module, external_room_id, &1, opts))
-        |> normalize_send_result()
-
-      true ->
-        {:error, :unsupported}
+  def mark_as_read(adapter, room, message, opts \\ []) do
+    case operation(adapter, :mark_as_read, %{"room_id" => to_string(room), "message_id" => to_string(message)}, opts) do
+      {:ok, _} -> :ok
+      error -> error
     end
   end
 
-  @doc """
-  Edits media payload through adapter-native or replacement behavior.
-
-  Preference order:
-
-  1. adapter-native `edit_media/4`
-  2. replacement edit: send the new media and delete the old message
-  """
-  @spec edit_media(
-          module(),
-          String.t() | integer(),
-          String.t() | integer(),
-          map(),
-          keyword()
-        ) :: {:ok, map()} | {:error, term()}
-  def edit_media(adapter_module, external_room_id, external_message_id, payload, opts \\ [])
-      when is_atom(adapter_module) and is_map(payload) and is_list(opts) do
-    cond do
-      callback_exported?(adapter_module, :edit_media, 4) ->
-        normalize_send_result(adapter_module.edit_media(external_room_id, external_message_id, payload, opts))
-
-      canonical_media_edit_available?(adapter_module) ->
-        replacement_opts = Keyword.put_new(opts, :replacement_for, external_message_id)
-
-        with {:ok, replacement} <- send_media(adapter_module, external_room_id, payload, replacement_opts) do
-          delete_result =
-            Adapter.delete_message(adapter_module, external_room_id, external_message_id, opts)
-
-          {:ok, attach_replacement_metadata(replacement, external_message_id, delete_result)}
-        end
-
-      true ->
-        {:error, :unsupported}
+  @doc false
+  @spec send_media(module(), term(), map(), keyword()) :: {:ok, map()} | {:error, term()}
+  def send_media(adapter, room, payload, opts \\ []) do
+    with {:ok, binding} <- configured_binding(adapter, opts),
+         file <- media_payload_to_post_payload(payload) |> PostPayload.upload_candidates() |> List.first(),
+         {:ok, ref} <- Jido.Chat.put_resource(binding, "file", file) do
+      operation(
+        adapter,
+        :send_file,
+        %{"room_id" => to_string(room), "resource_ref" => ref},
+        Keyword.put(opts, :binding, binding)
+      )
     end
+  end
+
+  @doc false
+  @spec edit_media(module(), term(), term(), map(), keyword()) :: {:ok, map()} | {:error, term()}
+  def edit_media(adapter, room, message, payload, opts \\ []) do
+    with {:ok, replacement} <- send_media(adapter, room, payload, opts) do
+      deleted =
+        operation(adapter, :delete_message, %{"room_id" => to_string(room), "message_id" => to_string(message)}, opts)
+
+      {:ok, attach_replacement_metadata(replacement, message, deleted)}
+    end
+  end
+
+  @doc false
+  @spec configured_binding(module(), keyword()) :: {:ok, Binding.t()} | {:error, term()}
+  def configured_binding(adapter, opts) do
+    case {opts[:binding], opts[:instance_module], opts[:bridge_id]} do
+      {%Binding{adapter: ^adapter} = binding, _, _} ->
+        {:ok, binding}
+
+      {nil, instance, id} when is_atom(instance) and not is_nil(instance) and is_binary(id) ->
+        Runtime.ensure_binding(instance.__jido_messaging__(:runtime), adapter, id, opts)
+
+      _ ->
+        Jido.Chat.Signal.Policy.error(:invalid_binding)
+    end
+  end
+
+  @doc false
+  @spec operation(module(), atom(), map(), keyword()) :: {:ok, map()} | {:error, term()}
+  def operation(adapter, operation, data, opts) do
+    with {:ok, binding} <- configured_binding(adapter, opts) do
+      {_type, {definition, ^operation, _fields, _shape, _schema}} =
+        Enum.find(Jido.Chat.Operations.Definitions.all(), fn {_type, {_module, name, _fields, _shape, _schema}} ->
+          name == operation
+        end)
+
+      id = opts[:request_id] || Jido.Chat.ID.generate!()
+
+      data =
+        Enum.reduce(["thread_id", "reply_to_id", "format", "cursor", "limit", "direction", "topic_name"], data, fn key,
+                                                                                                                   data ->
+          value =
+            if key == "thread_id",
+              do: opts[:external_thread_id] || opts[:thread_id],
+              else: opts[String.to_existing_atom(key)]
+
+          value =
+            if is_atom(value) and not is_nil(value) and key in ["direction", "format"],
+              do: Atom.to_string(value),
+              else: value
+
+          allowed =
+            cond do
+              key == "topic_name" ->
+                operation == :open_thread
+
+              key == "direction" ->
+                operation in [:fetch_messages, :fetch_channel_messages, :list_threads]
+
+              key in ["cursor", "limit"] ->
+                operation in [:fetch_messages, :fetch_channel_messages, :list_threads, :load_options]
+
+              true ->
+                true
+            end
+
+          if is_nil(value) or not allowed, do: data, else: Map.put_new(data, key, value)
+        end)
+
+      data = Map.put(data, "request_id", id)
+      {:ok, request} = definition.new(data)
+      {:ok, request} = Jido.Messaging.Signal.Context.attach(request, parent_signal: opts[:parent_signal])
+
+      case Jido.Chat.execute(binding, request) do
+        {:ok, %{type: "jido.chat.operation.completed"} = result} ->
+          {:ok, private_result(result.data["result"], operation)}
+
+        {:ok, %{type: "jido.chat.operation.failed"} = result} ->
+          {:error, failure_reason(binding, result)}
+
+        error ->
+          error
+      end
+    end
+  end
+
+  defp private_result(%{"id" => id} = result, operation) when operation in [:open_thread, :fetch_thread] do
+    result
+    |> Map.put(:external_thread_id, id)
+    |> Map.put(:delivery_external_room_id, result["delivery_room_ref"])
+  end
+
+  defp private_result(%{"id" => id} = result, _operation) do
+    result
+    |> Map.put(:message_id, id)
+    |> Map.put(:external_message_id, id)
+    |> Map.put(:external_room_id, result["room_id"])
+  end
+
+  defp private_result(result, _operation), do: result
+  defp failure_reason(_binding, %{data: %{"code" => "unsupported"}}), do: :unsupported
+
+  defp failure_reason(binding, result) do
+    Jido.Chat.Operations.Failure.reason_tag(binding, result) ||
+      %{
+        class: Jido.Chat.Operations.Failure.class(binding, result),
+        reason: {:provider_operation_failed, result.data["code"]}
+      }
   end
 
   @doc """
@@ -293,12 +352,6 @@ defmodule Jido.Messaging.AdapterBridge do
     end
   end
 
-  defp normalize_send_result({:ok, %Response{} = response}), do: {:ok, response_to_map(response)}
-  defp normalize_send_result({:ok, result}) when is_map(result), do: {:ok, result}
-  defp normalize_send_result({:ok, result}), do: {:ok, %{message_id: result}}
-  defp normalize_send_result({:error, _reason} = error), do: error
-  defp normalize_send_result(other), do: {:error, {:invalid_return, other}}
-
   defp call_subscription_callback(adapter_module, callback, args) do
     arity = length(args)
 
@@ -339,17 +392,6 @@ defmodule Jido.Messaging.AdapterBridge do
     Code.ensure_loaded?(adapter_module) and function_exported?(adapter_module, callback, arity)
   end
 
-  defp canonical_media_send_available?(adapter_module) do
-    callback_exported?(adapter_module, :send_file, 3) or
-      callback_exported?(adapter_module, :post_message, 3)
-  end
-
-  defp canonical_media_edit_available?(adapter_module) do
-    callback_exported?(adapter_module, :delete_message, 3) and
-      (callback_exported?(adapter_module, :send_media, 3) or
-         canonical_media_send_available?(adapter_module))
-  end
-
   defp normalize_capability_list(caps) when is_list(caps) do
     caps
     |> Enum.filter(&is_atom/1)
@@ -370,21 +412,6 @@ defmodule Jido.Messaging.AdapterBridge do
       disposition: failure_disposition(class),
       reason: reason
     }
-  end
-
-  defp response_to_map(%Response{} = response) do
-    %{
-      message_id: response.message_id || response.external_message_id,
-      external_message_id: response.external_message_id || response.message_id,
-      external_room_id: response.external_room_id,
-      status: response.status,
-      channel_type: response.channel_type,
-      timestamp: response.timestamp,
-      raw: response.raw,
-      metadata: response.metadata
-    }
-    |> Enum.reject(fn {_k, v} -> is_nil(v) end)
-    |> Map.new()
   end
 
   defp media_payload_to_post_payload(payload) when is_map(payload) do
@@ -444,7 +471,7 @@ defmodule Jido.Messaging.AdapterBridge do
     |> Map.put(:status, :edited)
   end
 
-  defp replacement_metadata(replaced_message_id, :ok) do
+  defp replacement_metadata(replaced_message_id, {:ok, _ack}) do
     %{
       replaced_message_id: replaced_message_id,
       delete_status: :deleted

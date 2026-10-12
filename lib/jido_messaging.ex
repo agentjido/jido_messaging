@@ -28,22 +28,101 @@ defmodule Jido.Messaging do
       })
       {:ok, messages} = MyApp.Messaging.list_messages(room.id)
 
-  For app-level chat commands that should notify realtime consumers, use the
-  eventful command APIs:
+  Use a typed request to persist a message and notify consumers:
 
-      {:ok, result} = MyApp.Messaging.post_message(%{
-        room_id: room.id,
-        sender_id: "user_123",
-        role: :user,
-        content: [%{type: :text, text: "Hello!"}]
+      request = Jido.Messaging.Signal.PostMessage.new!(%{
+        "request_id" => "post-1",
+        "room_id" => room.id,
+        "sender_id" => "user_123",
+        "text" => "Hello!"
       })
+      actor = [principal_id: "user_123", authorization_scope: room_scope]
+      {:ok, %Jido.Signal{}} = MyApp.Messaging.execute(request, actor)
 
-      [%Jido.Signal{type: "jido.messaging.room.message_added"}] = result.signals
-
-  `save_message/1` remains the low-level persistence primitive. `post_message/2`
-  persists and emits committed `jido.messaging.*` CloudEvents through the
-  instance Signal Bus.
+  The trusted principal needs an active grant for the room scope.
+  The instance Bus publishes registered facts and results.
+  `save_message/1` is a low-level record operation.
   """
+
+  @doc "Returns the explicit public Signal definition list for this domain."
+  @spec signal_definitions() :: [module()]
+  def signal_definitions do
+    [
+      Jido.Messaging.Signal.SendMessage,
+      Jido.Messaging.Signal.SendFile,
+      Jido.Messaging.Signal.PostProviderMessage,
+      Jido.Messaging.Signal.EditMessage,
+      Jido.Messaging.Signal.DeleteMessage,
+      Jido.Messaging.Signal.StartTyping,
+      Jido.Messaging.Signal.FetchMetadata,
+      Jido.Messaging.Signal.FetchThread,
+      Jido.Messaging.Signal.FetchMessage,
+      Jido.Messaging.Signal.GetUser,
+      Jido.Messaging.Signal.FetchSubject,
+      Jido.Messaging.Signal.GetThreadParticipants,
+      Jido.Messaging.Signal.MarkAsRead,
+      Jido.Messaging.Signal.FetchMedia,
+      Jido.Messaging.Signal.AddReaction,
+      Jido.Messaging.Signal.RemoveReaction,
+      Jido.Messaging.Signal.PostEphemeral,
+      Jido.Messaging.Signal.PostChannelMessage,
+      Jido.Messaging.Signal.Stream,
+      Jido.Messaging.Signal.OpenModal,
+      Jido.Messaging.Signal.LoadOptions,
+      Jido.Messaging.Signal.FetchMessages,
+      Jido.Messaging.Signal.FetchChannelMessages,
+      Jido.Messaging.Signal.ListThreads,
+      Jido.Messaging.Signal.OpenThread,
+      Jido.Messaging.Signal.OpenDm,
+      Jido.Messaging.Signal.RoomMessageAdded,
+      Jido.Messaging.Signal.MessageReceived,
+      Jido.Messaging.Signal.MessageSent,
+      Jido.Messaging.Signal.MessageFailed,
+      Jido.Messaging.Signal.RoomCreated,
+      Jido.Messaging.Signal.ParticipantJoined,
+      Jido.Messaging.Signal.ParticipantLeft,
+      Jido.Messaging.Signal.PresenceChanged,
+      Jido.Messaging.Signal.TypingChanged,
+      Jido.Messaging.Signal.ReactionAdded,
+      Jido.Messaging.Signal.ReactionRemoved,
+      Jido.Messaging.Signal.MessageDelivered,
+      Jido.Messaging.Signal.MessageRead,
+      Jido.Messaging.Signal.ThreadCreated,
+      Jido.Messaging.Signal.ThreadReplyAdded,
+      Jido.Messaging.Signal.AgentTriggered,
+      Jido.Messaging.Signal.AgentStarted,
+      Jido.Messaging.Signal.AgentCompleted,
+      Jido.Messaging.Signal.AgentFailed,
+      Jido.Messaging.Signal.InstanceStarted,
+      Jido.Messaging.Signal.InstanceConnecting,
+      Jido.Messaging.Signal.InstanceConnected,
+      Jido.Messaging.Signal.InstanceDisconnected,
+      Jido.Messaging.Signal.InstanceStopped,
+      Jido.Messaging.Signal.InstanceError,
+      Jido.Messaging.Signal.MembershipObserved,
+      Jido.Messaging.Signal.PostMessage,
+      Jido.Messaging.Signal.CreateRoom,
+      Jido.Messaging.Signal.ParticipantJoinedRequest,
+      Jido.Messaging.Signal.ParticipantLeftRequest,
+      Jido.Messaging.Signal.SetPresence,
+      Jido.Messaging.Signal.SetTyping,
+      Jido.Messaging.Signal.AddRoomReaction,
+      Jido.Messaging.Signal.RemoveRoomReaction,
+      Jido.Messaging.Signal.MarkDelivered,
+      Jido.Messaging.Signal.MarkRead,
+      Jido.Messaging.Signal.OperationCompleted,
+      Jido.Messaging.Signal.OperationFailed,
+      Jido.Messaging.Signal.ThreadChanged
+    ]
+  end
+
+  @doc "Executes a typed request with trusted principal and authorization scope options."
+  @spec execute(module(), Jido.Signal.t(), keyword()) :: {:ok, Jido.Signal.t()} | {:error, term()}
+  def execute(instance, request, opts), do: Jido.Messaging.Execution.execute(instance, request, opts)
+
+  @doc "Accepts a complete validated provider delivery through the runtime owner."
+  @spec accept_delivery(module(), Jido.Chat.Delivery.t()) :: {:ok, [Jido.Signal.t()]} | {:error, term()}
+  def accept_delivery(instance, delivery), do: Jido.Messaging.Acceptance.accept(instance, delivery)
 
   alias Jido.Chat.{Participant, Room}
   alias Jido.Messaging.BridgeRoomSpec
@@ -141,6 +220,12 @@ defmodule Jido.Messaging do
           :pubsub -> @pubsub
         end
       end
+
+      @doc "Executes a typed request with trusted actor options."
+      def execute(request, opts), do: Jido.Messaging.execute(__MODULE__, request, opts)
+
+      @doc "Accepts a complete normalized Chat delivery."
+      def accept_delivery(delivery), do: Jido.Messaging.accept_delivery(__MODULE__, delivery)
 
       # Delegated API functions
 
@@ -573,35 +658,9 @@ defmodule Jido.Messaging do
         Jido.Messaging.save_message(__jido_messaging__(:runtime), attrs)
       end
 
-      @doc "Persist a message and emit a committed `jido.messaging.room.message_added` signal"
-      def post_message(attrs, opts \\ []) do
-        Jido.Messaging.post_message(__MODULE__, __jido_messaging__(:runtime), attrs, opts)
-      end
-
       @doc "Get a message by ID"
       def get_message(message_id) do
         Jido.Messaging.get_message(__jido_messaging__(:runtime), message_id)
-      end
-
-      @doc """
-      Mark a provider message as read and persist its normalized receipt.
-
-      ## Example
-
-          iex> defmodule ReceiptExample do
-          ...>   use Jido.Messaging, persistence: Jido.Messaging.Persistence.ETS
-          ...> end
-          iex> function_exported?(ReceiptExample, :mark_message_as_read, 3)
-          true
-      """
-      def mark_message_as_read(message_id, participant_id, opts \\ []) do
-        Jido.Messaging.mark_message_as_read(
-          __MODULE__,
-          __jido_messaging__(:runtime),
-          message_id,
-          participant_id,
-          opts
-        )
       end
 
       @doc """
@@ -891,6 +950,17 @@ defmodule Jido.Messaging do
         )
       end
 
+      @doc "Get a provider message within one canonical room."
+      def get_message_by_external_id(channel, bridge_id, external_id, room_id) do
+        Jido.Messaging.get_message_by_external_id(
+          __jido_messaging__(:runtime),
+          channel,
+          bridge_id,
+          external_id,
+          room_id
+        )
+      end
+
       @doc "Update a message's external_id"
       def update_message_external_id(message_id, external_id) do
         Jido.Messaging.update_message_external_id(
@@ -903,30 +973,6 @@ defmodule Jido.Messaging do
       @doc "Save an already-constructed message struct (for updates)"
       def save_message_struct(message) do
         Jido.Messaging.save_message_struct(__jido_messaging__(:runtime), message)
-      end
-
-      @doc "Add a reaction to a message and emit a committed reaction signal"
-      def add_reaction(message_id, participant_id, reaction, opts \\ []) do
-        Jido.Messaging.add_reaction(
-          __MODULE__,
-          __jido_messaging__(:runtime),
-          message_id,
-          participant_id,
-          reaction,
-          opts
-        )
-      end
-
-      @doc "Remove a reaction from a message and emit a committed reaction signal"
-      def remove_reaction(message_id, participant_id, reaction, opts \\ []) do
-        Jido.Messaging.remove_reaction(
-          __MODULE__,
-          __jido_messaging__(:runtime),
-          message_id,
-          participant_id,
-          reaction,
-          opts
-        )
       end
 
       @doc "Save an already-constructed thread struct (for updates)"
@@ -1274,21 +1320,6 @@ defmodule Jido.Messaging do
 
       # Inbound routing functions
 
-      @doc "Route webhook payload through bridge-config parse/verify path into ingest."
-      def route_webhook(bridge_id, payload, opts \\ []) do
-        Jido.Messaging.route_webhook(__MODULE__, bridge_id, payload, opts)
-      end
-
-      @doc "Route webhook request and return typed webhook response + ingest outcome."
-      def route_webhook_request(bridge_id, request_meta, payload, opts \\ []) do
-        Jido.Messaging.route_webhook_request(__MODULE__, bridge_id, request_meta, payload, opts)
-      end
-
-      @doc "Route direct payload through bridge-config transform path into ingest."
-      def route_payload(bridge_id, payload, opts \\ []) do
-        Jido.Messaging.route_payload(__MODULE__, bridge_id, payload, opts)
-      end
-
       @doc "Create or ensure a bridge-backed room topology in one call."
       def create_bridge_room(attrs) do
         Jido.Messaging.create_bridge_room(__MODULE__, attrs)
@@ -1299,11 +1330,6 @@ defmodule Jido.Messaging do
       @doc "Resolve configured outbound adapter routes for a room."
       def resolve_outbound_routes(room_id, opts \\ []) do
         Jido.Messaging.resolve_outbound_routes(__MODULE__, room_id, opts)
-      end
-
-      @doc "Route outbound text through bridge bindings/policy for a room."
-      def route_outbound(room_id, text, opts \\ []) do
-        Jido.Messaging.route_outbound(__MODULE__, room_id, text, opts)
       end
 
       @doc "Get health snapshot for an instance"
@@ -1373,17 +1399,7 @@ defmodule Jido.Messaging do
         Jido.Messaging.DeadLetter.purge(__MODULE__, opts)
       end
 
-      # PubSub functions
-
-      @doc "Subscribe to room events via PubSub"
-      def subscribe(room_id) do
-        Jido.Messaging.PubSub.subscribe(__MODULE__, room_id)
-      end
-
-      @doc "Unsubscribe from room events"
-      def unsubscribe(room_id) do
-        Jido.Messaging.PubSub.unsubscribe(__MODULE__, room_id)
-      end
+      # Native Signal subscriptions
 
       @doc "Subscribe to Jido Signal events emitted by this messaging instance"
       def subscribe_signals(path \\ "jido.messaging.**", opts \\ []) do
@@ -1393,31 +1409,6 @@ defmodule Jido.Messaging do
       @doc "Unsubscribe from a Jido Signal Bus subscription"
       def unsubscribe_signals(subscription_id, opts \\ []) do
         Jido.Messaging.unsubscribe_signals(__MODULE__, subscription_id, opts)
-      end
-
-      @doc "Emit a custom room-scoped Jido Signal event"
-      def dispatch_room_event(event_type, room_id, data \\ %{}, opts \\ []) do
-        Jido.Messaging.dispatch_room_event(__MODULE__, event_type, room_id, data, opts)
-      end
-
-      @doc "Emit a room-scoped participant joined signal"
-      def participant_joined(room_id, participant_id, opts \\ []) do
-        Jido.Messaging.participant_joined(__MODULE__, room_id, participant_id, opts)
-      end
-
-      @doc "Emit a room-scoped participant left signal"
-      def participant_left(room_id, participant_id, opts \\ []) do
-        Jido.Messaging.participant_left(__MODULE__, room_id, participant_id, opts)
-      end
-
-      @doc "Emit a participant presence changed signal"
-      def participant_presence_changed(room_id, participant_id, from, to, opts \\ []) do
-        Jido.Messaging.participant_presence_changed(__MODULE__, room_id, participant_id, from, to, opts)
-      end
-
-      @doc "Emit a participant typing signal"
-      def participant_typing(room_id, participant_id, is_typing, opts \\ []) do
-        Jido.Messaging.participant_typing(__MODULE__, room_id, participant_id, is_typing, opts)
       end
 
       @doc "Return the instance Signal Bus name"
@@ -1781,52 +1772,10 @@ defmodule Jido.Messaging do
     persistence.save_message(persistence_state, message)
   end
 
-  @doc """
-  Persist a message and emit the committed `jido.messaging.room.message_added` signal.
-
-  This is the eventful command API for chat apps. `save_message/2` remains the
-  low-level persistence primitive for migrations, imports, and tests that need
-  no side effects.
-  """
-  def post_message(instance_module, runtime, attrs, opts \\ [])
-      when is_atom(instance_module) and is_map(attrs) do
-    opts = normalize_event_opts(opts)
-
-    with {:ok, message} <- save_message(runtime, attrs),
-         {:ok, signal} <- Jido.Messaging.Events.message_added(instance_module, message, signal_opts(message, opts)),
-         {:ok, signal} <-
-           Jido.Messaging.Dispatch.emit(instance_module, signal,
-             telemetry_event: Jido.Messaging.Events.telemetry_event_for(:message_added),
-             telemetry_metadata:
-               telemetry_metadata(instance_module, :message_added, message.room_id, %{
-                 message: message,
-                 sender_id: message.sender_id,
-                 thread_id: message.thread_id
-               }),
-             room_id: message.room_id,
-             legacy_event: {:message_added, message}
-           ) do
-      {:ok, Jido.Messaging.CommandResult.new(message, [signal])}
-    end
-  end
-
   @doc "Get a message by ID"
   def get_message(runtime, message_id) do
     {persistence, persistence_state} = Runtime.get_persistence(runtime)
     persistence.get_message(persistence_state, message_id)
-  end
-
-  @doc "Mark a provider message as read and persist its normalized receipt."
-  def mark_message_as_read(instance_module, runtime, message_id, participant_id, opts \\ [])
-      when is_atom(instance_module) and is_binary(message_id) and is_binary(participant_id) and
-             is_list(opts) do
-    Jido.Messaging.ReadReceipt.mark_as_read(
-      instance_module,
-      runtime,
-      message_id,
-      participant_id,
-      opts
-    )
   end
 
   @doc """
@@ -2074,6 +2023,12 @@ defmodule Jido.Messaging do
     persistence.get_message_by_external_id(persistence_state, channel, bridge_id, external_id)
   end
 
+  @doc "Get a provider message within one canonical room."
+  def get_message_by_external_id(runtime, channel, bridge_id, external_id, room_id) do
+    {persistence, persistence_state} = Runtime.get_persistence(runtime)
+    persistence.get_message_by_external_id(persistence_state, channel, bridge_id, external_id, room_id)
+  end
+
   @doc "Update a message's external_id"
   def update_message_external_id(runtime, message_id, external_id) do
     {persistence, persistence_state} = Runtime.get_persistence(runtime)
@@ -2084,119 +2039,6 @@ defmodule Jido.Messaging do
   def save_message_struct(runtime, %Message{} = message) do
     {persistence, persistence_state} = Runtime.get_persistence(runtime)
     persistence.save_message(persistence_state, message)
-  end
-
-  @doc "Add a participant reaction to a message and emit a committed reaction signal."
-  def add_reaction(instance_module, runtime, message_id, participant_id, reaction, opts \\ [])
-      when is_atom(instance_module) and is_binary(message_id) and is_binary(participant_id) and
-             is_binary(reaction) do
-    update_reaction(
-      instance_module,
-      runtime,
-      message_id,
-      participant_id,
-      reaction,
-      :reaction_added,
-      normalize_event_opts(opts)
-    )
-  end
-
-  @doc "Remove a participant reaction from a message and emit a committed reaction signal."
-  def remove_reaction(instance_module, runtime, message_id, participant_id, reaction, opts \\ [])
-      when is_atom(instance_module) and is_binary(message_id) and is_binary(participant_id) and
-             is_binary(reaction) do
-    update_reaction(
-      instance_module,
-      runtime,
-      message_id,
-      participant_id,
-      reaction,
-      :reaction_removed,
-      normalize_event_opts(opts)
-    )
-  end
-
-  @doc "Dispatch a custom room-scoped Jido Signal event."
-  def dispatch_room_event(instance_module, event_type, room_id, data \\ %{}, opts \\ [])
-      when is_atom(instance_module) and is_atom(event_type) and is_binary(room_id) and is_map(data) do
-    opts = normalize_event_opts(opts)
-
-    with {:ok, signal} <- Jido.Messaging.Events.room_event(instance_module, event_type, room_id, data, opts),
-         {:ok, signal} <-
-           Jido.Messaging.Dispatch.emit(instance_module, signal,
-             telemetry_event: Jido.Messaging.Events.telemetry_event_for(event_type),
-             telemetry_metadata: telemetry_metadata(instance_module, event_type, room_id, data),
-             room_id: room_id,
-             legacy_event: Keyword.get(opts, :legacy_event)
-           ) do
-      {:ok, signal}
-    end
-  end
-
-  @doc """
-  Emit a canonical participant joined signal for a room.
-
-  This is a transport-agnostic helper for apps that receive participant lifecycle
-  information from Phoenix Presence, adapters, polling, or any other source.
-  """
-  def participant_joined(instance_module, room_id, participant_id, opts \\ [])
-      when is_atom(instance_module) and is_binary(room_id) and is_binary(participant_id) do
-    opts = normalize_event_opts(opts)
-
-    dispatch_room_event(
-      instance_module,
-      :participant_joined,
-      room_id,
-      participant_event_data(participant_id, opts),
-      opts
-    )
-  end
-
-  @doc """
-  Emit a canonical participant left signal for a room.
-  """
-  def participant_left(instance_module, room_id, participant_id, opts \\ [])
-      when is_atom(instance_module) and is_binary(room_id) and is_binary(participant_id) do
-    opts = normalize_event_opts(opts)
-
-    dispatch_room_event(
-      instance_module,
-      :participant_left,
-      room_id,
-      participant_event_data(participant_id, opts),
-      opts
-    )
-  end
-
-  @doc """
-  Emit a canonical participant presence changed signal.
-  """
-  def participant_presence_changed(instance_module, room_id, participant_id, from, to, opts \\ [])
-      when is_atom(instance_module) and is_binary(room_id) and is_binary(participant_id) do
-    opts = normalize_event_opts(opts)
-
-    data =
-      participant_event_data(participant_id, opts)
-      |> Map.put(:from, from)
-      |> Map.put(:to, to)
-
-    dispatch_room_event(instance_module, :presence_changed, room_id, data, opts)
-  end
-
-  @doc """
-  Emit a canonical participant typing signal.
-  """
-  def participant_typing(instance_module, room_id, participant_id, is_typing, opts \\ [])
-      when is_atom(instance_module) and is_binary(room_id) and is_binary(participant_id) and
-             is_boolean(is_typing) do
-    opts = normalize_event_opts(opts)
-
-    data =
-      participant_event_data(participant_id, opts)
-      |> Map.put(:is_typing, is_typing)
-      |> maybe_put_data(:thread_id, Keyword.get(opts, :thread_id))
-
-    dispatch_room_event(instance_module, :typing, room_id, data, opts)
   end
 
   @doc "Subscribe to Jido Signal events for an instance module."
@@ -2571,25 +2413,6 @@ defmodule Jido.Messaging do
     end
   end
 
-  @doc "Route webhook payload through bridge-config parse/verify path into ingest."
-  def route_webhook(instance_module, bridge_id, payload, opts \\ [])
-      when is_atom(instance_module) and is_binary(bridge_id) and is_map(payload) and is_list(opts) do
-    Jido.Messaging.InboundRouter.route_webhook(instance_module, bridge_id, payload, opts)
-  end
-
-  @doc "Route webhook request and return typed response + ingest outcome."
-  def route_webhook_request(instance_module, bridge_id, request_meta, payload, opts \\ [])
-      when is_atom(instance_module) and is_binary(bridge_id) and is_map(request_meta) and is_map(payload) and
-             is_list(opts) do
-    Jido.Messaging.InboundRouter.route_webhook_request(instance_module, bridge_id, request_meta, payload, opts)
-  end
-
-  @doc "Route direct payload through bridge-config transform path into ingest."
-  def route_payload(instance_module, bridge_id, payload, opts \\ [])
-      when is_atom(instance_module) and is_binary(bridge_id) and is_map(payload) and is_list(opts) do
-    Jido.Messaging.InboundRouter.route_payload(instance_module, bridge_id, payload, opts)
-  end
-
   @doc false
   def restore_agent_runners(instance_module) when is_atom(instance_module) do
     runtime = runtime_name(instance_module)
@@ -2678,111 +2501,6 @@ defmodule Jido.Messaging do
       {:ok, room}
     end
   end
-
-  defp update_reaction(instance_module, runtime, message_id, participant_id, reaction, event_type, opts) do
-    with {:ok, message} <- get_message(runtime, message_id) do
-      existing_reactions = message.reactions || %{}
-      current_participants = existing_reactions |> Map.get(reaction, []) |> List.wrap() |> Enum.map(&to_string/1)
-
-      participants =
-        case event_type do
-          :reaction_added -> [participant_id | current_participants] |> Enum.uniq() |> Enum.sort()
-          :reaction_removed -> Enum.reject(current_participants, &(&1 == participant_id))
-        end
-
-      reactions =
-        if participants == [] do
-          Map.delete(existing_reactions, reaction)
-        else
-          Map.put(existing_reactions, reaction, participants)
-        end
-
-      if reactions == existing_reactions do
-        {:ok, Jido.Messaging.CommandResult.new(message, [])}
-      else
-        updated_message = %{message | reactions: reactions, updated_at: DateTime.utc_now()}
-
-        with {:ok, updated_message} <- save_message_struct(runtime, updated_message),
-             {:ok, signal} <-
-               reaction_signal(event_type, instance_module, updated_message, participant_id, reaction, opts),
-             {:ok, signal} <-
-               Jido.Messaging.Dispatch.emit(instance_module, signal,
-                 telemetry_event: Jido.Messaging.Events.telemetry_event_for(event_type),
-                 telemetry_metadata:
-                   telemetry_metadata(instance_module, event_type, updated_message.room_id, %{
-                     message_id: updated_message.id,
-                     participant_id: participant_id,
-                     reaction: reaction,
-                     message: updated_message
-                   }),
-                 room_id: updated_message.room_id,
-                 legacy_event:
-                   {event_type,
-                    %{
-                      message_id: updated_message.id,
-                      participant_id: participant_id,
-                      reaction: reaction,
-                      message: updated_message
-                    }}
-               ) do
-          {:ok, Jido.Messaging.CommandResult.new(updated_message, [signal])}
-        end
-      end
-    end
-  end
-
-  defp reaction_signal(:reaction_added, instance_module, message, participant_id, reaction, opts) do
-    Jido.Messaging.Events.reaction_added(instance_module, message, participant_id, reaction, signal_opts(message, opts))
-  end
-
-  defp reaction_signal(:reaction_removed, instance_module, message, participant_id, reaction, opts) do
-    Jido.Messaging.Events.reaction_removed(
-      instance_module,
-      message,
-      participant_id,
-      reaction,
-      signal_opts(message, opts)
-    )
-  end
-
-  defp signal_opts(%Message{} = message, opts) do
-    opts
-    |> Keyword.put_new(:message_id, message.id)
-    |> Keyword.put_new(:correlation_id, message.id)
-    |> Keyword.put_new(:external_message_id, message.external_id)
-    |> Keyword.put_new(:external_thread_id, message.external_thread_id)
-    |> Keyword.put_new(:delivery_external_room_id, message.delivery_external_room_id)
-  end
-
-  defp normalize_event_opts(opts), do: Jido.Messaging.EventOptions.normalize(opts, :command)
-
-  defp telemetry_metadata(instance_module, event_type, room_id, data) do
-    data
-    |> Map.merge(%{
-      room_id: room_id,
-      instance_module: instance_module,
-      timestamp: DateTime.utc_now(),
-      correlation_id:
-        data[:message_id] || data["message_id"] || data[:participant_id] || data["participant_id"] ||
-          "corr_" <> Base.encode16(:crypto.strong_rand_bytes(8), case: :lower)
-    })
-    |> Map.put_new(:event_type, event_type)
-  end
-
-  defp participant_event_data(participant_id, opts) do
-    %{
-      participant_id: participant_id,
-      session_id: Keyword.get(opts, :session_id),
-      presence: Keyword.get(opts, :presence),
-      source: Keyword.get(opts, :source)
-    }
-    |> maybe_put_data(:metadata, Keyword.get(opts, :metadata))
-    |> maybe_put_data(:reason, Keyword.get(opts, :reason))
-    |> Map.reject(fn {_key, value} -> is_nil(value) end)
-  end
-
-  defp maybe_put_data(data, _key, nil), do: data
-  defp maybe_put_data(data, key, value), do: Map.put(data, key, value)
 
   defp ensure_bridge_configs(_instance_module, []), do: :ok
 
@@ -3081,13 +2799,7 @@ defmodule Jido.Messaging do
   end
 
   defp ensure_agent_runner(instance_module, room_id, thread_id, agent_id, agent_spec) do
-    case AgentRunner.whereis(instance_module, room_id, thread_id, agent_id) do
-      pid when is_pid(pid) ->
-        {:ok, pid}
-
-      nil ->
-        start_thread_runner(instance_module, room_id, thread_id, agent_id, agent_spec)
-    end
+    start_thread_runner(instance_module, room_id, thread_id, agent_id, agent_spec)
   end
 
   defp clear_persisted_thread_assignment(runtime, room_id, thread_id) do
@@ -3478,11 +3190,5 @@ defmodule Jido.Messaging do
   def resolve_outbound_routes(instance_module, room_id, opts \\ [])
       when is_atom(instance_module) and is_binary(room_id) and is_list(opts) do
     Jido.Messaging.OutboundRouter.resolve_routes(instance_module, room_id, opts)
-  end
-
-  @doc "Route outbound text through bridge bindings/policy for a room."
-  def route_outbound(instance_module, room_id, text, opts \\ [])
-      when is_atom(instance_module) and is_binary(room_id) and is_binary(text) and is_list(opts) do
-    Jido.Messaging.OutboundRouter.route_outbound(instance_module, room_id, text, opts)
   end
 end

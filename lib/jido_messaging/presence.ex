@@ -285,9 +285,7 @@ defmodule Jido.Messaging.Presence do
   defp validate_config!(config) do
     ensure_module!(config.messaging, :messaging)
     ensure_module!(config.presence, :presence)
-    ensure_exported!(config.messaging, :participant_joined, 3)
-    ensure_exported!(config.messaging, :participant_left, 3)
-    ensure_exported!(config.messaging, :participant_presence_changed, 5)
+    ensure_exported!(config.messaging, :subscribe_signals, 2)
     ensure_exported!(config.presence, :track, 4)
     ensure_exported!(config.presence, :update, 4)
     ensure_exported!(config.presence, :untrack, 3)
@@ -417,30 +415,40 @@ defmodule Jido.Messaging.Presence do
     |> successful_signals()
   end
 
-  defp joined_signal(config, room_id, participant_id, meta) do
-    apply(config.messaging, :participant_joined, [
-      room_id,
-      participant_id,
-      event_opts(config, room_id, meta, presence: :online)
-    ])
+  defp joined_signal(config, room, participant, meta) do
+    emit_fact(
+      config,
+      :participant_joined,
+      room,
+      %{participant_id: participant, reason: "presence"},
+      event_opts(config, room, meta)
+    )
   end
 
-  defp left_signal(config, room_id, participant_id, meta, reason) do
-    apply(config.messaging, :participant_left, [
-      room_id,
-      participant_id,
-      event_opts(config, room_id, meta, reason: reason)
-    ])
+  defp left_signal(config, room, participant, meta, reason) do
+    emit_fact(
+      config,
+      :participant_left,
+      room,
+      %{participant_id: participant, reason: reason},
+      event_opts(config, room, meta)
+    )
   end
 
-  defp presence_changed_signal(config, room_id, participant_id, from, to, meta) do
-    apply(config.messaging, :participant_presence_changed, [
-      room_id,
-      participant_id,
-      from,
-      to,
-      event_opts(config, room_id, meta)
-    ])
+  defp presence_changed_signal(config, room, participant, _from, to, meta) do
+    emit_fact(
+      config,
+      :presence_changed,
+      room,
+      %{participant_id: participant, presence: to},
+      event_opts(config, room, meta)
+    )
+  end
+
+  defp emit_fact(config, event, room, data, opts) do
+    with {:ok, signal} <- Jido.Messaging.Events.room_event(config.messaging, event, room, data, opts),
+         {:ok, signal} <- Jido.Messaging.Dispatch.emit(config.messaging, signal),
+         do: {:ok, signal}
   end
 
   defp event_opts(config, room_id, meta, extra \\ []) do

@@ -16,9 +16,6 @@ defmodule Jido.Messaging.Supervisor do
 
   @impl true
   def init(opts) do
-    # Ensure Jido.Messaging signal extensions are registered
-    Jido.Messaging.Signal.Ext.CorrelationId.ensure_registered()
-
     instance_module = Keyword.fetch!(opts, :instance_module)
     persistence = Keyword.fetch!(opts, :persistence)
     persistence_opts = Keyword.get(opts, :persistence_opts, [])

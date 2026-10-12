@@ -43,6 +43,14 @@ defmodule Jido.Messaging.BridgeSupervisor do
   Reconciles running bridge workers against enabled bridge configs.
   """
   def reconcile(instance_module) when is_atom(instance_module) do
+    case :global.trans({{__MODULE__, instance_module}, self()}, fn -> do_reconcile(instance_module) end) do
+      :aborted -> {:error, :reconcile_lock_failed}
+      {:aborted, _} -> {:error, :reconcile_lock_failed}
+      result -> result
+    end
+  end
+
+  defp do_reconcile(instance_module) do
     desired =
       ConfigStore.list_bridge_configs(instance_module, enabled: true)
       |> Map.new(fn config -> {config.id, config} end)

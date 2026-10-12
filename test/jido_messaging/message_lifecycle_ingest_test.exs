@@ -2,7 +2,6 @@ defmodule Jido.Messaging.MessageLifecycleIngestTest do
   use ExUnit.Case, async: false
 
   alias Jido.Chat.Content.Text
-  alias Jido.Chat.EventEnvelope
   alias Jido.Messaging.{InboundRouter, Persistence, Runtime}
 
   defmodule LifecycleAdapter do
@@ -12,7 +11,11 @@ defmodule Jido.Messaging.MessageLifecycleIngestTest do
     def channel_type, do: :telegram
 
     @impl true
-    def transform_incoming(_payload), do: {:error, :unsupported_payload}
+    def signal_protocol, do: 1
+    @impl true
+    def configure_binding(opts), do: {:ok, opts}
+    @impl true
+    def normalize_event(binding, %Jido.Chat.Delivery{} = delivery), do: Jido.Chat.Delivery.validate(binding, delivery)
 
     @impl true
     def send_message(_room_id, _text, _opts), do: {:error, :not_implemented}
@@ -39,17 +42,69 @@ defmodule Jido.Messaging.MessageLifecycleIngestTest do
     exercise_lifecycle(SQLiteMessaging)
   end
 
+  test "ETS updates and deletes the right room when provider IDs repeat" do
+    start_supervised!(ETSMessaging)
+    exercise_repeated_provider_id(ETSMessaging)
+  end
+
+  test "SQLite updates and deletes the right room when provider IDs repeat" do
+    path = Path.join(System.tmp_dir!(), "jido-message-scope-#{System.unique_integer([:positive])}.sqlite3")
+    on_exit(fn -> File.rm(path) end)
+    start_supervised!({SQLiteMessaging, persistence_opts: [path: path]})
+    exercise_repeated_provider_id(SQLiteMessaging)
+  end
+
+  defp exercise_repeated_provider_id(instance) do
+    {:ok, config} = instance.put_bridge_config(%{id: "scope-bridge", adapter_module: LifecycleAdapter})
+
+    {:ok, binding} =
+      Runtime.ensure_binding(instance.__jido_messaging__(:runtime), LifecycleAdapter, config.id, bridge_config: config)
+
+    messages =
+      for external_room <- ["provider-room-1", "provider-room-2"] do
+        {:ok, room} =
+          instance.get_or_create_room_by_external_binding(:telegram, config.id, external_room, %{type: :channel})
+
+        {:ok, message} =
+          instance.save_message(%{
+            room_id: room.id,
+            sender_id: "sender",
+            role: :user,
+            content: [%Text{text: external_room}],
+            external_id: "shared-id",
+            metadata: %{channel: :telegram, bridge_id: config.id}
+          })
+
+        message
+      end
+
+    [first, second] = messages
+    update = lifecycle_delivery(binding, :message_updated, "shared-id", "updated first")
+    assert {:ok, []} = instance.accept_delivery(update)
+    assert {:ok, updated} = instance.get_message(first.id)
+    assert [%Text{text: "updated first"}] = updated.content
+    assert {:ok, ^second} = instance.get_message(second.id)
+    assert {:ok, []} = instance.accept_delivery(lifecycle_delivery(binding, :message_deleted, "shared-id", nil))
+    assert {:error, :not_found} = instance.get_message(first.id)
+    assert {:ok, ^second} = instance.get_message(second.id)
+  end
+
   defp exercise_lifecycle(messaging_module) do
     bridge_id = "bridge_lifecycle"
 
-    {:ok, _bridge} =
+    {:ok, config} =
       messaging_module.put_bridge_config(%{
         id: bridge_id,
         adapter_module: LifecycleAdapter
       })
 
+    {:ok, binding} =
+      Runtime.ensure_binding(messaging_module.__jido_messaging__(:runtime), LifecycleAdapter, bridge_id,
+        bridge_config: config
+      )
+
     {:ok, room} =
-      messaging_module.create_room(%{
+      messaging_module.get_or_create_room_by_external_binding(:telegram, bridge_id, "provider-room-1", %{
         id: "room:#{inspect(messaging_module)}",
         type: :channel,
         name: "lifecycle"
@@ -69,10 +124,10 @@ defmodule Jido.Messaging.MessageLifecycleIngestTest do
 
     attach_ingest_probes(messaging_module)
 
-    update = lifecycle_envelope(:message_updated, "provider-message-1", "draft two")
+    update = lifecycle_delivery(binding, :message_updated, "provider-message-1", "draft two")
 
-    assert {:ok, {:message_updated, updated, %EventEnvelope{event_type: :message_updated}}} =
-             InboundRouter.route_payload(messaging_module, bridge_id, update)
+    assert {:ok, []} = InboundRouter.route_payload(messaging_module, bridge_id, update)
+    assert {:ok, updated} = messaging_module.get_message(original.id)
 
     assert updated.id == original.id
     assert updated.sender_id == original.sender_id
@@ -83,8 +138,8 @@ defmodule Jido.Messaging.MessageLifecycleIngestTest do
     assert {:ok, ^updated} = messaging_module.get_message(original.id)
     assert {:ok, [^updated]} = messaging_module.list_messages(room.id)
 
-    assert {:ok, {:message_updated, duplicate_update, %EventEnvelope{}}} =
-             InboundRouter.route_payload(messaging_module, bridge_id, update)
+    assert {:ok, []} = InboundRouter.route_payload(messaging_module, bridge_id, update)
+    assert {:ok, duplicate_update} = messaging_module.get_message(original.id)
 
     assert duplicate_update.id == original.id
     assert duplicate_update.role == :assistant
@@ -92,19 +147,14 @@ defmodule Jido.Messaging.MessageLifecycleIngestTest do
     assert duplicate_update == updated
     assert {:ok, [_one_message]} = messaging_module.list_messages(room.id)
 
-    missing_update = lifecycle_envelope(:message_updated, "missing-message", "not stored")
+    missing_update = lifecycle_delivery(binding, :message_updated, "missing-message", "not stored")
 
-    assert {:ok, {:message_not_found, %EventEnvelope{event_type: :message_updated}}} =
+    assert {:ok, []} =
              InboundRouter.route_payload(messaging_module, bridge_id, missing_update)
 
-    delete = lifecycle_envelope(:message_deleted, "provider-message-1", nil)
+    delete = lifecycle_delivery(binding, :message_deleted, "provider-message-1", nil)
 
-    assert {:ok, {:message_deleted, deleted, %EventEnvelope{event_type: :message_deleted}}} =
-             InboundRouter.route_payload(messaging_module, bridge_id, delete)
-
-    assert deleted.id == original.id
-    assert deleted.role == :assistant
-    assert deleted.sender_id == original.sender_id
+    assert {:ok, []} = InboundRouter.route_payload(messaging_module, bridge_id, delete)
     assert {:error, :not_found} = messaging_module.get_message(original.id)
 
     assert {:error, :not_found} =
@@ -114,12 +164,12 @@ defmodule Jido.Messaging.MessageLifecycleIngestTest do
 
     assert_external_id_index_removed(messaging_module, bridge_id, original)
 
-    assert {:ok, {:message_not_found, %EventEnvelope{event_type: :message_deleted}}} =
+    assert {:ok, []} =
              InboundRouter.route_payload(messaging_module, bridge_id, delete)
 
-    missing_delete = lifecycle_envelope(:message_deleted, "another-missing-message", nil)
+    missing_delete = lifecycle_delivery(binding, :message_deleted, "another-missing-message", nil)
 
-    assert {:ok, {:message_not_found, %EventEnvelope{event_type: :message_deleted}}} =
+    assert {:ok, []} =
              InboundRouter.route_payload(messaging_module, bridge_id, missing_delete)
 
     refute_received {:normal_ingest_signal, _event, _metadata}
@@ -134,43 +184,28 @@ defmodule Jido.Messaging.MessageLifecycleIngestTest do
 
   defp assert_external_id_index_removed(_messaging_module, _bridge_id, _original), do: :ok
 
-  defp lifecycle_envelope(event_type, message_id, text) do
-    message =
-      if is_binary(text) do
-        %{
-          id: message_id,
-          external_message_id: message_id,
-          text: text,
-          updated_at: "2026-08-20T12:00:00Z"
-        }
-      end
+  defp lifecycle_delivery(binding, type, id, text) do
+    identity = "delivery:#{type}:#{id}"
 
-    %{
-      id: "delivery:#{event_type}:#{message_id}",
-      adapter_name: :telegram,
-      event_type: event_type,
-      thread_id: "telegram:provider-room-1",
-      channel_id: "provider-room-1",
-      message_id: message_id,
-      payload: %{
-        adapter_name: :telegram,
-        thread_id: "telegram:provider-room-1",
-        channel_id: "provider-room-1",
-        message_id: message_id,
-        message: message,
-        author: %{
-          user_id: "provider-bot-1",
-          user_name: "assistant",
-          is_bot: true,
-          is_me: true
-        },
-        timestamp: "2026-08-20T12:00:00Z",
-        metadata: %{delivery_id: "delivery:#{event_type}:#{message_id}"},
-        raw: %{provider: "telegram"}
-      },
-      raw: %{provider: "telegram"},
-      metadata: %{source: :listener}
+    data = %{
+      "item_id" => identity,
+      "delivery_id" => identity,
+      "room_id" => "provider-room-1",
+      "message_id" => id,
+      "timestamp" => "2026-08-20T12:00:00Z"
     }
+
+    definition = if type == :message_updated, do: Jido.Chat.Signal.MessageUpdated, else: Jido.Chat.Signal.MessageDeleted
+    data = if text, do: Map.put(data, "text", text), else: data
+
+    signal =
+      definition.new!(data,
+        source: binding.source,
+        subject: Jido.Chat.Signal.Identity.conversation_subject(binding.id, "provider-room-1")
+      )
+
+    {:ok, delivery} = Jido.Chat.Delivery.new(binding, identity, [signal])
+    delivery
   end
 
   defp attach_ingest_probes(messaging_module) do

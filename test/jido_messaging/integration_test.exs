@@ -18,18 +18,25 @@ defmodule Jido.Messaging.IntegrationTest do
     def channel_type, do: :telegram
 
     @impl true
-    def transform_incoming(%{message: msg}) do
-      {:ok,
-       %{
-         external_room_id: msg.chat_id,
-         external_user_id: msg.user_id,
-         text: msg.text,
-         username: msg.username,
-         display_name: msg.display_name,
-         external_message_id: msg.message_id,
-         timestamp: msg.date,
-         chat_type: :private
-       }}
+    def signal_protocol, do: 1
+    @impl true
+    def configure_binding(opts), do: {:ok, opts}
+    @impl true
+    def normalize_event(binding, %{message: msg}) do
+      id = to_string(msg.message_id)
+
+      fact =
+        Jido.Chat.AdapterTestKit.Factories.message_received(binding, %{
+          "delivery_id" => id,
+          "item_id" => id,
+          "message_id" => id,
+          "room_id" => to_string(msg.chat_id),
+          "sender" => %{"id" => to_string(msg.user_id), "username" => msg.username, "display_name" => msg.display_name},
+          "text" => msg.text,
+          "conversation_kind" => "direct"
+        })
+
+      Jido.Chat.Delivery.new(binding, id, [fact])
     end
 
     @impl true
@@ -42,6 +49,16 @@ defmodule Jido.Messaging.IntegrationTest do
     start_supervised!(TestMessaging)
     TestMessaging.clear_dedupe()
     :ok
+  end
+
+  defp accept_raw(bridge, raw) do
+    {:ok, binding} = Jido.Chat.bind(MockTelegramChannel, id: bridge)
+    :ok = Jido.Messaging.Runtime.register_binding(TestMessaging.__jido_messaging__(:runtime), binding)
+    {:ok, delivery} = Jido.Chat.normalize_event(binding, raw)
+    {:ok, [fact]} = TestMessaging.accept_delivery(delivery)
+    {:ok, message} = TestMessaging.get_message(fact.data["message_id"])
+    server = RoomServer.whereis(TestMessaging, message.room_id)
+    {:ok, message, RoomServer.message_context(server, message.id)}
   end
 
   describe "full message flow" do
@@ -58,8 +75,7 @@ defmodule Jido.Messaging.IntegrationTest do
         }
       }
 
-      {:ok, incoming} = MockTelegramChannel.transform_incoming(raw_update)
-      {:ok, message, context} = Ingest.ingest_incoming(TestMessaging, MockTelegramChannel, "bot_1", incoming)
+      {:ok, message, context} = accept_raw("bot_1", raw_update)
 
       assert message.role == :user
       assert [%Text{text: "Hello bot!"}] = message.content
@@ -141,8 +157,7 @@ defmodule Jido.Messaging.IntegrationTest do
         }
       }
 
-      {:ok, incoming} = MockTelegramChannel.transform_incoming(raw_update)
-      {:ok, message, context} = Ingest.ingest_incoming(TestMessaging, MockTelegramChannel, "bot_2", incoming)
+      {:ok, message, context} = accept_raw("bot_2", raw_update)
 
       room_id = context.room.id
       pid = RoomServer.whereis(TestMessaging, room_id)

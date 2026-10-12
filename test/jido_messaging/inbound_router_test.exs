@@ -1,360 +1,263 @@
 defmodule Jido.Messaging.InboundRouterTest do
   use ExUnit.Case, async: false
-
-  alias Jido.Chat.{EventEnvelope, Incoming, WebhookRequest, WebhookResponse}
-  alias Jido.Messaging.{InboundRouter, IngressOutcome}
+  alias Jido.Chat.{AdapterTestKit.Factories, Signal.Identity, WebhookRequest, WebhookResponse}
+  alias Jido.Messaging.InboundRouter
 
   defmodule RouterAdapter do
-    @behaviour Jido.Chat.Adapter
-
+    use Jido.Chat.Adapter
     @impl true
     def channel_type, do: :telegram
-
     @impl true
-    def transform_incoming(%{"kind" => "message"} = payload) do
+    def signal_protocol, do: 1
+    @impl true
+    def configure_binding(opts) do
+      settings = opts[:settings] || %{}
+
       {:ok,
-       Incoming.new(%{
-         external_room_id: payload["room"],
-         external_user_id: payload["user"],
-         external_message_id: payload["id"],
-         text: payload["text"],
-         username: payload["user_name"],
-         display_name: payload["display_name"],
-         chat_type: :group,
-         raw: payload
-       })}
+       opts
+       |> Keyword.put(:reject_signature, settings[:reject_signature] || false)
+       |> Keyword.put(:force_format_error, settings[:force_format_error] || false)}
     end
-
-    def transform_incoming(_payload), do: {:error, :unsupported_payload}
-
-    @impl true
-    def send_message(_room_id, _text, _opts), do: {:error, :not_implemented}
 
     @impl true
     def verify_webhook(%WebhookRequest{}, opts) do
-      if Keyword.get(opts, :reject_signature, false) do
-        {:error, :invalid_signature}
-      else
-        :ok
-      end
+      if opts[:reject_signature], do: {:error, :invalid_signature}, else: :ok
     end
 
     @impl true
-    def parse_event(%WebhookRequest{payload: %{"kind" => "noop"}}, _opts), do: {:ok, :noop}
+    def normalize_event(binding, %WebhookRequest{payload: payload}), do: normalize_event(binding, payload)
+    def normalize_event(binding, %{"kind" => "noop"}), do: Jido.Chat.Delivery.new(binding, "noop", [])
 
-    def parse_event(%WebhookRequest{payload: %{"kind" => "structured_error"}}, _opts) do
-      {:error, {:invalid_event, %{reason: "payload_malformed"}}}
+    def normalize_event(binding, %{"kind" => "message"} = payload) do
+      sender = %{"id" => payload["user"]}
+      sender = if payload["user_name"], do: Map.put(sender, "username", payload["user_name"]), else: sender
+      sender = if payload["display_name"], do: Map.put(sender, "display_name", payload["display_name"]), else: sender
+
+      fact =
+        Factories.message_received(binding, %{
+          "delivery_id" => payload["id"],
+          "item_id" => payload["id"],
+          "room_id" => payload["room"],
+          "message_id" => payload["id"],
+          "text" => payload["text"],
+          "sender" => sender,
+          "conversation_kind" => "group"
+        })
+
+      Jido.Chat.Delivery.new(binding, payload["id"], [fact])
     end
 
-    def parse_event(%WebhookRequest{payload: %{"kind" => "reaction"} = payload}, _opts) do
-      {:ok,
-       EventEnvelope.new(%{
-         adapter_name: :telegram,
-         event_type: :reaction,
-         thread_id: "telegram:#{payload["room"]}",
-         channel_id: payload["room"],
-         message_id: payload["id"],
-         payload: %{emoji: payload["emoji"], room: payload["room"]},
-         raw: payload,
-         metadata: %{source: :webhook}
-       })}
+    def normalize_event(binding, %{"kind" => "reaction"} = payload) do
+      fact =
+        Jido.Chat.Signal.ReactionAdded.new!(
+          %{
+            "delivery_id" => payload["id"],
+            "item_id" => payload["id"],
+            "room_id" => payload["room"],
+            "message_id" => payload["id"],
+            "actor_id" => "actor",
+            "reaction" => payload["emoji"]
+          },
+          source: binding.source,
+          subject: Identity.conversation_subject(binding.id, payload["room"])
+        )
+
+      Jido.Chat.Delivery.new(binding, payload["id"], [fact])
     end
 
-    def parse_event(%WebhookRequest{payload: payload}, _opts) do
-      with {:ok, incoming} <- transform_incoming(payload) do
-        {:ok,
-         EventEnvelope.new(%{
-           adapter_name: :telegram,
-           event_type: :message,
-           thread_id: "telegram:#{payload["room"]}",
-           channel_id: payload["room"],
-           message_id: payload["id"],
-           payload: incoming,
-           raw: payload,
-           metadata: %{source: :webhook}
-         })}
-      end
-    end
-
+    def normalize_event(_binding, _payload), do: Jido.Chat.Signal.Policy.error(:invalid_delivery)
     @impl true
     def format_webhook_response(_result, opts) do
-      if Keyword.get(opts, :force_format_error, false) do
-        {:error, :format_failed}
-      else
-        {:ok, WebhookResponse.accepted(%{ok: true})}
-      end
+      if opts[:force_format_error], do: {:error, :format_failed}, else: {:ok, WebhookResponse.accepted(%{ok: true})}
     end
   end
 
   defmodule ConfigAwareAdapter do
-    @behaviour Jido.Chat.Adapter
-
+    use Jido.Chat.Adapter
     @impl true
     def channel_type, do: :config_aware
-
     @impl true
-    def transform_incoming(_payload), do: {:error, :not_implemented}
-
+    def signal_protocol, do: 1
     @impl true
-    def send_message(_room_id, _text, _opts), do: {:error, :not_implemented}
-
+    def configure_binding(opts), do: {:ok, opts}
     @impl true
-    def verify_webhook(%WebhookRequest{} = request, opts) do
-      credentials = Keyword.fetch!(opts, :credentials)
-
-      if request.headers["authorization"] == credentials.token do
-        :ok
-      else
-        {:error, :invalid_signature}
-      end
+    def verify_webhook(request, opts) do
+      if request.headers["authorization"] == opts[:credentials].token, do: :ok, else: {:error, :invalid_signature}
     end
 
     @impl true
-    def parse_event(%WebhookRequest{}, opts) do
-      case Keyword.fetch!(opts, :settings) do
-        %{parse_result: :noop} -> {:ok, :noop}
-        _settings -> {:error, :invalid_settings}
-      end
+    def normalize_event(binding, %WebhookRequest{}) do
+      if binding.options[:settings][:parse_result] == :noop,
+        do: Jido.Chat.Delivery.new(binding, "noop", []),
+        else: Jido.Chat.Signal.Policy.error(:invalid_delivery)
     end
   end
 
   defmodule BridgeSecretResolver do
     @behaviour Jido.Messaging.SecretResolver
-
     @impl true
     def resolve(:bridge_secret, _context), do: {:ok, "bridge-secret"}
   end
 
   defmodule TestMessaging do
-    use Jido.Messaging, persistence: Jido.Messaging.Persistence.ETS
+    use Jido.Messaging, persistence: Jido.Messaging.Persistence.ETS, runtime_profile: :core
   end
 
   setup do
-    original_resolver = Application.get_env(TestMessaging, :secret_resolver)
+    previous = Application.get_env(TestMessaging, :secret_resolver)
     Application.put_env(TestMessaging, :secret_resolver, BridgeSecretResolver)
 
     on_exit(fn ->
-      if is_nil(original_resolver) do
-        Application.delete_env(TestMessaging, :secret_resolver)
-      else
-        Application.put_env(TestMessaging, :secret_resolver, original_resolver)
-      end
+      if previous,
+        do: Application.put_env(TestMessaging, :secret_resolver, previous),
+        else: Application.delete_env(TestMessaging, :secret_resolver)
     end)
 
     start_supervised!(TestMessaging)
-    {:ok, _bridge} = TestMessaging.put_bridge_config(%{id: "bridge_tg", adapter_module: RouterAdapter})
+    {:ok, _} = TestMessaging.put_bridge_config(%{id: "bridge_tg", adapter_module: RouterAdapter})
     :ok
   end
 
-  describe "route_payload/4" do
-    test "routes message payloads into ingest and returns message/context/event" do
-      payload = %{
-        "kind" => "message",
-        "room" => "chat_42",
-        "user" => "user_7",
-        "id" => "msg_100",
-        "text" => "hello from payload",
-        "user_name" => "alice",
-        "display_name" => "Alice"
-      }
-
-      assert {:ok, {:message, message, context, event}} =
-               InboundRouter.route_payload(TestMessaging, "bridge_tg", payload)
-
-      assert message.external_id == "msg_100"
-      assert context.external_room_id == "chat_42"
-      assert context.bridge_id == "bridge_tg"
-      assert event.event_type == :message
-    end
-
-    test "returns duplicate marker on repeated payload id in same room" do
-      payload = %{
-        "kind" => "message",
-        "room" => "chat_dup",
-        "user" => "user_dup",
-        "id" => "msg_dup",
-        "text" => "dup"
-      }
-
-      assert {:ok, {:message, _message, _context, _event}} =
-               InboundRouter.route_payload(TestMessaging, "bridge_tg", payload)
-
-      assert {:ok, {:duplicate, _event}} =
-               InboundRouter.route_payload(TestMessaging, "bridge_tg", payload)
-    end
-
-    test "routes direct EventEnvelope payloads as non-message events" do
-      event = %{
-        adapter_name: :telegram,
-        event_type: :reaction,
-        thread_id: "telegram:chat_9",
-        channel_id: "chat_9",
-        message_id: "msg_9",
-        payload: %{emoji: "🔥", added: true},
-        raw: %{raw: true},
-        metadata: %{source: :gateway}
-      }
-
-      assert {:ok, {:event, routed_event}} =
-               InboundRouter.route_payload(TestMessaging, "bridge_tg", event)
-
-      assert routed_event.event_type == :reaction
-      assert routed_event.payload.emoji == "🔥"
-    end
+  defp message do
+    %{
+      "kind" => "message",
+      "room" => "chat_42",
+      "user" => "user_7",
+      "id" => "msg_100",
+      "text" => "hello from payload",
+      "user_name" => "alice",
+      "display_name" => "Alice"
+    }
   end
 
-  describe "route_webhook/4" do
-    test "uses credentials and settings from the selected bridge" do
-      {:ok, _bridge} =
-        TestMessaging.put_bridge_config(%{
-          id: "bridge_config_aware",
-          adapter_module: ConfigAwareAdapter,
-          secret_refs: %{token: :bridge_secret},
-          opts: %{parse_result: :noop}
-        })
-
-      assert {:ok, :noop} =
-               InboundRouter.route_webhook(
-                 TestMessaging,
-                 "bridge_config_aware",
-                 %{"kind" => "noop"},
-                 headers: %{"authorization" => "bridge-secret"}
-               )
-
-      assert {:error, :invalid_signature} =
-               InboundRouter.route_webhook(
-                 TestMessaging,
-                 "bridge_config_aware",
-                 %{"kind" => "noop"},
-                 headers: %{"authorization" => "wrong-secret"}
-               )
-    end
-
-    test "returns :noop for ack-only webhook events" do
-      assert {:ok, :noop} =
-               InboundRouter.route_webhook(
-                 TestMessaging,
-                 "bridge_tg",
-                 %{"kind" => "noop"},
-                 headers: %{"x-test" => "1"}
-               )
-    end
-
-    test "returns typed non-message event without ingesting" do
-      assert {:ok, {:event, event}} =
-               InboundRouter.route_webhook(
-                 TestMessaging,
-                 "bridge_tg",
-                 %{"kind" => "reaction", "room" => "chat_1", "id" => "msg_1", "emoji" => "👍"}
-               )
-
-      assert event.event_type == :reaction
-      assert event.payload.emoji == "👍"
-    end
-
-    test "returns webhook verification errors" do
-      assert {:error, :invalid_signature} =
-               InboundRouter.route_webhook(
-                 TestMessaging,
-                 "bridge_tg",
-                 %{"kind" => "message", "room" => "chat_1", "user" => "u1", "id" => "m1", "text" => "x"},
-                 reject_signature: true
-               )
-    end
-
-    test "returns :bridge_not_found for unknown bridge id" do
-      assert {:error, :bridge_not_found} =
-               InboundRouter.route_webhook(
-                 TestMessaging,
-                 "missing_bridge",
-                 %{"kind" => "noop"}
-               )
-    end
-
-    test "returns :bridge_disabled for disabled bridge config" do
-      {:ok, _bridge} =
-        TestMessaging.put_bridge_config(%{
-          id: "bridge_disabled",
-          adapter_module: RouterAdapter,
-          enabled: false
-        })
-
-      assert {:error, :bridge_disabled} =
-               InboundRouter.route_payload(
-                 TestMessaging,
-                 "bridge_disabled",
-                 %{"kind" => "message", "room" => "chat_1", "user" => "u1", "id" => "m1", "text" => "x"}
-               )
-    end
+  test "the private payload control returns typed canonical acceptance facts" do
+    assert {:ok, [fact]} = InboundRouter.route_payload(TestMessaging, "bridge_tg", message())
+    assert fact.type == "jido.messaging.message.received"
+    assert fact.data["bridge_id"] == "bridge_tg"
+    assert fact.data["external_room_id"] == "chat_42"
+    assert {:ok, stored} = TestMessaging.get_message(fact.data["message_id"])
+    assert stored.external_id == "msg_100"
   end
 
-  describe "route_webhook_request/5" do
-    test "returns typed webhook response and ingest outcome for noop events" do
-      request_meta = %{
-        headers: %{"x-test" => "1"},
-        path: "/telegram/webhook",
-        method: "POST",
-        raw_body: ~s({"kind":"noop"})
-      }
-
-      assert {:ok, %WebhookResponse{} = response, {:ok, :noop}} =
-               InboundRouter.route_webhook_request(
-                 TestMessaging,
-                 "bridge_tg",
-                 request_meta,
-                 %{"kind" => "noop"}
-               )
-
-      assert response.status == 200
-      assert response.body == %{ok: true}
-    end
-
-    test "maps bridge-not-found to typed 404 response" do
-      assert {:ok, %WebhookResponse{} = response, {:error, :bridge_not_found}} =
-               InboundRouter.route_webhook_request(
-                 TestMessaging,
-                 "missing_bridge",
-                 %{headers: %{}, path: "/missing", method: "POST"},
-                 %{"kind" => "noop"}
-               )
-
-      assert response.status == 404
-      assert (response.body[:error] || response.body["error"]) == "bridge_not_found"
-    end
-
-    test "falls back to safe error serialization when adapter formatter fails" do
-      request_meta = %{headers: %{}, path: "/telegram/webhook", method: "POST"}
-
-      assert {:ok, %WebhookResponse{} = response, {:error, {:invalid_event, _details}}} =
-               InboundRouter.route_webhook_request(
-                 TestMessaging,
-                 "bridge_tg",
-                 request_meta,
-                 %{"kind" => "structured_error"},
-                 force_format_error: true
-               )
-
-      assert response.status == 400
-      assert (response.body[:error] || response.body["error"]) =~ "{:invalid_event, %{reason: \"payload_malformed\"}}"
-    end
+  test "a duplicate normalized item does not write or observe again" do
+    assert {:ok, [fact]} = InboundRouter.route_payload(TestMessaging, "bridge_tg", message())
+    assert {:ok, []} = InboundRouter.route_payload(TestMessaging, "bridge_tg", message())
+    assert {:ok, [_one]} = TestMessaging.list_messages(fact.data["room_id"])
   end
 
-  describe "route_ingress/6" do
-    test "returns canonical IngressOutcome for webhook mode" do
-      assert {:ok, %IngressOutcome{} = outcome} =
-               InboundRouter.route_ingress(
-                 TestMessaging,
-                 "bridge_tg",
-                 :webhook,
-                 %{headers: %{}, path: "/telegram/webhook", method: "POST"},
-                 %{"kind" => "noop"},
-                 []
-               )
+  test "raw event wrappers cannot enter the sink or become public facts" do
+    assert {:error, %Jido.Chat.Errors.Contract{}} =
+             InboundRouter.route_payload(TestMessaging, "bridge_tg", %{
+               event_type: :reaction,
+               payload: %{emoji: "🔥"},
+               raw: %{private_token: "secret"}
+             })
 
-      assert outcome.mode == :webhook
-      assert outcome.status == :noop
-      assert outcome.response.status == 200
-      assert outcome.bridge_id == "bridge_tg"
-    end
+    assert TestMessaging.list_rooms() == {:ok, []}
+  end
+
+  test "webhook verification uses the captured credentials and settings" do
+    {:ok, _} =
+      TestMessaging.put_bridge_config(%{
+        id: "config_aware",
+        adapter_module: ConfigAwareAdapter,
+        secret_refs: %{token: :bridge_secret},
+        opts: %{parse_result: :noop}
+      })
+
+    assert {:ok, []} =
+             InboundRouter.route_webhook(TestMessaging, "config_aware", %{"kind" => "noop"},
+               headers: %{"authorization" => "bridge-secret"}
+             )
+
+    assert {:error, :invalid_signature} =
+             InboundRouter.route_webhook(TestMessaging, "config_aware", %{"kind" => "noop"},
+               headers: %{"authorization" => "wrong-secret"}
+             )
+  end
+
+  test "acknowledgement-only input is an empty delivery" do
+    assert {:ok, []} = InboundRouter.route_webhook(TestMessaging, "bridge_tg", %{"kind" => "noop"})
+  end
+
+  test "a normalized reaction is observed without message ingestion" do
+    {:ok, _} = TestMessaging.subscribe_signals("jido.chat.reaction.added")
+    payload = %{"kind" => "reaction", "room" => "chat_1", "id" => "msg_1", "emoji" => "👍"}
+    assert {:ok, []} = InboundRouter.route_webhook(TestMessaging, "bridge_tg", payload)
+    assert_receive {:signal, fact}
+    assert fact.data["reaction"] == "👍"
+    assert TestMessaging.list_rooms() == {:ok, []}
+  end
+
+  test "a verification failure prevents normalization and records" do
+    {:ok, _} =
+      TestMessaging.put_bridge_config(%{id: "reject", adapter_module: RouterAdapter, opts: %{reject_signature: true}})
+
+    assert {:error, :invalid_signature} = InboundRouter.route_webhook(TestMessaging, "reject", message())
+    assert TestMessaging.list_rooms() == {:ok, []}
+  end
+
+  test "an unknown bridge is rejected" do
+    assert {:error, :bridge_not_found} = InboundRouter.route_webhook(TestMessaging, "missing", %{"kind" => "noop"})
+  end
+
+  test "a disabled bridge is rejected before normalization" do
+    {:ok, _} = TestMessaging.put_bridge_config(%{id: "disabled", adapter_module: RouterAdapter, enabled: false})
+    assert {:error, :bridge_disabled} = InboundRouter.route_payload(TestMessaging, "disabled", message())
+    assert TestMessaging.list_rooms() == {:ok, []}
+  end
+
+  test "a private webhook response is separate from the empty public acceptance" do
+    assert {:ok, %WebhookResponse{} = response, {:ok, []}} =
+             InboundRouter.route_webhook_request(
+               TestMessaging,
+               "bridge_tg",
+               %{headers: %{}, method: "POST", path: "/webhook", raw_body: ~s({"kind":"noop"})},
+               %{"kind" => "noop"}
+             )
+
+    assert response.status == 200
+    assert response.body == %{ok: true}
+  end
+
+  test "an unknown bridge gets a private 404 response" do
+    assert {:ok, %WebhookResponse{} = response, {:error, :bridge_not_found}} =
+             InboundRouter.route_webhook_request(
+               TestMessaging,
+               "missing",
+               %{headers: %{}},
+               %{"kind" => "noop"}
+             )
+
+    assert response.status == 404
+    assert response.body == %{error: "ingress_rejected"}
+  end
+
+  test "a formatter failure gets a safe error response" do
+    {:ok, _} =
+      TestMessaging.put_bridge_config(%{
+        id: "format_error",
+        adapter_module: RouterAdapter,
+        opts: %{force_format_error: true}
+      })
+
+    assert {:ok, %WebhookResponse{} = response, {:error, %Jido.Chat.Errors.Contract{}}} =
+             InboundRouter.route_webhook_request(
+               TestMessaging,
+               "format_error",
+               %{headers: %{}},
+               %{"kind" => "structured_error", "private_token" => "secret"}
+             )
+
+    assert response.status == 400
+    assert response.body == %{error: "ingress_rejected"}
+    refute Jason.encode!(response.body) =~ "secret"
+  end
+
+  test "the ingress outcome wrapper and public raw routing aliases are absent" do
+    refute Code.ensure_loaded?(Jido.Messaging.IngressOutcome)
+    refute function_exported?(InboundRouter, :route_ingress, 6)
+    refute function_exported?(TestMessaging, :route_webhook, 2)
+    refute function_exported?(TestMessaging, :route_payload, 2)
   end
 end

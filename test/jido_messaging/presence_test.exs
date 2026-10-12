@@ -102,12 +102,11 @@ defmodule Jido.Messaging.PresenceTest do
     assert_receive {:signal, joined}, 1_000
     assert joined.type == "jido.messaging.room.participant_joined"
     assert joined.data["participant_id"] == "user:1"
-    assert joined.data["source"] == "test.presence"
+    assert joined.source == Jido.Messaging.Events.source(TestMessaging)
 
     assert_receive {:signal, changed}, 1_000
     assert changed.type == "jido.messaging.participant.presence_changed"
-    assert changed.data["from"] == :offline
-    assert changed.data["to"] == :online
+    assert changed.data["presence"] == "online"
 
     assert {:ok, refreshed, []} =
              AdapterPresence.touch("user:1", room.id, session_id: "session:1")
@@ -164,14 +163,14 @@ defmodule Jido.Messaging.PresenceTest do
 
     assert presence.online_user_ids == ["user:1"]
     assert Enum.map(second_room_signals, & &1.type) == ["jido.messaging.room.participant_joined"]
-    assert hd(second_room_signals).subject == room_b.id
+    assert hd(second_room_signals).subject == Jido.Messaging.Signal.Identity.room_subject(room_b.id)
 
     assert {:ok, presence, room_left_signals} =
              AdapterPresence.mark_left("user:1", session_id: "session:2", reason: :disconnect)
 
     assert presence.online_user_ids == ["user:1"]
     assert Enum.map(room_left_signals, & &1.type) == ["jido.messaging.room.participant_left"]
-    assert hd(room_left_signals).subject == room_b.id
+    assert hd(room_left_signals).subject == Jido.Messaging.Signal.Identity.room_subject(room_b.id)
   end
 
   test "public API normalizes map options and non-string session IDs" do

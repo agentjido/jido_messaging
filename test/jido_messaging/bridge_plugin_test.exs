@@ -13,7 +13,11 @@ defmodule Jido.Messaging.BridgePluginTest do
     def capabilities, do: [:text, :image, :streaming]
 
     @impl true
-    def transform_incoming(_raw), do: {:error, :not_implemented}
+    def signal_protocol, do: 1
+    @impl true
+    def configure_binding(opts), do: {:ok, opts}
+    @impl true
+    def normalize_event(_binding, _payload), do: Jido.Chat.Signal.Policy.error(:invalid_delivery)
 
     @impl true
     def send_message(_room_id, _text, _opts), do: {:error, :not_implemented}
@@ -26,7 +30,11 @@ defmodule Jido.Messaging.BridgePluginTest do
     def channel_type, do: :basic
 
     @impl true
-    def transform_incoming(_raw), do: {:error, :not_implemented}
+    def signal_protocol, do: 1
+    @impl true
+    def configure_binding(opts), do: {:ok, opts}
+    @impl true
+    def normalize_event(_binding, _payload), do: Jido.Chat.Signal.Policy.error(:invalid_delivery)
 
     @impl true
     def send_message(_room_id, _text, _opts), do: {:error, :not_implemented}
@@ -111,7 +119,11 @@ defmodule Jido.Messaging.BridgePluginTest do
   describe "schema/0" do
     test "returns the Zoi schema" do
       schema = BridgePlugin.schema()
-      assert is_struct(schema)
+
+      assert {:ok, %BridgePlugin{id: :test, capabilities: [], adapters: %{}}} =
+               Zoi.parse(schema, %{id: :test, adapter_module: TestChannel, label: "Test"})
+
+      assert {:error, _} = Zoi.parse(schema, %{id: 1, adapter_module: TestChannel, label: "Test"})
     end
   end
 end

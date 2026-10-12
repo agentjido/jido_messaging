@@ -14,7 +14,11 @@ defmodule Jido.Messaging.ReplyMappingTest do
     def channel_type, do: :mock
 
     @impl true
-    def transform_incoming(_), do: {:error, :not_implemented}
+    def signal_protocol, do: 1
+    @impl true
+    def configure_binding(opts), do: {:ok, opts}
+    @impl true
+    def normalize_event(_binding, _payload), do: Jido.Chat.Signal.Policy.error(:invalid_delivery)
 
     @impl true
     def send_message(_chat_id, _text, _opts),
@@ -159,6 +163,35 @@ defmodule Jido.Messaging.ReplyMappingTest do
       assert reply_msg.reply_to_id == parent_msg.id
       assert reply_msg.external_reply_to_id == "parent_ext_123"
       assert reply_msg.external_id == "reply_ext_456"
+    end
+
+    test "reply resolution retains room scope when provider message IDs repeat" do
+      parents =
+        for external_room <- ["reply-room-1", "reply-room-2"] do
+          {:ok, message, _} =
+            Ingest.ingest_incoming(TestMessaging, MockChannel, "reply-scope", %{
+              external_room_id: external_room,
+              external_user_id: "sender",
+              external_message_id: "shared-parent",
+              text: external_room
+            })
+
+          message
+        end
+
+      for {external_room, parent} <- Enum.zip(["reply-room-1", "reply-room-2"], parents) do
+        {:ok, reply, _} =
+          Ingest.ingest_incoming(TestMessaging, MockChannel, "reply-scope", %{
+            external_room_id: external_room,
+            external_user_id: "sender",
+            external_message_id: "reply",
+            external_reply_to_id: "shared-parent",
+            text: "Reply"
+          })
+
+        assert reply.room_id == parent.room_id
+        assert reply.reply_to_id == parent.id
+      end
     end
 
     test "reply_to_id is nil when external_reply_to_id cannot be resolved" do

@@ -26,7 +26,7 @@ defmodule Jido.Messaging.WebhookPlug do
          {:ok, payload} <- decode_payload(raw_body),
          request_meta <- request_meta(conn, raw_body),
          {:ok, response, _outcome} <-
-           Jido.Messaging.route_webhook_request(
+           Jido.Messaging.InboundRouter.route_webhook_request(
              instance_module,
              bridge_id,
              request_meta,

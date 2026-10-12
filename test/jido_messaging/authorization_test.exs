@@ -37,7 +37,11 @@ defmodule Jido.Messaging.AuthorizationTest do
     def channel_type, do: :authorization_test
 
     @impl true
-    def transform_incoming(_raw), do: {:error, :not_implemented}
+    def signal_protocol, do: 1
+    @impl true
+    def configure_binding(opts), do: {:ok, opts}
+    @impl true
+    def normalize_event(_binding, _payload), do: Jido.Chat.Signal.Policy.error(:invalid_delivery)
 
     @impl true
     def capabilities, do: %{post_message: :native, fetch_channel_messages: :native}
@@ -298,7 +302,7 @@ defmodule Jido.Messaging.AuthorizationTest do
     end
   end
 
-  test "enforced chat actions deny before provider access and legacy mode stays explicit" do
+  test "chat actions require grants and reject the old authorization bypass" do
     prefix = "chat-action"
     participant = create_participant(ActionMessaging, "#{prefix}-agent", :agent)
     room = create_room(ActionMessaging, "#{prefix}-room")
@@ -332,7 +336,7 @@ defmodule Jido.Messaging.AuthorizationTest do
         authorization_scope: canonical_scope
       )
 
-    assert {:ok, %{status: :denied, code: :authorization_denied}} =
+    assert {:ok, %Jido.Signal{type: "jido.messaging.operation.failed", data: %{"code" => "authorization_denied"}}} =
              Jido.Exec.run(PostMessage, params, enforced_context)
 
     refute_received {:authorized_provider_call, _room_id, _payload, _opts}
@@ -345,7 +349,7 @@ defmodule Jido.Messaging.AuthorizationTest do
                scope: canonical_scope
              })
 
-    assert {:ok, %{status: :ok, audit: %{authorization_mode: :enforce}}} =
+    assert {:ok, %Jido.Signal{type: "jido.messaging.operation.completed"}} =
              Jido.Exec.run(PostMessage, params, enforced_context)
 
     assert_receive {:authorized_provider_call, "external-room", _payload, _opts}
@@ -359,7 +363,7 @@ defmodule Jido.Messaging.AuthorizationTest do
                constraints: %{max_results: 2}
              })
 
-    assert {:ok, %{status: :ok}} =
+    assert {:ok, %Jido.Signal{type: "jido.messaging.operation.completed"}} =
              Jido.Exec.run(
                FetchChannelMessages,
                %{target: Map.from_struct(target), limit: 20},
@@ -371,7 +375,7 @@ defmodule Jido.Messaging.AuthorizationTest do
 
     assert {:ok, _revoked} = ActionMessaging.revoke_principal_grant(grant.id, 1)
 
-    assert {:ok, %{status: :denied, code: :authorization_denied}} =
+    assert {:ok, %Jido.Signal{type: "jido.messaging.operation.failed", data: %{"code" => "authorization_denied"}}} =
              Jido.Exec.run(PostMessage, params, enforced_context)
 
     refute_received {:authorized_provider_call, _room_id, _payload, _opts}
@@ -384,10 +388,10 @@ defmodule Jido.Messaging.AuthorizationTest do
         authorization_mode: :legacy
       )
 
-    assert {:ok, %{status: :ok, audit: %{authorization_mode: :legacy}}} =
+    assert {:ok, %Jido.Signal{type: "jido.messaging.operation.failed", data: %{"code" => "authorization_denied"}}} =
              Jido.Exec.run(PostMessage, params, legacy_context)
 
-    assert_receive {:authorized_provider_call, "external-room", _payload, _opts}
+    refute_received {:authorized_provider_call, "external-room", _payload, _opts}
   end
 
   test "SQLite restores current memberships, grants, and invocation policy revisions" do

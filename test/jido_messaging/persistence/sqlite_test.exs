@@ -3,7 +3,7 @@ defmodule Jido.Messaging.Persistence.SQLiteTest do
 
   alias Exqlite.Sqlite3
   alias Jido.Chat.{Participant, Room}
-  alias Jido.Messaging.{CommandResult, Message, Persistence.SQLite, RoomBinding, Thread}
+  alias Jido.Messaging.{Message, Persistence.SQLite, RoomBinding, Thread}
 
   defmodule SQLiteMessaging do
     use Jido.Messaging, persistence: SQLite
@@ -610,8 +610,8 @@ defmodule Jido.Messaging.Persistence.SQLiteTest do
 
     assert {:ok, room} = SQLiteMessaging.create_room(%{id: "room:timeline", type: :group, name: "timeline"})
 
-    assert {:ok, %CommandResult{record: root}} =
-             SQLiteMessaging.post_message(%{
+    assert {:ok, root} =
+             SQLiteMessaging.save_message(%{
                room_id: room.id,
                sender_id: "user:1",
                role: :user,
@@ -619,8 +619,8 @@ defmodule Jido.Messaging.Persistence.SQLiteTest do
                status: :sent
              })
 
-    assert {:ok, %CommandResult{record: reply}} =
-             SQLiteMessaging.post_message(%{
+    assert {:ok, reply} =
+             SQLiteMessaging.save_message(%{
                room_id: room.id,
                sender_id: "user:2",
                role: :user,

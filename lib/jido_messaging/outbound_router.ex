@@ -65,25 +65,32 @@ defmodule Jido.Messaging.OutboundRouter do
 
     with {:ok, policy, routes} <- resolve(instance_module, room_id, opts),
          false <- Enum.empty?(routes) do
-      {delivered, failed} = dispatch_routes(instance_module, room_id, text, routes, policy, gateway_opts)
-
-      summary = %{
-        room_id: room_id,
-        policy: policy,
-        attempted: length(delivered) + length(failed),
-        delivered: delivered,
-        failed: failed
-      }
-
-      if delivered == [] do
-        {:error, {:delivery_failed, summary}}
-      else
-        {:ok, summary}
-      end
+      execute_plan(instance_module, room_id, text, {policy, routes}, gateway_opts)
     else
       true -> {:error, :no_routes}
       {:error, _reason} = error -> error
     end
+  end
+
+  @doc false
+  @spec plan(module(), String.t()) :: {:ok, RoutingPolicy.t(), [route()]} | {:error, term()}
+  def plan(instance, room), do: resolve(instance, room, [])
+
+  @doc false
+  @spec execute_plan(module(), String.t(), String.t(), {RoutingPolicy.t(), [route()]}, keyword()) ::
+          {:ok, delivery_summary()} | {:error, term()}
+  def execute_plan(instance, room, text, {policy, routes}, opts) do
+    {delivered, failed} = dispatch_routes(instance, room, text, routes, policy, opts)
+
+    summary = %{
+      room_id: room,
+      policy: policy,
+      attempted: length(delivered) + length(failed),
+      delivered: delivered,
+      failed: failed
+    }
+
+    if delivered == [], do: {:error, {:delivery_failed, summary}}, else: {:ok, summary}
   end
 
   defp resolve(instance_module, room_id, opts) do

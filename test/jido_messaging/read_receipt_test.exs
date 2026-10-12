@@ -6,28 +6,21 @@ defmodule Jido.Messaging.ReadReceiptTest do
   alias Jido.Messaging.Persistence.{ETS, SQLite}
 
   defmodule NativeAdapter do
-    @behaviour Jido.Chat.Adapter
-
-    @impl true
+    use Jido.Chat.Adapter
     def channel_type, do: :receipt_test
+    def signal_protocol, do: 1
+    def configure_binding(opts), do: {:ok, Keyword.merge(opts, Map.to_list(opts[:settings] || %{}))}
+    def normalize_event(binding, _raw), do: Jido.Chat.Delivery.new(binding, "empty", [])
 
-    @impl true
-    def send_message(_external_room_id, _text, _opts), do: {:ok, %{message_id: "sent-1"}}
-
-    @impl true
-    def transform_incoming(_raw), do: {:error, :not_implemented}
-
-    @impl true
     def mark_as_read(external_room_id, external_message_id, opts) do
-      send(opts[:notify_pid], {:provider_read, external_room_id, external_message_id, opts})
+      {:ok, before} = Jido.Messaging.ReadReceiptTest.ETSMessaging.get_message("message-1")
+      send(opts[:notify_pid], {:provider_read, external_room_id, external_message_id, opts, before.receipts})
       :ok
     end
   end
 
   defmodule Resolver do
     @behaviour Jido.Messaging.SecretResolver
-
-    @impl true
     def resolve(:receipt_token, context) do
       send(Application.fetch_env!(Resolver, :notify_pid), {:resolved_secret, context})
       {:ok, "resolved-receipt-token"}
@@ -37,37 +30,38 @@ defmodule Jido.Messaging.ReadReceiptTest do
   end
 
   defmodule FailingAdapter do
-    @behaviour Jido.Chat.Adapter
-
-    @impl true
-    def channel_type, do: :receipt_failure
-
-    @impl true
-    def send_message(_external_room_id, _text, _opts), do: {:ok, %{message_id: "sent-1"}}
-
-    @impl true
-    def transform_incoming(_raw), do: {:error, :not_implemented}
-
-    @impl true
-    def mark_as_read(_external_room_id, _external_message_id, _opts),
-      do: {:error, :provider_unavailable}
+    use Jido.Chat.Adapter
+    def channel_type, do: :receipt_test
+    def signal_protocol, do: 1
+    def configure_binding(opts), do: {:ok, opts}
+    def normalize_event(binding, _raw), do: Jido.Chat.Delivery.new(binding, "empty", [])
+    def mark_as_read(_room, _message, _opts), do: {:error, :provider_unavailable}
   end
 
   defmodule UnsupportedAdapter do
-    @behaviour Jido.Chat.Adapter
+    use Jido.Chat.Adapter
+    def channel_type, do: :receipt_test
+    def signal_protocol, do: 1
+    def configure_binding(opts), do: {:ok, opts}
+    def normalize_event(binding, _raw), do: Jido.Chat.Delivery.new(binding, "empty", [])
+  end
 
-    @impl true
-    def channel_type, do: :receipt_unsupported
+  defmodule FailingPersistence do
+    @behaviour Jido.Messaging.Persistence
+    for {name, arity} <- ETS.__info__(:functions), {name, arity} != {:mark_message_read, 4} do
+      args = Macro.generate_arguments(arity, __MODULE__)
+      defdelegate unquote(name)(unquote_splicing(args)), to: ETS
+    end
 
-    @impl true
-    def send_message(_external_room_id, _text, _opts), do: {:ok, %{message_id: "sent-1"}}
-
-    @impl true
-    def transform_incoming(_raw), do: {:error, :not_implemented}
+    def mark_message_read(state, id, participant, receipt) do
+      if :ets.lookup(state.rooms, :receipt_write_fail) == [],
+        do: ETS.mark_message_read(state, id, participant, receipt),
+        else: {:error, :store_unavailable}
+    end
   end
 
   defmodule ETSMessaging do
-    use Jido.Messaging, persistence: ETS
+    use Jido.Messaging, persistence: Jido.Messaging.ReadReceiptTest.FailingPersistence, runtime_profile: :core
   end
 
   describe "provider read mapping" do
@@ -75,12 +69,11 @@ defmodule Jido.Messaging.ReadReceiptTest do
       start_supervised!(ETSMessaging)
 
       {:ok, room} =
-        ETSMessaging.get_or_create_room_by_external_binding(
-          :receipt_test,
-          "bridge-1",
-          "provider-room-1",
-          %{id: "room-1", type: :channel, name: "Receipt test"}
-        )
+        ETSMessaging.get_or_create_room_by_external_binding(:receipt_test, "bridge-1", "provider-room-1", %{
+          id: "room-1",
+          type: :channel,
+          name: "Receipt test"
+        })
 
       {:ok, message} =
         ETSMessaging.save_message(%{
@@ -94,27 +87,59 @@ defmodule Jido.Messaging.ReadReceiptTest do
           metadata: %{channel: :receipt_test, bridge_id: "bridge-1"}
         })
 
-      %{message: message}
+      {:ok, reader} = ETSMessaging.create_participant(%{id: "reader-1", type: :human})
+
+      {:ok, _} =
+        ETSMessaging.create_membership(%{principal_id: reader.id, room_id: room.id, issuer_principal_id: "host"})
+
+      scope = Jido.Messaging.AuthorizationScope.new(%{kind: :room, room_id: room.id, bridge_id: "bridge-1"})
+
+      {:ok, _} =
+        ETSMessaging.create_principal_grant(%{
+          principal_id: reader.id,
+          issuer_principal_id: "host",
+          actions: [:receive_message],
+          scope: scope
+        })
+
+      %{message: message, actor: [principal_id: reader.id, authorization_scope: scope]}
     end
 
-    test "calls the provider before it persists one stable read receipt", %{message: message} do
+    defp configure(adapter, opts \\ %{}, secret_refs \\ %{}) do
+      {:ok, config} =
+        ETSMessaging.put_bridge_config(%{id: "bridge-1", adapter_module: adapter, opts: opts, secret_refs: secret_refs})
+
+      result =
+        Jido.Messaging.Runtime.ensure_binding(ETSMessaging.__jido_messaging__(:runtime), adapter, "bridge-1",
+          bridge_config: config
+        )
+
+      {config, result}
+    end
+
+    defp read_request(context, id, read_at \\ nil) do
+      data = %{
+        "request_id" => id,
+        "room_id" => context.message.room_id,
+        "message_id" => context.message.id,
+        "bridge_id" => "bridge-1"
+      }
+
+      data = if read_at, do: Map.put(data, "read_at", read_at), else: data
+      Jido.Messaging.Signal.MarkAsRead.new!(data)
+    end
+
+    test "calls the provider before it persists one stable read receipt", context do
       read_at = ~U[2026-08-20 12:00:00Z]
-
-      assert {:ok, config} =
-               ETSMessaging.put_bridge_config(%{
-                 id: "bridge-1",
-                 adapter_module: NativeAdapter,
-                 opts: %{notify_pid: self(), tenant: "tenant-1"}
-               })
-
-      assert {:ok, read} =
-               ETSMessaging.mark_message_as_read(message.id, "reader-1", read_at: read_at)
-
-      assert_receive {:provider_read, "provider-room-1", "provider-message-1", provider_opts}
+      {config, {:ok, _}} = configure(NativeAdapter, %{notify_pid: self(), tenant: "tenant-1"})
+      {:ok, _} = ETSMessaging.subscribe_signals("jido.messaging.message.read")
+      request = read_request(context, "read", DateTime.to_iso8601(read_at))
+      assert {:ok, result} = ETSMessaging.execute(request, context.actor)
+      assert result.type == "jido.messaging.operation.completed"
+      assert_receive {:provider_read, "provider-room-1", "provider-message-1", provider_opts, %{}}
       assert provider_opts[:credentials] == config.credentials
       assert provider_opts[:tenant] == "tenant-1"
-      assert provider_opts[:participant_id] == "reader-1"
-
+      assert {:ok, read} = ETSMessaging.get_message(context.message.id)
       assert read.status == :read
       assert read.receipts["reader-1"].delivered_at == read_at
       assert read.receipts["reader-1"].read_at == read_at
@@ -124,109 +149,121 @@ defmodule Jido.Messaging.ReadReceiptTest do
                read_at: read_at
              }
 
-      assert {:ok, replayed} =
-               ETSMessaging.mark_message_as_read(message.id, "reader-1", read_at: DateTime.add(read_at, 60))
+      assert_receive {:signal, fact}
+      assert fact.data["participant_id"] == "reader-1"
+      assert Jido.Signal.Context.get(fact, "causationid") == request.id
 
-      assert replayed == read
-      refute_receive {:provider_read, _, _, _}
-      assert {:ok, ^read} = ETSMessaging.get_message(message.id)
+      assert {:ok, _} =
+               ETSMessaging.execute(
+                 read_request(context, "again", DateTime.to_iso8601(DateTime.add(read_at, 60))),
+                 context.actor
+               )
+
+      refute_receive {:provider_read, _, _, _, _}
+      refute_receive {:signal, _}
+      assert {:ok, ^read} = ETSMessaging.get_message(context.message.id)
     end
 
-    test "resolves bridge secrets for mark_as_read before calling the provider", %{message: message} do
-      original_resolver = Application.get_env(ETSMessaging, :secret_resolver)
-      original_notify_pid = Application.get_env(Resolver, :notify_pid)
+    test "resolves bridge secrets once before the provider call", context do
+      original = Application.get_env(ETSMessaging, :secret_resolver)
+      previous_pid = Application.get_env(Resolver, :notify_pid)
       Application.put_env(ETSMessaging, :secret_resolver, Resolver)
       Application.put_env(Resolver, :notify_pid, self())
 
       on_exit(fn ->
-        restore_env(ETSMessaging, :secret_resolver, original_resolver)
-        restore_env(Resolver, :notify_pid, original_notify_pid)
+        restore_env(ETSMessaging, :secret_resolver, original)
+        restore_env(Resolver, :notify_pid, previous_pid)
       end)
 
-      assert {:ok, _config} =
-               ETSMessaging.put_bridge_config(%{
-                 id: "bridge-1",
-                 adapter_module: NativeAdapter,
-                 secret_refs: %{token: :receipt_token},
-                 opts: %{notify_pid: self()}
-               })
-
-      assert {:ok, _read} = ETSMessaging.mark_message_as_read(message.id, "reader-1")
-
-      assert_receive {:resolved_secret,
-                      %{operation: :mark_as_read, bridge_id: "bridge-1", adapter_module: NativeAdapter}}
-
-      assert_receive {:provider_read, "provider-room-1", "provider-message-1", provider_opts}
+      {_config, {:ok, _}} = configure(NativeAdapter, %{notify_pid: self()}, %{token: :receipt_token})
+      assert_receive {:resolved_secret, %{operation: :configure, bridge_id: "bridge-1", adapter_module: NativeAdapter}}
+      assert {:ok, _} = ETSMessaging.execute(read_request(context, "read"), context.actor)
+      assert_receive {:provider_read, "provider-room-1", "provider-message-1", provider_opts, %{}}
       assert provider_opts[:credentials] == %{token: "resolved-receipt-token"}
-      assert provider_opts[:participant_id] == "reader-1"
-      assert provider_opts[:local_message_id] == message.id
+      assert {:ok, _} = ETSMessaging.execute(read_request(context, "replay"), context.actor)
+      refute_receive {:resolved_secret, _}
     end
 
-    test "does not call the provider or persist when secret resolution fails", %{message: message} do
-      original_resolver = Application.get_env(ETSMessaging, :secret_resolver)
+    test "does not call or persist when secret resolution fails", context do
+      previous = Application.get_env(ETSMessaging, :secret_resolver)
       Application.put_env(ETSMessaging, :secret_resolver, Resolver)
-      on_exit(fn -> restore_env(ETSMessaging, :secret_resolver, original_resolver) end)
-
-      assert {:ok, _config} =
-               ETSMessaging.put_bridge_config(%{
-                 id: "bridge-1",
-                 adapter_module: NativeAdapter,
-                 secret_refs: %{token: :failing_receipt_token},
-                 opts: %{notify_pid: self()}
-               })
-
-      assert {:error, {:secret_resolution_failed, "bridge-1", :token, :resolver_failed}} =
-               ETSMessaging.mark_message_as_read(message.id, "reader-1")
-
-      refute_receive {:provider_read, _, _, _}
-      assert {:ok, unchanged} = ETSMessaging.get_message(message.id)
+      on_exit(fn -> restore_env(ETSMessaging, :secret_resolver, previous) end)
+      {_config, {:error, _}} = configure(NativeAdapter, %{notify_pid: self()}, %{token: :failing_receipt_token})
+      assert {:ok, failed} = ETSMessaging.execute(read_request(context, "secret-failed"), context.actor)
+      assert failed.data["code"] == "persistence_failed"
+      refute_receive {:provider_read, _, _, _, _}
+      assert {:ok, unchanged} = ETSMessaging.get_message(context.message.id)
       assert unchanged.receipts == %{}
     end
 
-    test "does not persist a receipt when the provider fails", %{message: message} do
-      assert {:ok, _config} =
-               ETSMessaging.put_bridge_config(%{
-                 id: "bridge-1",
-                 adapter_module: FailingAdapter
-               })
-
-      assert {:error, :provider_unavailable} =
-               ETSMessaging.mark_message_as_read(message.id, "reader-1")
-
-      assert {:ok, unchanged} = ETSMessaging.get_message(message.id)
+    test "does not persist a receipt when the provider fails", context do
+      {_config, {:ok, _}} = configure(FailingAdapter)
+      assert {:ok, failed} = ETSMessaging.execute(read_request(context, "failed"), context.actor)
+      assert failed.data["code"] == "provider_failure"
+      assert {:ok, unchanged} = ETSMessaging.get_message(context.message.id)
       assert unchanged.status == :sent
       assert unchanged.receipts == %{}
     end
 
-    test "does not claim a receipt for an unsupported adapter", %{message: message} do
-      assert {:ok, _config} =
-               ETSMessaging.put_bridge_config(%{
-                 id: "bridge-1",
-                 adapter_module: UnsupportedAdapter
-               })
-
-      assert {:error, :unsupported} =
-               ETSMessaging.mark_message_as_read(message.id, "reader-1")
-
-      assert {:ok, unchanged} = ETSMessaging.get_message(message.id)
+    test "does not claim a receipt for an unsupported adapter", context do
+      {_config, {:ok, _}} = configure(UnsupportedAdapter)
+      assert {:ok, failed} = ETSMessaging.execute(read_request(context, "unsupported"), context.actor)
+      assert failed.data["code"] == "unsupported"
+      assert {:ok, unchanged} = ETSMessaging.get_message(context.message.id)
       assert unchanged.status == :sent
       assert unchanged.receipts == %{}
     end
 
-    test "rejects an invalid timestamp before it calls the provider", %{message: message} do
-      assert {:ok, _config} =
+    test "rejects an invalid timestamp before a provider call", context do
+      {_config, {:ok, _}} = configure(NativeAdapter, %{notify_pid: self()})
+
+      assert {:error, %Jido.Chat.Errors.Contract{code: :invalid_request}} =
+               ETSMessaging.execute(read_request(context, "bad-date", "not-a-date"), context.actor)
+
+      refute_receive {:provider_read, _, _, _, _}
+      assert {:ok, unchanged} = ETSMessaging.get_message(context.message.id)
+      assert unchanged.receipts == %{}
+    end
+
+    test "a receipt store failure cannot repeat the provider operation", context do
+      {_config, {:ok, _}} = configure(NativeAdapter, %{notify_pid: self()})
+      {_adapter, state} = Jido.Messaging.Runtime.get_persistence(ETSMessaging.__jido_messaging__(:runtime))
+      :ets.insert(state.rooms, {:receipt_write_fail, true})
+      request = read_request(context, "save-failed")
+      assert {:ok, failed} = ETSMessaging.execute(request, context.actor)
+      assert failed.data["code"] == "persistence_failed"
+      assert_receive {:provider_read, _, _, _, %{}}
+      assert {:ok, ^failed} = ETSMessaging.execute(request, context.actor)
+      refute_receive {:provider_read, _, _, _, _}
+      assert {:ok, unchanged} = ETSMessaging.get_message(context.message.id)
+      assert unchanged.receipts == %{}
+    end
+
+    test "a disabled bridge cannot use an old captured binding", context do
+      {config, {:ok, _}} = configure(NativeAdapter, %{notify_pid: self()})
+
+      assert {:ok, _} =
                ETSMessaging.put_bridge_config(%{
-                 id: "bridge-1",
+                 id: config.id,
                  adapter_module: NativeAdapter,
-                 opts: %{notify_pid: self()}
+                 revision: config.revision,
+                 enabled: false,
+                 opts: config.opts
                })
 
-      assert {:error, :invalid_read_at} =
-               ETSMessaging.mark_message_as_read(message.id, "reader-1", read_at: "not-a-date")
-
-      refute_receive {:provider_read, _, _, _}
-      assert {:ok, unchanged} = ETSMessaging.get_message(message.id)
+      assert {:ok, failed} = ETSMessaging.execute(read_request(context, "disabled"), context.actor)
+      assert failed.data["code"] == "persistence_failed"
+      refute_receive {:provider_read, _, _, _, _}
+      assert {:ok, unchanged} = ETSMessaging.get_message(context.message.id)
       assert unchanged.receipts == %{}
+    end
+
+    test "no reader claim can bypass the trusted actor", context do
+      {_config, {:ok, _}} = configure(NativeAdapter, %{notify_pid: self()})
+      assert {:ok, failed} = ETSMessaging.execute(read_request(context, "no-actor"), [])
+      assert failed.data["code"] == "authorization_denied"
+      refute_receive {:provider_read, _, _, _, _}
+      refute function_exported?(ETSMessaging, :mark_message_as_read, 3)
     end
   end
 

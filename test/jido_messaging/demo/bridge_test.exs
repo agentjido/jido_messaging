@@ -25,7 +25,11 @@ defmodule Jido.Messaging.Demo.BridgeTest do
     def channel_type, do: :telegram
 
     @impl true
-    def transform_incoming(_raw), do: {:error, :not_implemented}
+    def signal_protocol, do: 1
+    @impl true
+    def configure_binding(opts), do: {:ok, opts}
+    @impl true
+    def normalize_event(_binding, _payload), do: Jido.Chat.Signal.Policy.error(:invalid_delivery)
 
     @impl true
     def send_message(_room_id, _text, _opts), do: {:ok, %{message_id: "tg_stub"}}
@@ -38,7 +42,11 @@ defmodule Jido.Messaging.Demo.BridgeTest do
     def channel_type, do: :discord
 
     @impl true
-    def transform_incoming(_raw), do: {:error, :not_implemented}
+    def signal_protocol, do: 1
+    @impl true
+    def configure_binding(opts), do: {:ok, opts}
+    @impl true
+    def normalize_event(_binding, _payload), do: Jido.Chat.Signal.Policy.error(:invalid_delivery)
 
     @impl true
     def send_message(_room_id, _text, _opts), do: {:ok, %{message_id: "dc_stub"}}

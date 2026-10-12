@@ -270,6 +270,7 @@ defmodule Jido.Messaging.OutboundGateway do
       opts
       |> Keyword.put_new(:external_thread_id, context[:external_thread_id])
       |> Keyword.put_new(:delivery_external_room_id, context[:delivery_external_room_id])
+      |> Keyword.put_new(:parent_signal, context[:parent_signal])
 
     %{
       operation: operation,

@@ -6,54 +6,53 @@ defmodule Jido.Messaging.ReadReceipt do
   failure or unsupported adapter therefore leaves the local message unchanged.
   """
 
-  alias Jido.Messaging.{
-    AdapterBridge,
-    BridgeConfig,
-    ConfigStore,
-    Message,
-    RoomBinding,
-    Runtime,
-    SecretResolver
-  }
+  alias Jido.Messaging.{Message, Runtime}
 
-  @type persistence_result :: {:ok, Message.t(), :updated | :unchanged} | {:error, term()}
-
-  @doc "Marks a provider message as read and persists the normalized receipt."
-  @spec mark_as_read(module(), GenServer.server(), String.t(), String.t(), keyword()) ::
-          {:ok, Message.t()} | {:error, term()}
-  def mark_as_read(instance_module, runtime, message_id, participant_id, opts \\ [])
-      when is_atom(instance_module) and is_binary(message_id) and is_binary(participant_id) and
-             is_list(opts) do
-    {persistence, persistence_state} = Runtime.get_persistence(runtime)
-
-    with {:ok, message} <- persistence.get_message(persistence_state, message_id),
-         {:ok, bridge_id} <- resolve_bridge_id(message, opts),
-         :miss <- provider_receipt_status(message, participant_id, bridge_id),
-         {:ok, read_at} <- resolve_read_at(opts),
-         {:ok, config} <- fetch_bridge(instance_module, bridge_id),
-         {:ok, external_room_id} <- resolve_external_room_id(persistence, persistence_state, message, bridge_id, opts),
-         {:ok, external_message_id} <- resolve_external_message_id(message, opts),
-         {:ok, adapter_opts} <- adapter_opts(instance_module, config, message, participant_id, bridge_id, opts),
-         :ok <-
-           AdapterBridge.mark_as_read(
-             config.adapter_module,
-             external_room_id,
-             external_message_id,
-             adapter_opts
-           ),
-         {:ok, updated, _change} <-
-           persist(
-             persistence,
-             persistence_state,
-             message_id,
-             participant_id,
-             receipt(bridge_id, external_message_id, read_at)
-           ) do
-      {:ok, updated}
+  @doc false
+  @spec prepare(GenServer.server(), map(), String.t()) :: {:ok, map()} | {:error, term()}
+  def prepare(runtime, data, principal_id) do
+    with {:ok, message} <- Jido.Messaging.get_message(runtime, data["message_id"]),
+         {:ok, principal} <- Jido.Messaging.get_principal(runtime, principal_id),
+         true <- message.room_id == data["room_id"],
+         true <- is_binary(principal.participant_id),
+         true <- is_binary(message.external_id) and message.external_id != "",
+         true <- origin_matches?(message, data["bridge_id"]),
+         {:ok, read_at} <- read_at(data["read_at"]) do
+      {:ok,
+       %{
+         message: message,
+         participant_id: principal.participant_id,
+         bridge_id: data["bridge_id"],
+         external_message_id: message.external_id,
+         read_at: read_at,
+         already_read: provider_receipt_status(message, principal.participant_id, data["bridge_id"]) == :already_read
+       }}
     else
-      {:already_read, %Message{} = message} -> {:ok, message}
-      {:error, _reason} = error -> error
+      false -> {:error, :receipt_scope_mismatch}
+      {:error, _} = error -> error
     end
+  end
+
+  @doc false
+  @spec commit(GenServer.server(), map()) :: {:ok, Message.t(), :updated | :unchanged} | {:error, term()}
+  def commit(runtime, plan) do
+    {persistence, state} = Runtime.get_persistence(runtime)
+    receipt = %{bridge_id: plan.bridge_id, external_message_id: plan.external_message_id, read_at: plan.read_at}
+    persist(persistence, state, plan.message.id, plan.participant_id, receipt)
+  end
+
+  defp read_at(nil), do: {:ok, DateTime.utc_now()}
+
+  defp read_at(value) when is_binary(value) do
+    case DateTime.from_iso8601(value) do
+      {:ok, date, _offset} -> {:ok, date}
+      _ -> Jido.Chat.Signal.Policy.error(:invalid_request, :read_at)
+    end
+  end
+
+  defp origin_matches?(message, bridge) do
+    origin = Map.get(message.metadata, :bridge_id) || Map.get(message.metadata, "bridge_id")
+    is_nil(origin) or origin == bridge
   end
 
   @doc false
@@ -98,101 +97,8 @@ defmodule Jido.Messaging.ReadReceipt do
       |> Map.get(:provider_reads, %{})
 
     if Map.has_key?(provider_reads, bridge_id),
-      do: {:already_read, message},
+      do: :already_read,
       else: :miss
-  end
-
-  defp fetch_bridge(instance_module, bridge_id) do
-    case ConfigStore.get_bridge_config(instance_module, bridge_id) do
-      {:ok, %BridgeConfig{enabled: true} = config} -> {:ok, config}
-      {:ok, %BridgeConfig{enabled: false}} -> {:error, :bridge_disabled}
-      {:error, :not_found} -> {:error, :bridge_not_found}
-    end
-  end
-
-  defp resolve_bridge_id(message, opts) do
-    case opts[:bridge_id] || metadata_value(message.metadata, :bridge_id) do
-      bridge_id when is_binary(bridge_id) and bridge_id != "" -> {:ok, bridge_id}
-      bridge_id when not is_nil(bridge_id) -> {:ok, to_string(bridge_id)}
-      _missing -> {:error, :missing_bridge_id}
-    end
-  end
-
-  defp resolve_external_room_id(persistence, state, message, bridge_id, opts) do
-    direct = opts[:external_room_id] || message.delivery_external_room_id
-
-    if present?(direct) do
-      {:ok, direct}
-    else
-      with {:ok, bindings} <- persistence.list_room_bindings(state, message.room_id) do
-        case Enum.find(bindings, &match?(%RoomBinding{bridge_id: ^bridge_id}, &1)) do
-          %RoomBinding{} = binding ->
-            {:ok, binding.external_room_id}
-
-          nil ->
-            external_room_id_from_room(persistence, state, message.room_id, bridge_id)
-        end
-      end
-    end
-  end
-
-  defp external_room_id_from_room(persistence, state, room_id, bridge_id) do
-    with {:ok, room} <- persistence.get_room(state, room_id),
-         external_room_id when not is_nil(external_room_id) <-
-           find_external_room_id(room.external_bindings || %{}, bridge_id) do
-      {:ok, external_room_id}
-    else
-      nil -> {:error, :missing_external_room_id}
-      {:error, _reason} = error -> error
-    end
-  end
-
-  defp find_external_room_id(external_bindings, bridge_id) do
-    Enum.find_value(external_bindings, fn {_channel, bridge_bindings} ->
-      Map.get(bridge_bindings, bridge_id) || Map.get(bridge_bindings, to_string(bridge_id))
-    end)
-  end
-
-  defp resolve_external_message_id(message, opts) do
-    case opts[:external_message_id] || message.external_id do
-      nil -> {:error, :missing_external_message_id}
-      value -> {:ok, value}
-    end
-  end
-
-  defp adapter_opts(instance_module, config, message, participant_id, bridge_id, opts) do
-    base_opts =
-      config.opts
-      |> Enum.reduce([], fn
-        {key, value}, acc when is_atom(key) -> Keyword.put(acc, key, value)
-        _entry, acc -> acc
-      end)
-      |> Keyword.merge(Keyword.get(opts, :adapter_opts, []))
-
-    with {:ok, adapter_opts} <-
-           SecretResolver.adapter_opts_for_config(instance_module, config, :mark_as_read, base_opts) do
-      {:ok,
-       adapter_opts
-       |> Keyword.put(:participant_id, participant_id)
-       |> Keyword.put(:local_message_id, message.id)
-       |> Keyword.put(:bridge_id, bridge_id)}
-    end
-  end
-
-  defp receipt(bridge_id, external_message_id, read_at) do
-    %{
-      bridge_id: bridge_id,
-      external_message_id: external_message_id,
-      read_at: read_at
-    }
-  end
-
-  defp resolve_read_at(opts) do
-    case Keyword.fetch(opts, :read_at) do
-      {:ok, %DateTime{} = read_at} -> {:ok, read_at}
-      {:ok, _invalid} -> {:error, :invalid_read_at}
-      :error -> {:ok, DateTime.utc_now()}
-    end
   end
 
   defp persist(persistence, state, message_id, participant_id, receipt) do
@@ -216,10 +122,4 @@ defmodule Jido.Messaging.ReadReceipt do
       end
     end
   end
-
-  defp metadata_value(metadata, key) do
-    Map.get(metadata || %{}, key) || Map.get(metadata || %{}, Atom.to_string(key))
-  end
-
-  defp present?(value), do: not is_nil(value) and value != ""
 end
