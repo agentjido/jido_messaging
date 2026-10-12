@@ -190,6 +190,16 @@ defmodule Jido.Messaging.Execution do
     _ -> {:error, :invalid_actor_scope}
   end
 
+  defp requested_scope(_runtime, data, "create_room", %AuthorizationScope{kind: :bridge}) do
+    if is_nil(data["room_id"]), do: :ok, else: {:error, :scope_mismatch}
+  end
+
+  defp requested_scope(_runtime, data, "create_room", %AuthorizationScope{kind: :room, room_id: room}) do
+    if data["room_id"] == room, do: :ok, else: {:error, :scope_mismatch}
+  end
+
+  defp requested_scope(_runtime, _data, "create_room", _scope), do: {:error, :scope_mismatch}
+
   defp requested_scope(runtime, data, operation, scope) do
     matches =
       (is_nil(data["bridge_id"]) or data["bridge_id"] == scope.bridge_id) and
@@ -471,10 +481,11 @@ defmodule Jido.Messaging.Execution do
 
   defp local(instance, runtime, request, _definition, "create_room", _decision) do
     kind = Enum.find([:direct, :group, :channel, :thread], &(Atom.to_string(&1) == request.data["kind"]))
-    attrs = %{name: request.data["name"], type: kind}
-    attrs = if request.data["room_id"], do: Map.put(attrs, :id, request.data["room_id"]), else: attrs
+    room_id = request.data["room_id"] || Jido.Chat.ID.generate!()
+    attrs = %{id: room_id, name: request.data["name"], type: kind}
 
-    with {:ok, room} <- Jido.Messaging.create_room(runtime, attrs) do
+    with {:error, :not_found} <- Jido.Messaging.get_room(runtime, room_id),
+         {:ok, room} <- Jido.Messaging.create_room(runtime, attrs) do
       _ =
         Events.room_event(instance, :room_created, room.id, %{name: room.name, kind: Atom.to_string(room.type)},
           parent_signal: request
@@ -487,6 +498,7 @@ defmodule Jido.Messaging.Execution do
         "kind" => Atom.to_string(room.type)
       })
     else
+      {:ok, _existing} -> Policy.error(:request_conflict)
       _ -> failure(instance, request, "create_room", "persistence_failed")
     end
   end
