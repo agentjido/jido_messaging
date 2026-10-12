@@ -124,11 +124,36 @@ defmodule Jido.Messaging.SenderTest do
   end
 
   describe "queue limits" do
-    @tag :skip
     test "rejects when queue is full" do
-      # This test is skipped because it requires a blocking channel
-      # to prevent queue processing during enqueue.
-      # The queue limit (1000) is enforced in the Sender module.
+      {:ok, pid} =
+        Sender.start_link(
+          instance_module: TestMessaging,
+          instance_id: "full_queue",
+          channel: SuccessChannel
+        )
+
+      :ok = :sys.suspend(pid)
+
+      # Queue each call before the server can schedule delivery. Calls from this
+      # process retain their order and use the same protocol as GenServer.call.
+      calls =
+        for number <- 1..1001 do
+          ref = make_ref()
+          send(pid, {:"$gen_call", {self(), ref}, {:enqueue, "message_#{number}", "chat", "queued", %{}}})
+          ref
+        end
+
+      :ok = :sys.resume(pid)
+      {accepted, [rejected]} = Enum.split(calls, 1000)
+
+      for ref <- accepted do
+        assert_receive {^ref, {:ok, job_id}}, 1_000
+        assert String.starts_with?(job_id, "job_")
+      end
+
+      assert_receive {^rejected, {:error, :queue_full}}
+      assert_eventually(fn -> Sender.queue_size(pid) == 0 end)
+      refute Sender.has_been_sent?(pid, "message_1001")
     end
   end
 end
