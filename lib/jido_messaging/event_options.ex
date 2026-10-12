@@ -25,7 +25,6 @@ defmodule Jido.Messaging.EventOptions do
   }
 
   @command_keys Map.merge(@event_keys, %{
-                  "legacy_event" => :legacy_event,
                   "metadata" => :metadata,
                   "presence" => :presence,
                   "reason" => :reason,
@@ -47,7 +46,7 @@ defmodule Jido.Messaging.EventOptions do
   @doc """
   Returns a keyword list containing only recognized options for the selected keyspace.
 
-  Atom keys pass through unchanged. String keys are converted to their canonical
+  Atom keys pass through, except the retired event-mirror option. String keys are converted to their canonical
   atom form when they are known for the `:event`, `:command`, or `:presence`
   keyspace.
   """
@@ -72,6 +71,7 @@ defmodule Jido.Messaging.EventOptions do
 
   defp normalize_option_pair(_other, _keyspace), do: []
 
+  defp normalize_option_key(:legacy_event, _keyspace), do: nil
   defp normalize_option_key(key, _keyspace) when is_atom(key), do: key
   defp normalize_option_key(key, keyspace) when is_binary(key), do: Map.get(keys(keyspace), key)
   defp normalize_option_key(_key, _keyspace), do: nil
