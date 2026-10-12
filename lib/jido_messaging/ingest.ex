@@ -301,12 +301,10 @@ defmodule Jido.Messaging.Ingest do
          {:ok, thread} <-
            resolve_thread_scope(
              messaging_module,
-             channel_module,
              room_server,
              room,
              incoming,
-             msg_context,
-             opts
+             msg_context
            ),
          {:ok, message} <-
            build_message(
@@ -323,7 +321,19 @@ defmodule Jido.Messaging.Ingest do
          message <- put_verify_metadata(message, verify_result),
          {:ok, policy_message} <- apply_policy_pipeline(message, msg_context, opts),
          {:ok, persisted_message} <- messaging_module.save_message_struct(policy_message) do
-      thread = maybe_backfill_thread_root(messaging_module, thread, persisted_message)
+      {persisted_message, thread} =
+        complete_thread_scope(
+          messaging_module,
+          channel_module,
+          room_server,
+          room,
+          incoming,
+          msg_context,
+          thread,
+          persisted_message,
+          opts
+        )
+
       resolved_msg_context = MsgContext.with_resolved(msg_context, room, participant, persisted_message)
       resolved_msg_context = put_thread_context(resolved_msg_context, thread, persisted_message, external_room_id)
 
@@ -549,12 +559,10 @@ defmodule Jido.Messaging.Ingest do
 
   defp resolve_thread_scope(
          messaging_module,
-         channel_module,
          room_server,
          room,
          incoming,
-         %MsgContext{} = msg_context,
-         opts
+         %MsgContext{} = msg_context
        ) do
     case Map.get(incoming, :external_thread_id) do
       external_thread_id when is_binary(external_thread_id) ->
@@ -574,16 +582,53 @@ defmodule Jido.Messaging.Ingest do
         |> maybe_assign_thread(messaging_module, room_server, room.id, msg_context)
 
       _ ->
-        maybe_open_thread_for_assignment(
-          messaging_module,
-          channel_module,
-          room_server,
-          room,
-          incoming,
-          msg_context,
-          opts
-        )
+        {:ok, nil}
     end
+  end
+
+  # The canonical message is accepted before automatic provider work starts.
+  # Later thread-link failure cannot release that accepted message for replay.
+  defp complete_thread_scope(instance, adapter, server, room, incoming, context, thread, message, opts) do
+    thread_result =
+      if thread,
+        do: {:ok, thread},
+        else: maybe_open_thread_for_assignment(instance, adapter, server, room, incoming, context, opts)
+
+    with {:ok, thread} <- thread_result,
+         thread <- maybe_backfill_thread_root(instance, thread, message),
+         {:ok, saved} <- persist_thread_link(instance, message, thread) do
+      {saved, thread}
+    else
+      {:error, _} -> thread_scope_failed(instance, message, context, opts)
+    end
+  rescue
+    _ -> thread_scope_failed(instance, message, context, opts)
+  catch
+    _, _ -> thread_scope_failed(instance, message, context, opts)
+  end
+
+  defp persist_thread_link(_instance, message, nil), do: {:ok, message}
+  defp persist_thread_link(_instance, %{thread_id: id} = message, %{id: id}), do: {:ok, message}
+
+  defp persist_thread_link(instance, message, thread) do
+    instance.save_message_struct(%{
+      message
+      | thread_id: thread.id,
+        external_thread_id: thread.external_thread_id,
+        delivery_external_room_id: thread.delivery_external_room_id
+    })
+  end
+
+  defp thread_scope_failed(instance, message, context, opts) do
+    Signal.emit_failed(message.room_id, :persistence_failed, %{
+      instance_module: instance,
+      message_id: message.id,
+      bridge_id: context.bridge_id,
+      parent_signal: opts[:parent_signal]
+    })
+
+    Logger.warning("[Jido.Messaging.Ingest] Accepted message thread link failed")
+    {message, nil}
   end
 
   defp maybe_open_thread_for_assignment(
@@ -593,7 +638,7 @@ defmodule Jido.Messaging.Ingest do
          room,
          incoming,
          %MsgContext{} = msg_context,
-         _opts
+         opts
        ) do
     case resolve_target_agent(room_server, msg_context.agent_mentions) do
       {:ok, agent_id} ->
@@ -606,6 +651,7 @@ defmodule Jido.Messaging.Ingest do
                    open_thread_opts(msg_context, incoming)
                    |> Keyword.put(:instance_module, messaging_module)
                    |> Keyword.put(:bridge_id, msg_context.bridge_id)
+                   |> Keyword.put(:parent_signal, opts[:parent_signal])
                  ),
                {:ok, thread} <-
                  get_or_create_thread(messaging_module, room.id, %{
