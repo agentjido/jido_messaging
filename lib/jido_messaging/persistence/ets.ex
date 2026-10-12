@@ -348,6 +348,8 @@ defmodule Jido.Messaging.Persistence.ETS do
     if channel && bridge_id do
       key = {channel, bridge_id, message.external_id}
       true = :ets.insert(state.message_external_ids, {key, message.id})
+      scoped_key = {channel, bridge_id, message.external_id, message.room_id}
+      true = :ets.insert(state.message_external_ids, {scoped_key, message.id})
     end
 
     :ok
@@ -1062,20 +1064,23 @@ defmodule Jido.Messaging.Persistence.ETS do
   end
 
   @impl true
+  def get_message_by_external_id(state, channel, bridge_id, external_id, room_id) do
+    key = {channel, bridge_id, external_id, room_id}
+
+    case :ets.lookup(state.message_external_ids, key) do
+      [{^key, message_id}] -> get_message(state, message_id)
+      [] -> {:error, :not_found}
+    end
+  end
+
+  @impl true
   def update_message_external_id(state, message_id, external_id) do
     case get_message(state, message_id) do
       {:ok, message} ->
-        channel = get_in(message.metadata, [:channel])
-        bridge_id = get_in(message.metadata, [:bridge_id])
-
         delete_external_id_index(state, message)
         updated_message = %{message | external_id: external_id}
         true = :ets.insert(state.messages, {message_id, updated_message})
-
-        if channel && bridge_id do
-          key = {channel, bridge_id, external_id}
-          true = :ets.insert(state.message_external_ids, {key, message_id})
-        end
+        index_external_id(state, updated_message)
 
         {:ok, updated_message}
 
@@ -1824,6 +1829,8 @@ defmodule Jido.Messaging.Persistence.ETS do
     if channel && bridge_id do
       key = {channel, bridge_id, message.external_id}
       true = :ets.delete_object(state.message_external_ids, {key, message.id})
+      scoped_key = {channel, bridge_id, message.external_id, message.room_id}
+      true = :ets.delete_object(state.message_external_ids, {scoped_key, message.id})
     end
 
     :ok

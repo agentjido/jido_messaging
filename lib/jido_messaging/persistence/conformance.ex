@@ -255,6 +255,86 @@ defmodule Jido.Messaging.Persistence.Conformance do
                  )
       end
 
+      test "provider message IDs remain distinct across rooms", %{persistence: state} do
+        rooms = [persist_room(state), persist_room(state)]
+        external_id = unique_id("shared-provider-message")
+        bridge_id = unique_id("bridge")
+
+        messages =
+          for room <- rooms do
+            message =
+              contract_message(room.id, unique_id("message"), "sender",
+                external_id: external_id,
+                metadata: %{channel: :slack, bridge_id: bridge_id}
+              )
+
+            assert {:ok, ^message} = @persistence_adapter.save_message(state, message)
+            message
+          end
+
+        for message <- messages do
+          assert {:ok, ^message} =
+                   @persistence_adapter.get_message_by_external_id(
+                     state,
+                     :slack,
+                     bridge_id,
+                     external_id,
+                     message.room_id
+                   )
+        end
+
+        assert {:error, :not_found} =
+                 @persistence_adapter.get_message_by_external_id(
+                   state,
+                   :slack,
+                   bridge_id,
+                   external_id,
+                   unique_id("absent-room")
+                 )
+
+        [first, second] = messages
+        new_id = unique_id("changed-provider-message")
+        assert {:ok, updated} = @persistence_adapter.update_message_external_id(state, first.id, new_id)
+
+        assert {:error, :not_found} =
+                 @persistence_adapter.get_message_by_external_id(
+                   state,
+                   :slack,
+                   bridge_id,
+                   external_id,
+                   first.room_id
+                 )
+
+        assert {:ok, ^updated} =
+                 @persistence_adapter.get_message_by_external_id(
+                   state,
+                   :slack,
+                   bridge_id,
+                   new_id,
+                   first.room_id
+                 )
+
+        assert :ok = @persistence_adapter.delete_message(state, updated.id)
+
+        assert {:error, :not_found} =
+                 @persistence_adapter.get_message_by_external_id(
+                   state,
+                   :slack,
+                   bridge_id,
+                   new_id,
+                   first.room_id
+                 )
+
+        assert {:ok, ^second} =
+                 @persistence_adapter.get_message_by_external_id(
+                   state,
+                   :slack,
+                   bridge_id,
+                   external_id,
+                   second.room_id
+                 )
+      end
+
       test "concurrent get-or-create returns one external room binding", %{persistence: state} do
         external_id = unique_id("external-room")
 

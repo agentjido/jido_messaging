@@ -432,6 +432,16 @@ defmodule Jido.Messaging.Persistence.Postgres do
   end
 
   @impl true
+  def get_message_by_external_id(state, channel, bridge_id, external_id, room_id) do
+    fetch_one(state, "message", [
+      {"channel", normalize_term(channel)},
+      {"bridge_id", normalize_term(bridge_id)},
+      {"external_id", normalize_term(external_id)},
+      {"room_id", room_id}
+    ])
+  end
+
+  @impl true
   def update_message_external_id(state, message_id, external_id) do
     with {:ok, message} <- get_message(state, message_id) do
       save_message(state, %{message | external_id: external_id})

@@ -353,6 +353,10 @@ defmodule Jido.Messaging.Persistence do
   @callback get_message_by_external_id(state, channel, bridge_id, external_id) ::
               {:ok, Message.t()} | {:error, :not_found}
 
+  @doc "Get a provider message within its canonical room, channel, and bridge."
+  @callback get_message_by_external_id(state, channel, bridge_id, external_id, room_id) ::
+              {:ok, Message.t()} | {:error, :not_found}
+
   @doc """
   Update a message's external_id after successful channel delivery.
 
