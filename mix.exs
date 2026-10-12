@@ -70,12 +70,23 @@ defmodule Jido.Messaging.MixProject do
   defp deps do
     [
       # Runtime dependencies
-      {:jido_chat, "~> 1.2"},
+      chat_dependency(),
       {:jason, "~> 1.4"},
-      {:zoi, "~> 0.18.11"},
-      {:jido, "~> 2.4"},
-      {:jido_signal, "~> 2.3 and >= 2.3.1"},
-      {:jido_ai, "~> 2.4", optional: true},
+      {:zoi,
+       git: "https://github.com/mikehostetler/zoi.git", ref: "2fff2a23e23e7ac0b26f62f49bbc1b12f7818ac9", override: true},
+      {:jido,
+       git: "https://github.com/agentjido/jido.git", ref: "90763478104f1edbf0afcfcf9444621c3f9755e8", override: true},
+      {:jido_action,
+       git: "https://github.com/agentjido/jido_action.git",
+       ref: "8e9b3f7b268e175091b0eb3720bab3b8633d3c24",
+       override: true},
+      {:runic, "== 0.1.0-alpha.11", override: true},
+      {:jido_signal,
+       git: "https://github.com/agentjido/jido_signal.git",
+       ref: "d6611eca1c95eb507843baceb55991e4801d8421",
+       override: true},
+      {:jido_ai,
+       git: "https://github.com/agentjido/jido_ai.git", ref: "1f19ff262081bc13eb30da7bff8bfe42685d63c8", optional: true},
       {:yaml_elixir, "~> 2.12"},
       {:plug, "~> 1.16"},
       {:exqlite, "~> 0.42.0"},
@@ -96,6 +107,17 @@ defmodule Jido.Messaging.MixProject do
       {:git_hooks, "~> 0.8", only: [:dev, :test], runtime: false},
       {:git_ops, "~> 2.9", only: :dev, runtime: false}
     ]
+  end
+
+  # Local integration uses an explicit dev/test checkout. Production uses the package source.
+  defp chat_dependency do
+    case {Mix.env(), System.get_env("JIDO_CHAT_PATH")} do
+      {env, path} when env in [:dev, :test] and is_binary(path) and path != "" ->
+        {:jido_chat, path: Path.expand(path), override: true}
+
+      _ ->
+        {:jido_chat, "~> 1.2"}
+    end
   end
 
   defp aliases do
