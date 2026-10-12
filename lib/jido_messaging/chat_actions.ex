@@ -93,7 +93,6 @@ defmodule Jido.Messaging.ChatActions do
       end
 
     principal_id = get(opts, :principal_id) || get(active_context, :principal_id) || actor_id
-    authorization_mode = normalize_authorization_mode(get(opts, :authorization_mode) || :legacy)
 
     authorization_scope =
       case get(opts, :authorization_scope) || get(active_context, :authorization_scope) do
@@ -110,8 +109,9 @@ defmodule Jido.Messaging.ChatActions do
         policy: policy,
         actor_id: actor_id,
         principal_id: stringify(principal_id),
-        authorization_mode: authorization_mode,
         authorization_scope: authorization_scope,
+        request_id: get(opts, :request_id),
+        parent_signal: get(opts, :parent_signal) || get(active_context, :parent_signal),
         target: get(opts, :target)
       }
     }
@@ -128,11 +128,6 @@ defmodule Jido.Messaging.ChatActions do
 
   defp normalize_opts(opts) when is_list(opts), do: Map.new(opts)
   defp normalize_opts(opts) when is_map(opts), do: opts
-
-  defp normalize_authorization_mode(mode) when mode in [:legacy, :enforce], do: mode
-  defp normalize_authorization_mode("legacy"), do: :legacy
-  defp normalize_authorization_mode("enforce"), do: :enforce
-  defp normalize_authorization_mode(_mode), do: raise(ArgumentError, "invalid chat action authorization mode")
 
   defp trusted_actor_id(opts, active_context) do
     get(opts, :actor_id) ||
