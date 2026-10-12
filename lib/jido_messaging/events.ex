@@ -154,13 +154,13 @@ defmodule Jido.Messaging.Events do
   def telemetry_event_for(:thread_reply_added), do: [:jido_messaging, :thread, :reply_added]
   def telemetry_event_for(event_type) when is_atom(event_type), do: [:jido_messaging, :room, event_type]
 
-  @doc "Builds the safe public message summary and canonical identity fields."
+  @doc "Builds the safe public message summary and canonical identity fields. Text occurs once in the top-level field."
   @spec message_data(Message.t(), keyword() | map()) :: map()
   def message_data(%Message{} = message, opts \\ []) do
     opts = options(opts)
 
     %{
-      "message" => message_summary(message),
+      "message" => message |> message_summary() |> Map.delete("text"),
       "message_id" => message.id,
       "room_id" => message.room_id,
       "sender_id" => message.sender_id,

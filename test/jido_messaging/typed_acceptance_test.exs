@@ -80,6 +80,35 @@ defmodule Jido.Messaging.TypedAcceptanceTest do
     assert Enum.map(children, & &1.data["text"]) == ["one", "two"]
   end
 
+  test "a large valid message remains observable without copying or truncating text", %{binding: binding} do
+    {:ok, _} = Instance.subscribe_signals("jido.messaging.room.message_added")
+    text = String.duplicate("x", 140_000)
+    parent = fact(binding, "large", %{"text" => text})
+    {:ok, delivery} = Delivery.new(binding, "delivery", [parent])
+
+    assert {:ok, [received]} = Instance.accept_delivery(delivery)
+    assert received.type == "jido.messaging.message.received"
+    assert received.data["text"] == text
+    assert_receive {:signal, added}
+    assert added.type == "jido.messaging.room.message_added"
+    assert added.data["text"] == text
+
+    for signal <- [received, added] do
+      assert Jido.Signal.Context.get(signal, "causationid") == parent.id
+      assert Jido.Signal.Trace.get(signal).trace_id == Jido.Signal.Trace.get(parent).trace_id
+      assert {:ok, json} = Jido.Signal.Serialization.serialize(signal)
+      assert byte_size(json) <= 256 * 1024
+      {:ok, catalog} = Runtime.catalog(Instance.__jido_messaging__(:runtime))
+      assert {:ok, ^signal} = Jido.Signal.Catalog.decode(catalog, json)
+    end
+
+    assert {:ok, stored} = Instance.get_message(received.data["message_id"])
+    assert [%Jido.Chat.Content.Text{text: ^text}] = stored.content
+    assert {:ok, []} = Instance.accept_delivery(delivery)
+    assert {:ok, [_one_message]} = Instance.list_messages(stored.room_id)
+    refute_receive {:signal, _}
+  end
+
   test "failed Bus observation does not release an accepted message", %{binding: binding} do
     supervisor = Instance.__jido_messaging__(:supervisor)
     {:ok, bus} = Jido.Signal.Bus.whereis(Module.concat(Instance, SignalBus))
