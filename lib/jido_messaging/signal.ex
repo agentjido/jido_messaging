@@ -82,7 +82,9 @@ defmodule Jido.Messaging.Signal do
             instance_module: instance,
             room_id: signal.data["room_id"],
             bridge_id: data[:bridge_id],
-            signal_id: signal.id
+            signal_id: signal.id,
+            causation_id: Jido.Signal.Context.get(signal, "causationid"),
+            code: signal.data["code"]
           }),
         telemetry_measurements: %{timestamp: DateTime.utc_now()}
       )

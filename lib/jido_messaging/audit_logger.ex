@@ -26,7 +26,8 @@ defmodule Jido.Messaging.AuditLogger do
   - `room_id` - the room where the event occurred
   - `instance_module` - the messaging module
   - `timestamp` - when the event occurred
-  - `correlation_id` - for tracing related events
+  - `signal_id` - the emitted native Signal
+  - `causation_id` - the direct parent Signal, when present
 
   ### Message Events
   - `[:jido_messaging, :message, :received]`
@@ -120,6 +121,10 @@ defmodule Jido.Messaging.AuditLogger do
 
     {event_type, log_message, log_metadata} = format_event(event_name, measurements, metadata)
 
+    log_metadata =
+      log_metadata ++
+        [signal_id: metadata[:signal_id], causation_id: metadata[:causation_id]]
+
     Logger.log(log_level, "[#{prefix}] #{event_type}: #{log_message}", log_metadata)
   end
 
@@ -130,7 +135,7 @@ defmodule Jido.Messaging.AuditLogger do
       room_id: metadata.room_id,
       message_id: metadata.message.id,
       sender_id: metadata.participant_id,
-      correlation_id: metadata.correlation_id
+      correlation_id: metadata[:correlation_id]
     ]
 
     {"message.received", msg, log_meta}
@@ -142,19 +147,20 @@ defmodule Jido.Messaging.AuditLogger do
     log_meta = [
       room_id: metadata.room_id,
       message_id: metadata.message.id,
-      correlation_id: metadata.correlation_id
+      correlation_id: metadata[:correlation_id]
     ]
 
     {"message.sent", msg, log_meta}
   end
 
   defp format_event([:jido_messaging, :message, :failed], _measurements, metadata) do
-    msg = "Message delivery failed in room #{metadata.room_id}: #{inspect(metadata.reason)}"
+    reason = metadata[:code] || metadata[:reason]
+    msg = "Message delivery failed in room #{metadata.room_id}: #{inspect(reason)}"
 
     log_meta = [
       room_id: metadata.room_id,
-      reason: metadata.reason,
-      correlation_id: metadata.correlation_id
+      reason: reason,
+      correlation_id: metadata[:correlation_id]
     ]
 
     {"message.failed", msg, log_meta}
@@ -167,7 +173,7 @@ defmodule Jido.Messaging.AuditLogger do
       room_id: metadata.room_id,
       message_id: metadata.message_id,
       participant_id: metadata.participant_id,
-      correlation_id: metadata.correlation_id
+      correlation_id: metadata[:correlation_id]
     ]
 
     {"message.delivered", msg, log_meta}
@@ -180,7 +186,7 @@ defmodule Jido.Messaging.AuditLogger do
       room_id: metadata.room_id,
       message_id: metadata.message_id,
       participant_id: metadata.participant_id,
-      correlation_id: metadata.correlation_id
+      correlation_id: metadata[:correlation_id]
     ]
 
     {"message.read", msg, log_meta}
@@ -194,7 +200,7 @@ defmodule Jido.Messaging.AuditLogger do
       message_id: metadata.message_id,
       participant_id: metadata.participant_id,
       reaction: metadata.reaction,
-      correlation_id: metadata.correlation_id
+      correlation_id: metadata[:correlation_id]
     ]
 
     {"message.reaction_added", msg, log_meta}
@@ -208,7 +214,7 @@ defmodule Jido.Messaging.AuditLogger do
       message_id: metadata.message_id,
       participant_id: metadata.participant_id,
       reaction: metadata.reaction,
-      correlation_id: metadata.correlation_id
+      correlation_id: metadata[:correlation_id]
     ]
 
     {"message.reaction_removed", msg, log_meta}
@@ -222,7 +228,7 @@ defmodule Jido.Messaging.AuditLogger do
       participant_id: metadata.participant_id,
       from: metadata.from,
       to: metadata.to,
-      correlation_id: metadata.correlation_id
+      correlation_id: metadata[:correlation_id]
     ]
 
     {"participant.presence_changed", msg, log_meta}
@@ -238,7 +244,7 @@ defmodule Jido.Messaging.AuditLogger do
       participant_id: metadata.participant_id,
       is_typing: metadata.is_typing,
       thread_id: metadata.thread_id,
-      correlation_id: metadata.correlation_id
+      correlation_id: metadata[:correlation_id]
     ]
 
     {"participant.typing", msg, log_meta}
@@ -250,7 +256,7 @@ defmodule Jido.Messaging.AuditLogger do
     log_meta = [
       room_id: metadata.room_id,
       root_message_id: metadata.root_message_id,
-      correlation_id: metadata.correlation_id
+      correlation_id: metadata[:correlation_id]
     ]
 
     {"thread.created", msg, log_meta}
@@ -263,7 +269,7 @@ defmodule Jido.Messaging.AuditLogger do
       room_id: metadata.room_id,
       root_message_id: metadata.root_message_id,
       message_id: metadata.message_id,
-      correlation_id: metadata.correlation_id
+      correlation_id: metadata[:correlation_id]
     ]
 
     {"thread.reply_added", msg, log_meta}
