@@ -38,8 +38,39 @@ defmodule Jido.Messaging.ReadReceipt do
   def commit(runtime, plan) do
     {persistence, state} = Runtime.get_persistence(runtime)
     receipt = %{bridge_id: plan.bridge_id, external_message_id: plan.external_message_id, read_at: plan.read_at}
-    persist(persistence, state, plan.message.id, plan.participant_id, receipt)
+
+    persistence
+    |> persist(state, plan.message.id, plan.participant_id, receipt)
+    |> committed_receipt(plan)
+  rescue
+    _ -> {:error, :persistence_failed}
+  catch
+    _, _ -> {:error, :persistence_failed}
   end
+
+  defp committed_receipt({:ok, %Message{} = message, change}, plan) when change in [:updated, :unchanged] do
+    expected_read = %{external_message_id: plan.external_message_id, read_at: plan.read_at}
+
+    provider_read =
+      message.receipts
+      |> Map.get(plan.participant_id, %{})
+      |> Map.get(:provider_reads, %{})
+      |> Map.get(plan.bridge_id)
+
+    if Message.new(Map.from_struct(message)) == message and
+         message.id == plan.message.id and message.room_id == plan.message.room_id and
+         message.external_id == plan.external_message_id and message.status == :read and
+         is_map(provider_read) and provider_read[:external_message_id] == plan.external_message_id and
+         match?(%DateTime{}, provider_read[:read_at]) and
+         (change == :unchanged or provider_read == expected_read) do
+      {:ok, message, change}
+    else
+      {:error, :invalid_receipt_result}
+    end
+  end
+
+  defp committed_receipt({:error, _} = error, _plan), do: error
+  defp committed_receipt(_result, _plan), do: {:error, :invalid_receipt_result}
 
   defp read_at(nil), do: {:ok, DateTime.utc_now()}
 
