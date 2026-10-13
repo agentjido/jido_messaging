@@ -188,6 +188,59 @@ defmodule Jido.Messaging.ReadReceiptCallbackOutcomeTest do
     refute_receive {:signal, _}
   end
 
+  test "failed publication retains one receipt and does not repeat the provider", context do
+    supervisor = Instance.__jido_messaging__(:supervisor)
+    {:ok, bus} = Jido.Signal.Bus.whereis(Module.concat(Instance, SignalBus))
+
+    {id, ^bus, _kind, _modules} =
+      Enum.find(Supervisor.which_children(supervisor), fn {_id, pid, _kind, _modules} -> pid == bus end)
+
+    :ok = Supervisor.terminate_child(supervisor, id)
+    assert {:ok, failed} = Instance.execute(context.request, context.actor)
+    assert failed.data["code"] == "observation_failed"
+    assert {:ok, ^failed} = Instance.execute(context.request, context.actor)
+    assert_counts(context, 1)
+    assert_records(context, true)
+    refute_receive {:signal, _}
+  end
+
+  test "a second request keeps the first receipt without another provider or store call", context do
+    assert {:ok, _} = Instance.execute(context.request, context.actor)
+    assert_receive {:signal, _}
+
+    next =
+      MarkAsRead.new!(%{
+        context.request.data
+        | "request_id" => "second-read",
+          "read_at" => "2026-08-20T13:00:00Z"
+      })
+
+    assert {:ok, result} = Instance.execute(next, context.actor)
+    assert result.type == "jido.messaging.operation.completed"
+    data = Agent.get(Control, & &1)
+    assert data.provider_calls == [{"provider-room", "provider-message"}]
+    assert data.attempts == 1 and data.writes == 1
+    assert :ets.info(Runtime.request_table(context.runtime), :size) == 2
+    assert_records(context, true)
+    refute_receive {:signal, _}
+  end
+
+  test "a delivery room maps only the provider call and retains canonical room ownership", context do
+    message = %{context.message | delivery_external_room_id: "private-delivery-room"}
+    {_store, state} = Runtime.get_persistence(context.runtime)
+    assert {:ok, ^message} = ETS.save_message(state, message)
+    assert {:ok, completed} = Instance.execute(context.request, context.actor)
+    assert completed.type == "jido.messaging.operation.completed"
+    assert {:ok, ^completed} = Instance.execute(context.request, context.actor)
+    data = Agent.get(Control, & &1)
+    assert data.provider_calls == [{"private-delivery-room", "provider-message"}]
+    assert data.attempts == 1 and data.writes == 1
+    assert_records(%{context | message: message}, true)
+    assert_receive {:signal, fact}
+    assert fact.data["room_id"] == context.message.room_id
+    refute_receive {:signal, _}
+  end
+
   defp assert_counts(context, writes) do
     data = Agent.get(Control, & &1)
     assert data.provider_calls == [{"provider-room", "provider-message"}]
