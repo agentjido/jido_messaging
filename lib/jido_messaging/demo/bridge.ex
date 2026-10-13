@@ -13,17 +13,23 @@ defmodule Jido.Messaging.Demo.Bridge do
   3. Forwards to all bound platforms except the origin
 
   This decouples the Bridge from channel handlers and makes it event-driven.
+
+  Forwarding uses the configured `:principal_id` and existing room/bridge grants.
+  The host must register both native bindings and grant posting access.
+  The bridge does not create grants from observed messages.
   """
   use GenServer
   require Logger
 
-  alias Jido.Messaging.AdapterBridge
+  alias Jido.Messaging.{AuthorizationScope, Events, Message, Runtime}
+  alias Jido.Messaging.Signal.{Context, Identity, SendMessage}
   alias Jido.Messaging.Supervisor, as: MessagingSupervisor
 
   @schema Zoi.struct(
             __MODULE__,
             %{
               instance_module: Zoi.module(),
+              principal_id: Zoi.string() |> Zoi.nullish(),
               bindings: Zoi.array(Zoi.any()) |> Zoi.default([]),
               room_id: Zoi.string() |> Zoi.nullish(),
               subscribed: Zoi.boolean() |> Zoi.default(false)
@@ -76,6 +82,7 @@ defmodule Jido.Messaging.Demo.Bridge do
 
     state = %__MODULE__{
       instance_module: instance_module,
+      principal_id: Keyword.get(opts, :principal_id),
       bindings: bindings,
       room_id: @shared_room_id,
       subscribed: false
@@ -107,7 +114,9 @@ defmodule Jido.Messaging.Demo.Bridge do
   def handle_info(:subscribe, state) do
     bus_name = MessagingSupervisor.signal_bus_name(state.instance_module)
 
-    case Jido.Signal.Bus.subscribe(bus_name, "jido.messaging.room.message_added") do
+    case Jido.Signal.Bus.subscribe(bus_name, "jido.messaging.room.message_added",
+           selector: [source: Events.source(state.instance_module), subject: Identity.room_subject(state.room_id)]
+         ) do
       {:ok, _subscription_id} ->
         Logger.info("[Bridge] Subscribed to Signal Bus #{inspect(bus_name)}")
         {:noreply, %{state | subscribed: true}}
@@ -131,24 +140,29 @@ defmodule Jido.Messaging.Demo.Bridge do
 
   # Signal handling
 
-  defp handle_signal(%{type: "jido.messaging.room.message_added"} = signal, state) do
-    room_id = signal.data["room_id"]
-
-    message =
-      case state.instance_module.get_message(signal.data["message_id"]) do
-        {:ok, message} -> message
-        {:error, _} -> nil
-      end
-
-    # If room_id filter is set, only handle messages for that room
-    if message && (state.room_id == nil or room_id == state.room_id) do
+  defp handle_signal(%Jido.Signal{type: "jido.messaging.room.message_added"} = signal, state) do
+    with {:ok, catalog} <- Runtime.catalog(state.instance_module.__jido_messaging__(:runtime)),
+         {:ok, ^signal} <- signal |> Jido.Signal.to_map() |> Jido.Signal.from_map(),
+         {:ok, ^signal} <- Jido.Signal.Catalog.validate(catalog, signal),
+         {:ok, ^signal} <- Jido.Chat.Signal.Policy.validate(signal),
+         true <- signal.source == Events.source(state.instance_module),
+         true <- signal.subject == Identity.room_subject(state.room_id),
+         true <- signal.data["room_id"] == state.room_id,
+         {:ok, %Message{room_id: room_id} = message} <- state.instance_module.get_message(signal.data["message_id"]),
+         true <- room_id == state.room_id do
       origin = get_origin(message)
 
       # Forward to all bindings except origin
       for binding <- state.bindings, not_origin?(binding, origin) do
-        send_to_binding(binding, message)
+        send_to_binding(binding, message, signal, state)
       end
+    else
+      _ -> :ok
     end
+  rescue
+    _ -> :ok
+  catch
+    _, _ -> :ok
   end
 
   defp handle_signal(_signal, _state), do: :ok
@@ -238,31 +252,24 @@ defmodule Jido.Messaging.Demo.Bridge do
 
   # Delivery
 
-  defp send_to_binding({:telegram, adapter_module, _bridge_id, chat_id}, message) do
-    text = format_message(message, :telegram)
-    Logger.info("[Bridge] -> TG: #{text}")
+  defp send_to_binding({channel, adapter, bridge_id, _external_id}, message, parent, state) do
+    runtime = state.instance_module.__jido_messaging__(:runtime)
 
-    try do
-      case AdapterBridge.send_message(adapter_module, chat_id, text, []) do
-        {:ok, _} -> :ok
-        {:error, reason} -> Logger.warning("[Bridge] Telegram send failed: #{inspect(reason)}")
-      end
-    rescue
-      e -> Logger.warning("[Bridge] Telegram send crashed: #{inspect(e)}")
-    end
-  end
-
-  defp send_to_binding({:discord, adapter_module, _bridge_id, channel_id}, message) do
-    text = format_message(message, :discord)
-    Logger.info("[Bridge] -> DC: #{text}")
-
-    try do
-      case AdapterBridge.send_message(adapter_module, channel_id, text, []) do
-        {:ok, _} -> :ok
-        {:error, reason} -> Logger.warning("[Bridge] Discord send failed: #{inspect(reason)}")
-      end
-    rescue
-      e -> Logger.warning("[Bridge] Discord send crashed: #{inspect(e)}")
+    with {:ok, %Jido.Chat.Binding{adapter: ^adapter}} <- Runtime.binding(runtime, bridge_id),
+         {:ok, request} <-
+           SendMessage.new(
+             %{
+               "request_id" => "demo-forward:" <> message.id <> ":" <> bridge_id,
+               "room_id" => state.room_id,
+               "bridge_id" => bridge_id,
+               "text" => format_message(message, channel)
+             },
+             source: Events.source(state.instance_module),
+             subject: Identity.room_subject(state.room_id)
+           ),
+         {:ok, request} <- Context.attach(request, parent_signal: parent) do
+      scope = AuthorizationScope.new(%{kind: :room, room_id: state.room_id, bridge_id: bridge_id})
+      state.instance_module.execute(request, principal_id: state.principal_id, authorization_scope: scope)
     end
   end
 

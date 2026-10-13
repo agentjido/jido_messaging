@@ -435,10 +435,26 @@ defmodule Jido.Messaging.Execution do
          channel <- binding.adapter.channel_type(),
          bindings <-
            Map.get(room.external_bindings, channel, Map.get(room.external_bindings, Atom.to_string(channel), %{})),
-         external when is_binary(external) <- Map.get(bindings, binding.id) do
+         {:ok, external} <- indexed_external_room(runtime, room.id, channel, binding.id, Map.get(bindings, binding.id)) do
       {:ok, Map.put(data, "room_id", external)}
     else
       _ -> {:error, :room_binding_not_found}
+    end
+  end
+
+  defp indexed_external_room(runtime, room_id, channel, bridge_id, legacy) do
+    with {:ok, bindings} <- Jido.Messaging.list_room_bindings(runtime, room_id) do
+      case Enum.filter(bindings, &(&1.channel == channel and &1.bridge_id == bridge_id)) do
+        [%{enabled: true, direction: direction, external_room_id: external}]
+        when direction in [:outbound, :both] and is_binary(external) ->
+          {:ok, external}
+
+        [] when is_binary(legacy) ->
+          {:ok, legacy}
+
+        _ ->
+          {:error, :room_binding_not_found}
+      end
     end
   end
 

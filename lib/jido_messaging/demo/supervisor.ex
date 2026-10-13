@@ -66,6 +66,13 @@ defmodule Jido.Messaging.Demo.Supervisor do
         telegram_bridge_id,
         discord_bridge_id
       )
+      |> Enum.map(fn
+        {Jido.Messaging.Demo.Bridge, bridge_opts} ->
+          {Jido.Messaging.Demo.Bridge, Keyword.put(bridge_opts, :principal_id, Keyword.get(opts, :principal_id))}
+
+        child ->
+          child
+      end)
 
     Logger.info("[Demo] Starting supervisor in #{mode} mode")
 
