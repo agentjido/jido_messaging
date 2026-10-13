@@ -3115,10 +3115,13 @@ defmodule Jido.Messaging do
 
   defp validate_history_scope(
          instance_module,
-         %Jido.Messaging.HistoryScope{instance_module: instance_module, room_ids: room_ids}
-       )
-       when is_list(room_ids),
-       do: :ok
+         %Jido.Messaging.HistoryScope{instance_module: instance_module, room_ids: room_ids, metadata: metadata}
+       ) do
+    case Jido.Messaging.HistoryScope.new(instance_module, room_ids, metadata) do
+      {:ok, _scope} -> :ok
+      {:error, _} = error -> error
+    end
+  end
 
   defp validate_history_scope(_instance_module, %Jido.Messaging.HistoryScope{}) do
     {:error, :history_scope_instance_mismatch}
