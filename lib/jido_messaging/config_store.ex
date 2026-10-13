@@ -417,7 +417,7 @@ defmodule Jido.Messaging.ConfigStore do
   defp maybe_struct_to_map(map) when is_map(map), do: map
 
   defp map_get(map, key) when is_map(map) and is_atom(key) do
-    Map.get(map, key) || Map.get(map, Atom.to_string(key))
+    Map.get(map, key, Map.get(map, Atom.to_string(key)))
   end
 
   defp key_to_atom("id"), do: :id
@@ -437,6 +437,11 @@ defmodule Jido.Messaging.ConfigStore do
   defp key_to_atom("mode"), do: :mode
   defp key_to_atom("outbound"), do: :outbound
   defp key_to_atom("default"), do: :default
+  defp key_to_atom("delivery_mode"), do: :delivery_mode
+  defp key_to_atom("failover_policy"), do: :failover_policy
+  defp key_to_atom("dedupe_scope"), do: :dedupe_scope
+  defp key_to_atom("fallback_order"), do: :fallback_order
+  defp key_to_atom("metadata"), do: :metadata
   defp key_to_atom(_), do: nil
 
   defp reconcile_bridges(instance_module) do
