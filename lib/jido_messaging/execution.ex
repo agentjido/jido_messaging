@@ -532,11 +532,15 @@ defmodule Jido.Messaging.Execution do
              thread_id: request.data["thread_id"]
            }),
          {:ok, fact, result} <- prepare_local_message(instance, runtime, request, message) do
-      case Jido.Messaging.save_message_struct(runtime, message) do
+      case persist_local_message(runtime, message) do
         {:ok, _saved} ->
           case Dispatch.emit(instance, fact) do
-            {:ok, _} -> {:ok, result}
-            _ -> failure(instance, request, "post_message", "observation_failed")
+            {:ok, _} ->
+              {:ok, result}
+
+            _ ->
+              cancel_message_resources(instance, fact, result)
+              failure(instance, request, "post_message", "observation_failed")
           end
 
         _ ->
@@ -563,6 +567,14 @@ defmodule Jido.Messaging.Execution do
       {:error, :participant_scope_mismatch} -> failure(instance, request, operation, "authorization_denied")
       _ -> failure(instance, request, operation, "persistence_failed")
     end
+  end
+
+  defp persist_local_message(runtime, message) do
+    Jido.Messaging.save_message_struct(runtime, message)
+  rescue
+    _ -> {:error, :persistence_failed}
+  catch
+    _, _ -> {:error, :persistence_failed}
   end
 
   defp prepare_local_message(instance, runtime, request, message) do
