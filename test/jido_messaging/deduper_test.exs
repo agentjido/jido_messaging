@@ -50,6 +50,27 @@ defmodule Jido.Messaging.DeduperTest do
   end
 
   describe "claim lifecycle" do
+    test "an uncertain outcome stays an error across claim expiry and a sweep" do
+      key = {:claim, "unknown"}
+      assert {:ok, token} = Deduper.claim(TestMessaging, key, 0)
+      assert :ok = Deduper.retain_unknown(TestMessaging, key, token)
+      send(Module.concat(TestMessaging, "Deduper"), :sweep)
+      assert {:error, :outcome_unknown} = Deduper.claim(TestMessaging, key)
+      assert Deduper.count(TestMessaging) == 1
+      assert {:error, :stale_claim} = Deduper.release(TestMessaging, key, token)
+      assert :ok = Deduper.clear(TestMessaging)
+      assert {:ok, _} = Deduper.claim(TestMessaging, key)
+    end
+
+    test "an old token cannot hold a newer claim as uncertain" do
+      key = {:claim, "unknown-stale"}
+      assert {:ok, old} = Deduper.claim(TestMessaging, key, 0)
+      assert {:ok, current} = Deduper.claim(TestMessaging, key)
+      assert {:error, :stale_claim} = Deduper.retain_unknown(TestMessaging, key, old)
+      assert :ok = Deduper.commit(TestMessaging, key, current)
+      assert :duplicate = Deduper.claim(TestMessaging, key)
+    end
+
     test "blocks a concurrent claim until the first claim is released" do
       key = {:claim, "release"}
 

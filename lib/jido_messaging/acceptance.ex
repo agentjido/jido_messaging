@@ -33,11 +33,14 @@ defmodule Jido.Messaging.Acceptance do
     key = {:chat_fact, binding.source, parent.type, parent.data["item_id"]}
 
     case Deduper.claim(instance, key) do
+      {:error, :outcome_unknown} ->
+        Policy.error(:request_outcome_unknown)
+
       :duplicate ->
         {:ok, []}
 
       {:ok, token} ->
-        case process(instance, binding, parent) do
+        case process_safely(instance, binding, parent) do
           {:ok, signals} ->
             _ = Deduper.commit(instance, key, token)
             # Observation errors do not release an authoritative acceptance claim.
@@ -45,11 +48,23 @@ defmodule Jido.Messaging.Acceptance do
             Enum.each(signals, &Dispatch.emit(instance, &1))
             {:ok, signals}
 
+          {:error, %Contract{code: :request_outcome_unknown}} = error ->
+            _ = Deduper.retain_unknown(instance, key, token)
+            error
+
           error ->
             _ = Deduper.release(instance, key, token)
             acceptance_error(error)
         end
     end
+  end
+
+  defp process_safely(instance, binding, parent) do
+    process(instance, binding, parent)
+  rescue
+    _ -> Policy.error(:handler_failed)
+  catch
+    _, _ -> Policy.error(:handler_failed)
   end
 
   defp process(instance, %Binding{} = binding, %{type: "jido.chat.message.received"} = parent) do

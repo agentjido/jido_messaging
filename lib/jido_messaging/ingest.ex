@@ -202,21 +202,26 @@ defmodule Jido.Messaging.Ingest do
          dedupe_key
        ) do
     case Jido.Messaging.Deduper.claim(messaging_module, dedupe_key) do
+      {:error, :outcome_unknown} ->
+        Jido.Chat.Signal.Policy.error(:request_outcome_unknown)
+
       :duplicate ->
         Logger.debug("[Jido.Messaging.Ingest] Duplicate message ignored: #{inspect(dedupe_key)}")
         {:ok, :duplicate}
 
       {:ok, claim_token} ->
         result =
-          do_ingest(
-            messaging_module,
-            channel_module,
-            channel_type,
-            bridge_id,
-            external_room_id,
-            incoming,
-            opts
-          )
+          safely(fn ->
+            do_ingest(
+              messaging_module,
+              channel_module,
+              channel_type,
+              bridge_id,
+              external_room_id,
+              incoming,
+              opts
+            )
+          end)
 
         finalize_dedupe_claim(messaging_module, dedupe_key, claim_token, result)
     end
@@ -228,6 +233,16 @@ defmodule Jido.Messaging.Ingest do
       {:error, :stale_claim} -> Logger.warning("[Jido.Messaging.Ingest] Dedupe claim expired before commit")
     end
 
+    result
+  end
+
+  defp finalize_dedupe_claim(
+         messaging_module,
+         dedupe_key,
+         claim_token,
+         {:error, %Jido.Chat.Errors.Contract{code: :request_outcome_unknown}} = result
+       ) do
+    _ = Jido.Messaging.Deduper.retain_unknown(messaging_module, dedupe_key, claim_token)
     result
   end
 
@@ -320,7 +335,7 @@ defmodule Jido.Messaging.Ingest do
          message <- Identity.put_authorship(message, authorship),
          message <- put_verify_metadata(message, verify_result),
          {:ok, policy_message} <- apply_policy_pipeline(message, msg_context, opts),
-         {:ok, persisted_message} <- messaging_module.save_message_struct(policy_message) do
+         {:ok, persisted_message} <- persist_message(messaging_module, policy_message) do
       {persisted_message, thread} =
         complete_thread_scope(
           messaging_module,
@@ -356,24 +371,79 @@ defmodule Jido.Messaging.Ingest do
           msg_context: resolved_msg_context
         })
 
-      persist_session_route(
-        messaging_module,
-        resolved_msg_context,
-        room,
-        channel_type,
-        bridge_id,
-        external_room_id
-      )
+      after_accept(persisted_message, context, fn ->
+        persist_session_route(
+          messaging_module,
+          resolved_msg_context,
+          room,
+          channel_type,
+          bridge_id,
+          external_room_id
+        )
+      end)
 
-      ensure_thread_runner(messaging_module, room, room_server, thread)
-      add_to_room_server(messaging_module, room, persisted_message, participant, context)
+      after_accept(persisted_message, context, fn ->
+        ensure_thread_runner(messaging_module, room, room_server, thread)
+      end)
+
+      after_accept(persisted_message, context, fn ->
+        add_to_room_server(messaging_module, room, persisted_message, participant, context)
+      end)
 
       Logger.debug("[Jido.Messaging.Ingest] Message #{persisted_message.id} ingested in room #{room.id}")
 
-      if Keyword.get(opts, :emit_received, true), do: Signal.emit_received(persisted_message, context)
+      if Keyword.get(opts, :emit_received, true),
+        do: after_accept(persisted_message, context, fn -> Signal.emit_received(persisted_message, context) end)
 
       {:ok, persisted_message, context}
     end
+  end
+
+  # A store may fail after its write. Read the same prepared ID before deciding
+  # whether acceptance failed; never build and write a second message here.
+  defp persist_message(instance, %Message{id: id} = message) do
+    case safely(fn -> instance.save_message_struct(message) end) do
+      {:ok, %Message{id: ^id} = saved} ->
+        {:ok, saved}
+
+      result ->
+        case safely(fn -> instance.get_message(id) end) do
+          {:ok, %Message{id: ^id} = saved} ->
+            {:ok, saved}
+
+          {:error, :not_found} ->
+            if match?({:error, _}, result), do: result, else: Jido.Chat.Signal.Policy.error(:handler_failed)
+
+          _ ->
+            Jido.Chat.Signal.Policy.error(:request_outcome_unknown)
+        end
+    end
+  end
+
+  defp after_accept(message, context, fun) do
+    case safely(fun) do
+      {:error, _} ->
+        Logger.warning("[Jido.Messaging.Ingest] Accepted message runtime observation failed")
+
+        safely(fn ->
+          Signal.emit_failed(
+            message.room_id,
+            :observation_failed,
+            Map.put(Map.from_struct(context), :message_id, message.id)
+          )
+        end)
+
+      _ ->
+        :ok
+    end
+  end
+
+  defp safely(fun) do
+    fun.()
+  rescue
+    _ -> Jido.Chat.Signal.Policy.error(:handler_failed)
+  catch
+    _, _ -> Jido.Chat.Signal.Policy.error(:handler_failed)
   end
 
   defp persist_session_route(

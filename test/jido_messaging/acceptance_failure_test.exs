@@ -10,9 +10,16 @@ defmodule Jido.Messaging.AcceptanceFailureTest do
     @behaviour Jido.Messaging.Persistence
 
     for {name, arity} <- Jido.Messaging.Persistence.ETS.__info__(:functions),
-        name not in [:get_room_by_external_binding, :save_message] do
+        name not in [:get_room_by_external_binding, :save_message, :get_message] do
       args = Macro.generate_arguments(arity, __MODULE__)
       defdelegate unquote(name)(unquote_splicing(args)), to: Jido.Messaging.Persistence.ETS
+    end
+
+    def get_message(state, id) do
+      case Process.get({__MODULE__, :read_failure}) do
+        nil -> Jido.Messaging.Persistence.ETS.get_message(state, id)
+        mode -> fail_write(mode)
+      end
     end
 
     def get_room_by_external_binding(state, channel, bridge, external) do
@@ -31,10 +38,38 @@ defmodule Jido.Messaging.AcceptanceFailureTest do
     def save_message(state, message) do
       Process.put({__MODULE__, :writes}, Process.get({__MODULE__, :writes}, 0) + 1)
 
-      if Process.get({__MODULE__, :write_failure}),
-        do: {:error, %{token: "private-store-detail", pid: self()}},
-        else: Jido.Messaging.Persistence.ETS.save_message(state, message)
+      case Process.get({__MODULE__, :write_failure}) do
+        nil ->
+          result = Jido.Messaging.Persistence.ETS.save_message(state, message)
+
+          if Process.get({__MODULE__, :stop_room_supervisor_after_write}) do
+            instance = Jido.Messaging.AcceptanceFailureTest.Instance
+            pid = Process.whereis(Module.concat(instance, "RoomSupervisor"))
+
+            {id, ^pid, _, _} =
+              Enum.find(Supervisor.which_children(instance.__jido_messaging__(:supervisor)), fn {_, child, _, _} ->
+                child == pid
+              end)
+
+            :ok = Supervisor.terminate_child(instance.__jido_messaging__(:supervisor), id)
+          end
+
+          result
+
+        mode when mode in [:after_raise, :after_throw, :after_exit, :after_error, :after_invalid] ->
+          {:ok, _} = Jido.Messaging.Persistence.ETS.save_message(state, message)
+          fail_write(mode)
+
+        mode ->
+          fail_write(mode)
+      end
     end
+
+    defp fail_write(mode) when mode in [:raise, :after_raise], do: raise("private-store-detail")
+    defp fail_write(mode) when mode in [:throw, :after_throw], do: throw({:private_store_detail, self()})
+    defp fail_write(mode) when mode in [:exit, :after_exit], do: exit({:private_store_detail, self()})
+    defp fail_write(mode) when mode in [:invalid, :after_invalid], do: :private_store_detail
+    defp fail_write(_), do: {:error, %{token: "private-store-detail", pid: self()}}
   end
 
   defmodule Instance do
@@ -72,6 +107,89 @@ defmodule Jido.Messaging.AcceptanceFailureTest do
   defp delivery(binding, parents) do
     {:ok, unit} = Delivery.new(binding, "unit", parents)
     unit
+  end
+
+  defp message(binding) do
+    MessageReceived.new!(
+      %{
+        "delivery_id" => "unit",
+        "item_id" => "message-item",
+        "room_id" => "provider-room",
+        "message_id" => "message",
+        "sender" => %{"id" => "peer"},
+        "text" => "hello"
+      },
+      source: binding.source,
+      subject: Identity.conversation_subject(binding.id, "provider-room")
+    )
+  end
+
+  for mode <- [:raise, :throw, :exit, :invalid] do
+    test "message store #{mode} before a write releases both claims for one retry", context do
+      unit = delivery(context.binding, [message(context.binding)])
+      Process.put({ControlledPersistence, :write_failure}, unquote(mode))
+      assert_safe_error(Instance.accept_delivery(unit))
+      assert Deduper.count(Instance) == 0
+      assert MockTransport.calls(context.transport) == []
+      Process.delete({ControlledPersistence, :write_failure})
+      assert {:ok, [received]} = Instance.accept_delivery(unit)
+      assert {:ok, [_one]} = Instance.list_messages(received.data["room_id"])
+      assert Process.get({ControlledPersistence, :writes}) == 2
+      assert {:ok, []} = Instance.accept_delivery(unit)
+      assert Process.get({ControlledPersistence, :writes}) == 2
+    end
+  end
+
+  for mode <- [:after_raise, :after_throw, :after_exit, :after_error, :after_invalid] do
+    test "message store #{mode} after a write retains the confirmed message without replay", context do
+      parent = message(context.binding)
+      unit = delivery(context.binding, [parent])
+      original = Jido.Signal.to_map(parent)
+      Process.put({ControlledPersistence, :write_failure}, unquote(mode))
+      assert {:ok, [received]} = Instance.accept_delivery(unit)
+      assert {:ok, [stored]} = Instance.list_messages(received.data["room_id"])
+      assert stored.id == received.data["message_id"]
+      assert Jido.Signal.Context.get(received, "causationid") == parent.id
+      assert Jido.Signal.to_map(parent) == original
+      assert Process.get({ControlledPersistence, :writes}) == 1
+      assert {:ok, []} = Instance.accept_delivery(unit)
+      assert Process.get({ControlledPersistence, :writes}) == 1
+      assert MockTransport.calls(context.transport) == []
+    end
+  end
+
+  for mode <- [:error, :raise, :throw, :exit, :invalid] do
+    test "a failed confirmation read #{mode} holds the uncertain write and returns an error on every retry", context do
+      unit = delivery(context.binding, [message(context.binding)])
+      Process.put({ControlledPersistence, :write_failure}, :after_raise)
+      Process.put({ControlledPersistence, :read_failure}, unquote(mode))
+      {:ok, _} = Instance.subscribe_signals("jido.messaging.message.received")
+
+      for _ <- 1..2 do
+        assert {:error, %Contract{code: :request_outcome_unknown}} = Instance.accept_delivery(unit)
+      end
+
+      Process.delete({ControlledPersistence, :read_failure})
+      assert {:error, %Contract{code: :request_outcome_unknown}} = Instance.accept_delivery(unit)
+      assert Deduper.count(Instance) == 2
+      assert Process.get({ControlledPersistence, :writes}) == 1
+      assert MockTransport.calls(context.transport) == []
+      refute_received {:signal, _}
+    end
+  end
+
+  test "a stopped room supervisor after the write cannot release the accepted message", context do
+    unit = delivery(context.binding, [message(context.binding)])
+    Process.put({ControlledPersistence, :stop_room_supervisor_after_write}, true)
+    {:ok, _} = Instance.subscribe_signals("jido.messaging.message.failed")
+    assert {:ok, [received]} = Instance.accept_delivery(unit)
+    assert_receive {:signal, failure}
+    assert failure.data["code"] == "observation_failed"
+    assert failure.data["message_id"] == received.data["message_id"]
+    assert {:ok, [_one]} = Instance.list_messages(received.data["room_id"])
+    assert {:ok, []} = Instance.accept_delivery(unit)
+    assert Process.get({ControlledPersistence, :writes}) == 1
+    assert MockTransport.calls(context.transport) == []
   end
 
   defp snapshot do
