@@ -313,6 +313,7 @@ defmodule Jido.Messaging.AdapterBridge do
   @spec classify_failure(term()) :: failure_class()
   def classify_failure(reason)
 
+  def classify_failure(class) when class in [:recoverable, :degraded, :fatal], do: class
   def classify_failure(%{class: class}) when class in [:recoverable, :degraded, :fatal], do: class
   def classify_failure(%{reason: reason}), do: classify_failure(reason)
   def classify_failure(:timeout), do: :recoverable
