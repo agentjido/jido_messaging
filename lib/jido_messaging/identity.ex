@@ -23,7 +23,7 @@ defmodule Jido.Messaging.Identity do
     principal = Principal.from_participant(participant)
 
     if identity_callback?(persistence, :get_principal, 2) do
-      case persistence.get_principal(state, principal.id) do
+      case get_principal(persistence, state, principal.id) do
         {:ok, %Principal{} = stored} -> {:ok, stored}
         {:error, :not_found} -> persist_or_project_principal(persistence, state, principal)
         {:error, _reason} = error -> error
@@ -37,7 +37,7 @@ defmodule Jido.Messaging.Identity do
   @doc false
   def persist_principal(persistence, state, %Principal{} = principal) do
     if identity_callback?(persistence, :save_principal, 2) do
-      persistence.save_principal(state, principal)
+      identity_result(fn -> persistence.save_principal(state, principal) end, &(&1 == principal))
     else
       {:error, :unsupported}
     end
@@ -47,7 +47,10 @@ defmodule Jido.Messaging.Identity do
   @doc false
   def get_principal(persistence, state, principal_id) do
     if identity_callback?(persistence, :get_principal, 2) do
-      persistence.get_principal(state, principal_id)
+      identity_result(
+        fn -> persistence.get_principal(state, principal_id) end,
+        &(valid_record?(&1, Principal) and &1.id == principal_id and &1.participant_id == principal_id)
+      )
     else
       {:error, :unsupported}
     end
@@ -157,7 +160,10 @@ defmodule Jido.Messaging.Identity do
   @doc false
   def get_binding(persistence, state, binding_id) do
     if identity_callback?(persistence, :get_external_identity_binding, 2) do
-      persistence.get_external_identity_binding(state, binding_id)
+      identity_result(
+        fn -> persistence.get_external_identity_binding(state, binding_id) end,
+        &(valid_record?(&1, ExternalIdentityBinding) and &1.id == binding_id)
+      )
     else
       {:error, :unsupported}
     end
@@ -168,7 +174,12 @@ defmodule Jido.Messaging.Identity do
   @doc false
   def get_binding(persistence, state, channel, bridge_id, external_id) do
     if identity_callback?(persistence, :get_external_identity_binding, 4) do
-      persistence.get_external_identity_binding(state, channel, bridge_id, external_id)
+      identity_result(
+        fn -> persistence.get_external_identity_binding(state, channel, bridge_id, external_id) end,
+        &(valid_record?(&1, ExternalIdentityBinding) and
+            {&1.channel, &1.bridge_id, &1.external_id} ==
+              {to_string(channel), to_string(bridge_id), to_string(external_id)})
+      )
     else
       {:error, :unsupported}
     end
@@ -179,7 +190,14 @@ defmodule Jido.Messaging.Identity do
   @doc false
   def list_bindings(persistence, state, principal_id, opts \\ []) do
     if identity_callback?(persistence, :list_external_identity_bindings, 3) do
-      persistence.list_external_identity_bindings(state, principal_id, opts)
+      identity_result(
+        fn -> persistence.list_external_identity_bindings(state, principal_id, opts) end,
+        &(is_list(&1) and
+            Enum.all?(&1, fn binding ->
+              valid_record?(binding, ExternalIdentityBinding) and binding.principal_id == principal_id and
+                binding.participant_id == principal_id
+            end))
+      )
     else
       {:error, :unsupported}
     end
@@ -190,7 +208,12 @@ defmodule Jido.Messaging.Identity do
   @doc false
   def save_binding(persistence, state, %ExternalIdentityBinding{} = binding) do
     if identity_callback?(persistence, :save_external_identity_binding, 2) do
-      persistence.save_external_identity_binding(state, binding)
+      identity_result(
+        fn -> persistence.save_external_identity_binding(state, binding) end,
+        &(valid_record?(&1, ExternalIdentityBinding) and
+            Map.drop(Map.from_struct(&1), [:id, :inserted_at]) ==
+              Map.drop(Map.from_struct(binding), [:id, :inserted_at]))
+      )
     else
       {:error, :unsupported}
     end
@@ -243,7 +266,7 @@ defmodule Jido.Messaging.Identity do
 
   defp persist_or_project_principal(persistence, state, principal) do
     if identity_callback?(persistence, :save_principal, 2) do
-      persistence.save_principal(state, principal)
+      persist_principal(persistence, state, principal)
     else
       {:ok, principal}
     end
@@ -251,12 +274,7 @@ defmodule Jido.Messaging.Identity do
 
   defp ensure_binding(persistence, state, candidate) do
     if binding_persistence_supported?(persistence) do
-      case persistence.get_external_identity_binding(
-             state,
-             candidate.channel,
-             candidate.bridge_id,
-             candidate.external_id
-           ) do
+      case get_binding(persistence, state, candidate.channel, candidate.bridge_id, candidate.external_id) do
         {:ok, %ExternalIdentityBinding{} = existing} ->
           cond do
             existing.principal_id != candidate.principal_id ->
@@ -274,12 +292,12 @@ defmodule Jido.Messaging.Identity do
               if strengthened == existing do
                 {:ok, existing}
               else
-                persistence.save_external_identity_binding(state, strengthened)
+                save_binding(persistence, state, strengthened)
               end
           end
 
         {:error, :not_found} ->
-          persistence.save_external_identity_binding(state, candidate)
+          save_binding(persistence, state, candidate)
 
         {:error, _reason} = error ->
           error
@@ -430,6 +448,29 @@ defmodule Jido.Messaging.Identity do
     do: {:ok, principal}
 
   defp identity_callback?(persistence, name, arity), do: function_exported?(persistence, name, arity)
+
+  defp identity_result(callback, valid?) do
+    case callback.() do
+      {:ok, value} -> if valid?.(value), do: {:ok, value}, else: {:error, :persistence_failed}
+      {:error, _} = error -> error
+      _ -> {:error, :persistence_failed}
+    end
+  rescue
+    _ -> {:error, :persistence_failed}
+  catch
+    _, _ -> {:error, :persistence_failed}
+  end
+
+  defp valid_record?(%{__struct__: module} = record, module) do
+    case Zoi.parse(module.schema(), Map.from_struct(record), coerce: false) do
+      {:ok, ^record} -> true
+      _ -> false
+    end
+  rescue
+    _ -> false
+  end
+
+  defp valid_record?(_, _), do: false
 
   defp binding_persistence_supported?(persistence) do
     identity_callback?(persistence, :save_principal, 2) and
