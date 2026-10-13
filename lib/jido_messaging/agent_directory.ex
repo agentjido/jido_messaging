@@ -14,6 +14,7 @@ defmodule Jido.Messaging.AgentDirectory do
     AgentDirectoryEntry,
     AgentDirectoryProjection,
     AgentDirectoryScope,
+    AgentMessagingEndpoint,
     Runtime
   }
 
@@ -29,10 +30,17 @@ defmodule Jido.Messaging.AgentDirectory do
     {persistence, state} = Runtime.get_persistence(runtime)
 
     with :ok <- require_callbacks(persistence, save_agent_directory_projection: 2),
-         {:ok, %Participant{} = participant} <- persistence.get_participant(state, projection.principal_id),
+         {:ok, participant} <-
+           persistence_result(
+             fn -> persistence.get_participant(state, projection.principal_id) end,
+             &match?(%Participant{id: id} when id == projection.principal_id, &1)
+           ),
          :ok <- validate_agent_participant(participant),
          :ok <- validate_endpoint(persistence, state, projection) do
-      persistence.save_agent_directory_projection(state, projection)
+      persistence_result(
+        fn -> persistence.save_agent_directory_projection(state, projection) end,
+        &(valid_projection?(&1) and AgentDirectoryProjection.equivalent?(&1, projection))
+      )
     end
   rescue
     ArgumentError -> {:error, :invalid_agent_directory_projection}
@@ -61,7 +69,10 @@ defmodule Jido.Messaging.AgentDirectory do
     {persistence, state} = Runtime.get_persistence(runtime)
 
     with :ok <- require_callbacks(persistence, get_agent_directory_projection: 2) do
-      persistence.get_agent_directory_projection(state, projection_id)
+      persistence_result(
+        fn -> persistence.get_agent_directory_projection(state, projection_id) end,
+        &(valid_projection?(&1) and &1.id == projection_id)
+      )
     end
   end
 
@@ -74,9 +85,14 @@ defmodule Jido.Messaging.AgentDirectory do
          {persistence, state} <- Runtime.get_persistence(runtime),
          :ok <- require_callbacks(persistence, list_agent_directory_projections: 2),
          {:ok, projections} <-
-           persistence.list_agent_directory_projections(state,
-             endpoint_ids: Map.keys(scope.endpoint_principals),
-             limit: @max_limit
+           persistence_result(
+             fn ->
+               persistence.list_agent_directory_projections(state,
+                 endpoint_ids: Map.keys(scope.endpoint_principals),
+                 limit: @max_limit
+               )
+             end,
+             &(is_list(&1) and Enum.all?(&1, fn record -> valid_projection?(record) end))
            ) do
       filter_projections(projections, query, scope, opts)
     end
@@ -125,7 +141,8 @@ defmodule Jido.Messaging.AgentDirectory do
           {:ok, [AgentDirectoryEntry.t()]} | {:error, term()}
   def filter_projections(projections, query, %AgentDirectoryScope{} = scope, opts)
       when is_list(projections) and is_map(query) and is_list(opts) do
-    with :ok <- validate_query(query),
+    with :ok <- validate_projection_list(projections),
+         :ok <- validate_query(query),
          {:ok, limit} <- validate_limit(Keyword.get(opts, :limit, 100)) do
       now = DateTime.utc_now()
 
@@ -235,7 +252,10 @@ defmodule Jido.Messaging.AgentDirectory do
 
   defp validate_endpoint(persistence, state, projection) do
     if function_exported?(persistence, :get_agent_messaging_endpoint, 2) do
-      case persistence.get_agent_messaging_endpoint(state, projection.endpoint_ref.id) do
+      case persistence_result(
+             fn -> persistence.get_agent_messaging_endpoint(state, projection.endpoint_ref.id) end,
+             &match?(%AgentMessagingEndpoint{id: id} when id == projection.endpoint_ref.id, &1)
+           ) do
         {:ok, %{principal_id: principal_id, status: :active}} when principal_id == projection.principal_id ->
           :ok
 
@@ -263,6 +283,35 @@ defmodule Jido.Messaging.AgentDirectory do
   catch
     _kind, _reason -> {:error, :agent_directory_projector_failed}
   end
+
+  defp persistence_result(callback, valid?) do
+    case callback.() do
+      {:ok, value} -> if valid?.(value), do: {:ok, value}, else: {:error, :persistence_failed}
+      {:error, _} = error -> error
+      _ -> {:error, :persistence_failed}
+    end
+  rescue
+    _ -> {:error, :persistence_failed}
+  catch
+    _, _ -> {:error, :persistence_failed}
+  end
+
+  defp validate_projection_list(projections) do
+    if Enum.all?(projections, &valid_projection?/1), do: :ok, else: {:error, :persistence_failed}
+  end
+
+  defp valid_projection?(%AgentDirectoryProjection{} = projection) do
+    attrs = projection |> Map.from_struct() |> Map.drop([:id, :fresh_until, :inserted_at, :updated_at])
+    seconds = DateTime.diff(projection.fresh_until, projection.source_updated_at, :second)
+    rebuilt = AgentDirectoryProjection.new(Map.put(attrs, :fresh_for_seconds, seconds))
+
+    is_struct(projection.inserted_at, DateTime) and is_struct(projection.updated_at, DateTime) and
+      AgentDirectoryProjection.equivalent?(projection, rebuilt)
+  rescue
+    _ -> false
+  end
+
+  defp valid_projection?(_), do: false
 
   defp require_callbacks(persistence, callbacks) do
     if Enum.all?(callbacks, fn {name, arity} -> function_exported?(persistence, name, arity) end),
