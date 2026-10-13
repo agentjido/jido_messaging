@@ -219,11 +219,16 @@ defmodule Jido.Messaging.MsgContext.Normalizer do
   defp normalize_target(nil), do: nil
 
   defp normalize_target(value) when is_binary(value) do
-    normalized = value |> String.trim() |> String.downcase()
-    if normalized == "", do: nil, else: normalized
+    if String.valid?(value) do
+      normalized = value |> String.trim() |> String.downcase()
+      if normalized == "", do: nil, else: normalized
+    end
   end
 
-  defp normalize_target(value), do: value |> to_string() |> normalize_target()
+  defp normalize_target(value) when is_atom(value) or is_integer(value),
+    do: value |> to_string() |> normalize_target()
+
+  defp normalize_target(_value), do: nil
 
   defp normalize_agent_mentions(body, mentions, platform_targets) do
     stripped_body = strip_leading_mention(body, mentions)
@@ -305,7 +310,7 @@ defmodule Jido.Messaging.MsgContext.Normalizer do
     mentions
     |> Enum.flat_map(fn
       %Mention{} = mention ->
-        [mention]
+        validated_mention(mention)
 
       mention when is_map(mention) ->
         [mention_to_struct(mention)]
@@ -316,6 +321,22 @@ defmodule Jido.Messaging.MsgContext.Normalizer do
   end
 
   defp normalize_mentions(_), do: []
+
+  defp validated_mention(mention) do
+    attrs = Map.from_struct(mention)
+    text = Map.take(attrs, [:user_id, :username, :display_name, :mention_text])
+
+    if is_map(mention.metadata) and
+         Enum.all?(text, fn {_key, value} ->
+           is_nil(value) or (is_binary(value) and String.valid?(value))
+         end) do
+      [Mention.new(attrs)]
+    else
+      []
+    end
+  rescue
+    _ -> []
+  end
 
   defp mention_to_struct(mention) when is_map(mention) do
     user_id = mention[:user_id] || mention["user_id"]

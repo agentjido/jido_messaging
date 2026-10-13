@@ -138,4 +138,68 @@ defmodule Jido.Messaging.MsgContext.NormalizerTest do
     assert result.command.name == "deploy"
     assert_receive {:parsed_two, _, _}
   end
+
+  test "invalid target values cannot crash command and mention normalization" do
+    body = "/deploy all complete arguments"
+
+    for target <- [%{}, self(), {:private, "value"}, fn -> :private end, <<255>>] do
+      result = Normalizer.normalize(context(body, nil), %{}, mention_targets: [target])
+      assert result.body == body
+      assert result.command.name == "deploy"
+      assert result.command.argv == ["all", "complete", "arguments"]
+      refute result.was_mentioned
+      assert result.agent_mentions == []
+    end
+  end
+
+  test "malformed retained mention structs cannot supply identity or strip command text" do
+    for mention <- [
+          struct!(Jido.Chat.Mention, %{user_id: self(), metadata: %{}}),
+          struct!(Jido.Chat.Mention, %{username: %{}, metadata: %{offset: 0, length: 4}}),
+          struct!(Jido.Chat.Mention, %{username: "bot", metadata: nil}),
+          struct!(Jido.Chat.Mention, %{username: "bot", mention_text: <<255>>, metadata: %{}})
+        ] do
+      body = "/deploy complete"
+      base = context(body, nil, %{mentions: [mention]})
+      result = Normalizer.normalize(base, %{})
+      assert result.body == body
+      assert result.command.name == "deploy"
+      assert result.command.source == :body
+      refute result.was_mentioned
+      assert result.mentions == []
+    end
+  end
+
+  test "invalid mention spans preserve Unicode body and its complete command arguments" do
+    for metadata <- [%{offset: 0, length: -1}, %{offset: "0", length: 4}, %{offset: 0, length: 100}] do
+      base = context("/deploy é complete", nil, %{mentions: [%{username: "other", metadata: metadata}]})
+      result = Normalizer.normalize(base, %{})
+      assert result.body == "/deploy é complete"
+      assert result.command.argv == ["é", "complete"]
+      assert result.command.source == :body
+      refute result.was_mentioned
+    end
+  end
+
+  test "valid retained mention and supported target IDs preserve their full data" do
+    mention =
+      Jido.Chat.Mention.new(%{
+        user_id: "42",
+        username: "Bot",
+        display_name: "Complete Bot Name",
+        mention_text: "@bot",
+        is_self: true,
+        metadata: %{offset: 0, length: 4, private_display: "complete"}
+      })
+
+    base = context("@bot /deploy complete", nil, %{mentions: [mention]})
+    result = Normalizer.normalize(base, %{}, mention_targets: [42, :bot])
+    assert result.mentions == [mention]
+    assert result.was_mentioned
+    assert result.command.name == "deploy"
+    assert result.command.argv == ["complete"]
+    assert result.command.source == :mention_stripped
+    assert result.body == base.body
+    assert base.mentions == [mention]
+  end
 end
