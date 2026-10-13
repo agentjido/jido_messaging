@@ -25,6 +25,8 @@ defmodule Jido.Messaging.IngestTest do
     def get_message_by_external_id(state, channel, bridge_id, external_id, room_id),
       do: ETS.get_message_by_external_id(state, channel, bridge_id, external_id, room_id)
 
+    def get_message(state, message_id), do: ETS.get_message(state, message_id)
+
     def save_message(state, message) do
       Agent.get_and_update(__MODULE__.Switch, fn
         :fail -> {{:error, :temporary_storage_failure}, :pass}
