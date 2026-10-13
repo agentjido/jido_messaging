@@ -138,6 +138,224 @@ defmodule Jido.Messaging.Persistence.Conformance do
         assert {:error, :not_found} = @persistence_adapter.get_participant(state, participant.id)
       end
 
+      test "directory lookup retains full provider scope and rejects incomplete or ambiguous selection", %{
+        persistence: state
+      } do
+        {:ok, first} =
+          @persistence_adapter.get_or_create_participant_by_external_binding(state, :telegram, "first", "shared", %{
+            type: :human,
+            identity: %{name: "Alpha"}
+          })
+
+        {:ok, second} =
+          @persistence_adapter.get_or_create_participant_by_external_binding(state, :telegram, "second", "shared", %{
+            type: :human,
+            identity: %{name: "Alpha"}
+          })
+
+        assert first.id != second.id
+
+        assert {:ok, ^first} =
+                 @persistence_adapter.directory_lookup(state, :participant, %{
+                   channel: :telegram,
+                   bridge_id: "first",
+                   external_id: "shared"
+                 })
+
+        assert {:ok, ^second} =
+                 @persistence_adapter.directory_lookup(state, :participant, %{
+                   "channel" => "telegram",
+                   "bridge_id" => "second",
+                   "external_id" => "shared"
+                 })
+
+        assert {:ok, []} = @persistence_adapter.directory_search(state, :participant, %{channel: :telegram}, [])
+
+        assert {:error, {:ambiguous, matches}} =
+                 @persistence_adapter.directory_lookup(state, :participant, %{name: "ALP"})
+
+        assert Enum.sort(Enum.map(matches, & &1.id)) == Enum.sort([first.id, second.id])
+        assert {:error, :not_found} = @persistence_adapter.directory_lookup(state, :participant, %{id: "missing"})
+
+        assert {:error, {:invalid_directory_target, :invalid}} =
+                 @persistence_adapter.directory_search(state, :invalid, %{}, [])
+
+        if function_exported?(@persistence_adapter, :save_agent_directory_projection, 2) do
+          assert {:error, :agent_directory_scope_required} =
+                   @persistence_adapter.directory_search(state, :agent, %{}, [])
+        else
+          assert {:error, {:invalid_directory_target, :agent}} =
+                   @persistence_adapter.directory_search(state, :agent, %{}, [])
+        end
+      end
+
+      test "room directory lookup requires the complete bridge scope and keeps names case-insensitive", %{
+        persistence: state
+      } do
+        {:ok, first} =
+          @persistence_adapter.get_or_create_room_by_external_binding(state, :telegram, "first", "shared", %{
+            type: :group,
+            name: "Alpha"
+          })
+
+        {:ok, second} =
+          @persistence_adapter.get_or_create_room_by_external_binding(state, :telegram, "second", "shared", %{
+            type: :group,
+            name: "Beta"
+          })
+
+        assert {:ok, ^first} =
+                 @persistence_adapter.directory_lookup(state, :room, %{
+                   channel: :telegram,
+                   bridge_id: "first",
+                   external_id: "shared",
+                   name: "ALP"
+                 })
+
+        assert {:ok, ^second} =
+                 @persistence_adapter.directory_lookup(state, :room, %{
+                   channel: "telegram",
+                   bridge_id: "second",
+                   external_id: "shared"
+                 })
+
+        assert {:ok, []} =
+                 @persistence_adapter.directory_search(state, :room, %{channel: :telegram, external_id: "shared"}, [])
+
+        assert {:ok, []} =
+                 @persistence_adapter.directory_search(state, :room, %{channel: :telegram, bridge_id: "first"}, [])
+
+        assert {:ok, []} =
+                 @persistence_adapter.directory_search(
+                   state,
+                   :room,
+                   %{
+                     channel: :telegram,
+                     bridge_id: "first",
+                     external_id: "missing"
+                   },
+                   []
+                 )
+      end
+
+      test "identity revocation is enforced or rejected as unsupported before effects", %{
+        persistence: state
+      } do
+        {:ok, participant} =
+          @persistence_adapter.get_or_create_participant_by_external_binding(state, :telegram, "bridge", "peer", %{
+            type: :human
+          })
+
+        if function_exported?(@persistence_adapter, :save_external_identity_binding, 2) do
+          {:ok, binding} =
+            apply(@persistence_adapter, :get_external_identity_binding, [state, :telegram, "bridge", "peer"])
+
+          revoked = Jido.Messaging.ExternalIdentityBinding.revoke(binding, DateTime.utc_now())
+          assert {:ok, ^revoked} = apply(@persistence_adapter, :save_external_identity_binding, [state, revoked])
+
+          assert {:ok, []} =
+                   @persistence_adapter.directory_search(
+                     state,
+                     :participant,
+                     %{
+                       channel: :telegram,
+                       bridge_id: "bridge",
+                       external_id: "peer"
+                     },
+                     []
+                   )
+
+          assert {:error, :external_identity_revoked} =
+                   @persistence_adapter.get_or_create_participant_by_external_binding(
+                     state,
+                     :telegram,
+                     "bridge",
+                     "peer",
+                     %{type: :human}
+                   )
+
+          assert {:ok, ^participant} = @persistence_adapter.get_participant(state, participant.id)
+        else
+          runtime = unsupported_runtime(state)
+
+          assert {:error, :unsupported} =
+                   Jido.Messaging.get_external_identity_binding(runtime, :telegram, "bridge", "peer")
+
+          assert {:ok, ^participant} = @persistence_adapter.get_participant(state, participant.id)
+        end
+      end
+
+      for {kind, save, get, identity_field} <- [
+            {:membership, :save_membership, :get_membership, :principal_id},
+            {:grant, :save_principal_grant, :get_principal_grant, :principal_id},
+            {:policy, :save_invocation_policy, :get_invocation_policy, :target_principal_id}
+          ] do
+        test "#{kind} storage enforces revisions or rejects unsupported administration before effects", %{
+          persistence: state
+        } do
+          record = authorization_record(unquote(kind), state)
+          adapter = @persistence_adapter
+          save = unquote(save)
+          get = unquote(get)
+
+          if function_exported?(adapter, save, 2) do
+            assert {:error, {:invalid_initial_revision, 2}} = apply(adapter, save, [state, %{record | revision: 2}])
+            assert {:ok, ^record} = apply(adapter, save, [state, record])
+            assert {:ok, ^record} = apply(adapter, save, [state, record])
+
+            assert {:error, {:stale_revision, 1}} =
+                     apply(adapter, save, [state, %{record | revision: 3, metadata: %{changed: true}}])
+
+            changed_identity = record |> Map.put(unquote(identity_field), "other") |> Map.put(:revision, 2)
+            assert {:error, :authorization_identity_immutable} = apply(adapter, save, [state, changed_identity])
+            assert {:ok, ^record} = apply(adapter, get, [state, record.id])
+            revoked = %{record | revision: 2, status: :revoked, updated_at: DateTime.utc_now()}
+            assert {:ok, ^revoked} = apply(adapter, save, [state, revoked])
+
+            assert {:error, :authorization_revocation_terminal} =
+                     apply(adapter, save, [state, %{revoked | revision: 3, status: :active}])
+
+            assert {:ok, ^revoked} = apply(adapter, get, [state, record.id])
+          else
+            runtime = unsupported_runtime(state)
+
+            callback =
+              case unquote(kind) do
+                :membership -> :create_membership
+                :grant -> :create_principal_grant
+                :policy -> :create_invocation_policy
+              end
+
+            assert {:error, :unsupported} = apply(Jido.Messaging, callback, [runtime, Map.from_struct(record)])
+            refute function_exported?(adapter, get, 2)
+            assert {save, 2} in Jido.Messaging.Persistence.behaviour_info(:optional_callbacks)
+          end
+        end
+      end
+
+      test "room deletion removes its authorization records and retains records in another room", %{persistence: state} do
+        first = authorization_record(:membership, state)
+        second = authorization_record(:membership, state)
+
+        if function_exported?(@persistence_adapter, :save_membership, 2) do
+          assert {:ok, ^first} = apply(@persistence_adapter, :save_membership, [state, first])
+          assert {:ok, ^second} = apply(@persistence_adapter, :save_membership, [state, second])
+          assert :ok = @persistence_adapter.delete_room(state, first.room_id)
+          assert {:error, :not_found} = apply(@persistence_adapter, :get_membership, [state, first.id])
+          assert {:ok, ^second} = apply(@persistence_adapter, :get_membership, [state, second.id])
+          assert {:ok, []} = apply(@persistence_adapter, :list_memberships, [state, first.room_id, []])
+
+          assert {:ok, [^second]} =
+                   apply(@persistence_adapter, :list_memberships, [state, second.room_id, [status: :active]])
+        else
+          runtime = unsupported_runtime(state)
+          assert {:error, :unsupported} = Jido.Messaging.create_membership(runtime, Map.from_struct(first))
+          assert :ok = @persistence_adapter.delete_room(state, first.room_id)
+          assert {:ok, _} = @persistence_adapter.get_room(state, second.room_id)
+          assert {:error, :unsupported} = Jido.Messaging.list_memberships(runtime, first.room_id)
+        end
+      end
+
       test "orders, filters, limits, and pages messages", %{persistence: state} do
         room = persist_room(state)
         thread = persist_thread(state, room.id)
@@ -498,6 +716,53 @@ defmodule Jido.Messaging.Persistence.Conformance do
         room = Room.new(%{id: unique_id("room"), type: :direct})
         {:ok, ^room} = @persistence_adapter.save_room(state, room)
         room
+      end
+
+      defp authorization_record(kind, state) do
+        room = persist_room(state)
+
+        participant =
+          Participant.new(%{id: unique_id("principal"), type: if(kind == :policy, do: :agent, else: :human)})
+
+        {:ok, ^participant} = @persistence_adapter.save_participant(state, participant)
+        scope = Jido.Messaging.AuthorizationScope.new(%{kind: :room, room_id: room.id})
+
+        case kind do
+          :membership ->
+            Jido.Messaging.Membership.new(%{
+              principal_id: participant.id,
+              room_id: room.id,
+              issuer_principal_id: participant.id
+            })
+
+          :grant ->
+            Jido.Messaging.Grant.new(%{
+              principal_id: participant.id,
+              issuer_principal_id: participant.id,
+              actions: [:post_message],
+              scope: scope
+            })
+
+          :policy ->
+            Jido.Messaging.InvocationPolicy.new(%{
+              target_principal_id: participant.id,
+              issuer_principal_id: participant.id,
+              mode: :nobody,
+              scope: scope
+            })
+        end
+      end
+
+      defp unsupported_runtime(state) do
+        start_supervised!(
+          {Jido.Messaging.Runtime,
+           [
+             name: Module.concat(__MODULE__, AuthorizationRuntime),
+             instance_module: __MODULE__,
+             persistence: @persistence_adapter,
+             persistence_opts: [pool: state.pool, instance_id: state.instance_id, migrate: false]
+           ]}
+        )
       end
 
       defp persist_thread(state, room_id) do

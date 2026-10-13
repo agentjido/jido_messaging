@@ -515,7 +515,7 @@ defmodule Jido.Messaging.Persistence.Postgres do
     with {:ok, participants} <- list_records(state, "participant", limit: limit) do
       participants =
         participants
-        |> Enum.filter(&participant_matches?(&1, query))
+        |> Enum.filter(&participant_matches?(state, &1, query))
         |> Enum.sort_by(& &1.id)
 
       {:ok, participants}
@@ -1405,10 +1405,33 @@ defmodule Jido.Messaging.Persistence.Postgres do
     "participant_binding:" <> Base.url_encode64(digest, padding: false)
   end
 
-  defp participant_matches?(participant, query) do
+  defp participant_matches?(state, participant, query) do
     id_matches?(participant.id, query) and
       name_matches?(participant_name(participant), query) and
-      participant_external_id_matches?(participant, query)
+      participant_scope_matches?(state, participant, query)
+  end
+
+  defp participant_scope_matches?(state, participant, query) do
+    channel = query_value(query, :channel)
+    bridge_id = query_value(query, :bridge_id)
+    external_id = query_value(query, :external_id)
+
+    cond do
+      is_nil(channel) and is_nil(bridge_id) and is_nil(external_id) ->
+        true
+
+      is_nil(channel) or is_nil(external_id) ->
+        false
+
+      not is_nil(bridge_id) ->
+        case find_participant_binding_record(state, channel, bridge_id, external_id) do
+          {:ok, binding} -> binding.participant_id == participant.id
+          {:error, _} -> false
+        end
+
+      true ->
+        participant_external_id_matches?(participant, query)
+    end
   end
 
   defp room_matches?(state, room, query) do
