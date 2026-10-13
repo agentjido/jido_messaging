@@ -1894,25 +1894,27 @@ defmodule Jido.Messaging do
   """
   def participant_transcript(instance_module, runtime, participant_id, scope, opts \\ [])
       when is_atom(instance_module) and is_binary(participant_id) and is_list(opts) do
-    with :ok <- validate_history_scope(instance_module, scope),
-         {persistence, persistence_state} <- Runtime.get_persistence(runtime),
-         {:ok, participant} <- persistence.get_participant(persistence_state, participant_id),
-         {:ok, messages} <-
-           persistence.get_participant_messages(persistence_state, participant_id, scope.room_ids, opts) do
-      entries =
-        Enum.map(
-          messages,
-          &build_transcript_entry(
-            instance_module,
-            persistence,
-            persistence_state,
-            participant,
-            &1
+    transcript_read(fn ->
+      with :ok <- validate_history_scope(instance_module, scope),
+           {persistence, persistence_state} <- Runtime.get_persistence(runtime),
+           {:ok, participant} <- persistence.get_participant(persistence_state, participant_id),
+           {:ok, messages} <-
+             persistence.get_participant_messages(persistence_state, participant_id, scope.room_ids, opts) do
+        entries =
+          Enum.map(
+            messages,
+            &build_transcript_entry(
+              instance_module,
+              persistence,
+              persistence_state,
+              participant,
+              &1
+            )
           )
-        )
 
-      {:ok, entries}
-    end
+        {:ok, entries}
+      end
+    end)
   end
 
   @doc "Record one scoped advisory trust-evidence revision."
@@ -1942,7 +1944,8 @@ defmodule Jido.Messaging do
          :ok <- validate_projection(projection) do
       context = %{instance_module: instance_module, scope: scope}
 
-      with {:ok, entries} <- projection.search(query, context, Keyword.delete(opts, :projection)),
+      with {:ok, entries} <-
+             projection_call(fn -> projection.search(query, context, Keyword.delete(opts, :projection)) end, :search),
            :ok <- validate_projection_results(entries, instance_module, scope) do
         {:ok, entries}
       end
@@ -1969,8 +1972,15 @@ defmodule Jido.Messaging do
         )
 
       context = %{instance_module: instance_module, scope: scope}
-      projection.upsert(entry, context, Keyword.delete(opts, :projection))
+      projection_call(fn -> projection.upsert(entry, context, Keyword.delete(opts, :projection)) end, :write)
+    else
+      {:error, _} = error -> error
+      _ -> {:error, :invalid_transcript_result}
     end
+  rescue
+    _ -> {:error, :transcript_read_failed}
+  catch
+    _, _ -> {:error, :transcript_read_failed}
   end
 
   @doc "Delete one committed canonical message from a configured search projection."
@@ -1981,7 +1991,7 @@ defmodule Jido.Messaging do
          {:ok, projection} <- search_projection(instance_module, opts),
          :ok <- validate_projection(projection) do
       context = %{instance_module: instance_module, scope: scope}
-      projection.delete(message_id, context, Keyword.delete(opts, :projection))
+      projection_call(fn -> projection.delete(message_id, context, Keyword.delete(opts, :projection)) end, :write)
     end
   end
 
@@ -1993,7 +2003,11 @@ defmodule Jido.Messaging do
          :ok <- validate_projection(projection),
          {:ok, entries} <- collect_transcript(instance_module, runtime, participant_id, scope, opts) do
       context = %{instance_module: instance_module, scope: scope}
-      projection.rebuild(entries, context, Keyword.drop(opts, [:projection, :batch_size]))
+
+      projection_call(
+        fn -> projection.rebuild(entries, context, Keyword.drop(opts, [:projection, :batch_size])) end,
+        :write
+      )
     end
   end
 
@@ -3157,6 +3171,31 @@ defmodule Jido.Messaging do
     end
   end
 
+  defp projection_call(callback, operation) do
+    case {operation, callback.()} do
+      {:search, {:ok, entries}} -> {:ok, entries}
+      {:write, :ok} -> :ok
+      {_, {:error, _} = error} -> error
+      _ -> {:error, :invalid_search_projection_result}
+    end
+  rescue
+    _ -> {:error, :search_projection_failed}
+  catch
+    _, _ -> {:error, :search_projection_failed}
+  end
+
+  defp transcript_read(callback) do
+    case callback.() do
+      {:ok, entries} when is_list(entries) -> {:ok, entries}
+      {:error, _} = error -> error
+      _ -> {:error, :invalid_transcript_result}
+    end
+  rescue
+    _ -> {:error, :transcript_read_failed}
+  catch
+    _, _ -> {:error, :transcript_read_failed}
+  end
+
   defp validate_projection_results(entries, instance_module, scope) when is_list(entries) do
     allowed_rooms = MapSet.new(scope.room_ids)
     {persistence, state} = Runtime.get_persistence(instance_module.__jido_messaging__(:runtime))
@@ -3189,6 +3228,10 @@ defmodule Jido.Messaging do
     else
       _ -> false
     end
+  rescue
+    _ -> false
+  catch
+    _, _ -> false
   end
 
   defp projection_authorship_consistent?(
