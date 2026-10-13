@@ -11,6 +11,29 @@ defmodule Jido.Messaging.FacadeRecordOwnershipTest do
     use Messaging, persistence: Messaging.Persistence.SQLite, runtime_profile: :core
   end
 
+  defmodule Projection do
+    @behaviour Messaging.SearchProjection
+    def upsert(entry, context, _opts) do
+      send(self(), {:upsert, entry, context})
+      :ok
+    end
+
+    def delete(id, context, _opts) do
+      send(self(), {:delete, id, context})
+      :ok
+    end
+
+    def search(query, context, _opts) do
+      send(self(), {:search, query, context})
+      {:ok, Process.get(:projection_results, [])}
+    end
+
+    def rebuild(entries, context, _opts) do
+      send(self(), {:rebuild, entries, context})
+      :ok
+    end
+  end
+
   setup do
     path = Path.join(System.tmp_dir!(), "facade-ownership-#{System.unique_integer([:positive])}.sqlite3")
     start_supervised!(ETSInstance)
@@ -43,6 +66,117 @@ defmodule Jido.Messaging.FacadeRecordOwnershipTest do
     assert :ets.tab2list(table) == []
     assert instance.count_agents() == 0
     refute_received {:signal, _}
+  end
+
+  defp projection(instance) do
+    previous = Application.fetch_env(instance, :search_projection)
+    Application.put_env(instance, :search_projection, Projection)
+
+    on_exit(fn ->
+      case previous do
+        {:ok, value} -> Application.put_env(instance, :search_projection, value)
+        :error -> Application.delete_env(instance, :search_projection)
+      end
+    end)
+  end
+
+  test "history and projection facade defaults retain canonical data and mandatory room scope" do
+    for instance <- [ETSInstance, SQLiteInstance] do
+      {owner, room, human, _, _} = seed(instance)
+      projection(instance)
+      assert {:ok, scope} = Messaging.HistoryScope.new(instance, [room.id])
+
+      assert {:ok, message} =
+               Messaging.save_message(owner, %{
+                 room_id: room.id,
+                 sender_id: human.id,
+                 role: :user,
+                 content: [%{type: :text, text: "owned"}]
+               })
+
+      assert {:ok, [entry]} = Messaging.participant_transcript(instance, owner, human.id, scope)
+      assert entry.message == message
+      assert :ok = Messaging.upsert_transcript_search(instance, owner, message.id, scope)
+      assert_received {:upsert, ^entry, %{scope: ^scope}}
+      Process.put(:projection_results, [entry])
+      assert {:ok, [^entry]} = Messaging.search_transcript(instance, "owned", scope)
+      assert_received {:search, "owned", %{scope: ^scope}}
+      assert :ok = Messaging.rebuild_transcript_search(instance, owner, human.id, scope)
+      assert_received {:rebuild, [^entry], %{scope: ^scope}}
+      assert :ok = Messaging.delete_transcript_search(instance, message.id, room.id, scope)
+      assert_received {:delete, _, %{scope: ^scope}}
+
+      assert {:error, :history_scope_violation} =
+               Messaging.delete_transcript_search(instance, message.id, "foreign-room", scope)
+
+      refute_received {:delete, _, _}
+
+      assert {:error, :history_scope_instance_mismatch} =
+               Messaging.participant_transcript(instance, owner, human.id, %{scope | instance_module: OtherInstance})
+
+      assert {:error, :history_scope_required} = Messaging.search_transcript(instance, "owned", %{})
+      Process.put(:projection_results, :invalid)
+      assert {:error, :invalid_search_projection_result} = Messaging.search_transcript(instance, "owned", scope)
+      no_communication(instance)
+    end
+  end
+
+  test "a projection cannot replace canonical principal identity or assurance" do
+    for instance <- [ETSInstance, SQLiteInstance] do
+      {owner, room, human, _, _} = seed(instance)
+      projection(instance)
+      assert {:ok, scope} = Messaging.HistoryScope.new(instance, [room.id])
+
+      assert {:ok, _} =
+               Messaging.save_message(owner, %{
+                 room_id: room.id,
+                 sender_id: human.id,
+                 role: :user,
+                 content: [%{type: :text, text: "owned"}]
+               })
+
+      assert {:ok, [entry]} = Messaging.participant_transcript(instance, owner, human.id, scope)
+
+      for tampered <- [
+            %{entry | principal_id: "foreign-principal"},
+            %{entry | authorship_assurance: :provider_verified},
+            %{entry | authorship: %{entry.authorship | principal_id: "foreign-principal"}},
+            %{entry | message: %{entry.message | content: [%{type: :text, text: "fabricated"}]}}
+          ] do
+        Process.put(:projection_results, [tampered])
+        assert {:error, :search_projection_scope_violation} = Messaging.search_transcript(instance, "owned", scope)
+      end
+
+      assert {:ok, [^entry]} = Messaging.participant_transcript(instance, owner, human.id, scope)
+      no_communication(instance)
+    end
+  end
+
+  test "canonical projection checks retain timestamp-less history but reject a deleted record" do
+    for instance <- [ETSInstance, SQLiteInstance] do
+      {owner, room, human, _, _} = seed(instance)
+      projection(instance)
+      assert {:ok, scope} = Messaging.HistoryScope.new(instance, [room.id])
+
+      record =
+        Messaging.Message.new(%{
+          room_id: room.id,
+          sender_id: human.id,
+          role: :user,
+          content: [%{type: :text, text: "legacy"}],
+          inserted_at: nil,
+          updated_at: nil
+        })
+
+      assert {:ok, _} = Messaging.save_message_struct(owner, record)
+      assert {:ok, [entry]} = Messaging.participant_transcript(instance, owner, human.id, scope)
+      Process.put(:projection_results, [entry])
+      assert {:ok, [^entry]} = Messaging.search_transcript(instance, "legacy", scope)
+      assert :ok = Messaging.delete_message(owner, record.id)
+      assert {:error, :search_projection_scope_violation} = Messaging.search_transcript(instance, "legacy", scope)
+      assert {:ok, []} = Messaging.participant_transcript(instance, owner, human.id, scope)
+      no_communication(instance)
+    end
   end
 
   test "low-level facade record operations preserve instance isolation and emit no communication" do

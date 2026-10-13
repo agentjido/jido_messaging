@@ -3148,10 +3148,12 @@ defmodule Jido.Messaging do
 
   defp validate_projection_results(entries, instance_module, scope) when is_list(entries) do
     allowed_rooms = MapSet.new(scope.room_ids)
+    {persistence, state} = Runtime.get_persistence(instance_module.__jido_messaging__(:runtime))
 
     if Enum.all?(entries, fn
          %Jido.Messaging.TranscriptEntry{instance_module: ^instance_module, room_id: room_id} = entry ->
-           MapSet.member?(allowed_rooms, room_id) and projection_entry_consistent?(entry)
+           MapSet.member?(allowed_rooms, room_id) and
+             projection_entry_consistent?(entry, instance_module, persistence, state)
 
          _other ->
            false
@@ -3166,22 +3168,31 @@ defmodule Jido.Messaging do
     {:error, :invalid_search_projection_result}
   end
 
-  defp projection_entry_consistent?(%Jido.Messaging.TranscriptEntry{
-         canonical_message_id: canonical_message_id,
-         canonical_participant_id: canonical_participant_id,
-         room_id: room_id,
-         provider_message_id: provider_message_id,
-         inserted_at: inserted_at,
-         message: %Message{} = message
-       }) do
-    message.id == canonical_message_id and
-      message.sender_id == canonical_participant_id and
-      message.room_id == room_id and
-      message.external_id == provider_message_id and
-      message.inserted_at == inserted_at
+  defp projection_entry_consistent?(%Jido.Messaging.TranscriptEntry{} = entry, instance, persistence, state) do
+    with {:ok, message} <- persistence.get_message(state, entry.canonical_message_id),
+         {:ok, participant} <- persistence.get_participant(state, message.sender_id) do
+      canonical = build_transcript_entry(instance, persistence, state, participant, message)
+
+      Map.drop(entry, [:authorship]) == Map.drop(canonical, [:authorship]) and
+        projection_authorship_consistent?(entry.authorship, canonical.authorship, message)
+    else
+      _ -> false
+    end
   end
 
-  defp projection_entry_consistent?(_entry), do: false
+  defp projection_authorship_consistent?(
+         %Jido.Messaging.Authorship{} = entry,
+         %Jido.Messaging.Authorship{} = canonical,
+         message
+       ) do
+    stored_authorship = Map.get(message.metadata, :authorship) || Map.get(message.metadata, "authorship")
+
+    if is_nil(message.inserted_at) and is_nil(message.updated_at) and is_nil(stored_authorship),
+      do: Map.delete(entry, :asserted_at) == Map.delete(canonical, :asserted_at),
+      else: entry == canonical
+  end
+
+  defp projection_authorship_consistent?(_entry, _canonical, _message), do: false
 
   defp collect_transcript(instance_module, runtime, participant_id, scope, opts) do
     batch_size = opts |> Keyword.get(:batch_size, 500) |> normalize_transcript_batch_size()
