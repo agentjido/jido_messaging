@@ -375,7 +375,7 @@ defmodule Jido.Messaging.Demo.Topology do
     end
   end
 
-  defp normalize_bridge_configs_for_room(_), do: []
+  defp normalize_bridge_configs_for_room(_), do: {:error, :invalid_bridge_configs}
 
   defp normalize_id(nil), do: nil
   defp normalize_id(value) when is_binary(value) and value != "", do: value
