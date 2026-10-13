@@ -105,6 +105,101 @@ defmodule Jido.Messaging.IngressSubscriptionsTest do
     use Jido.Messaging, persistence: Jido.Messaging.Persistence.ETS
   end
 
+  defmodule ControlledAdapter do
+    use Jido.Chat.Adapter
+    def channel_type, do: :telegram
+    def signal_protocol, do: 1
+    def configure_binding(opts), do: {:ok, opts}
+    def normalize_event(_binding, _payload), do: Jido.Chat.Signal.Policy.error(:invalid_delivery)
+    def ensure_ingress_subscription(bridge, _opts), do: reply(:ensure, bridge)
+    def list_ingress_subscriptions(bridge, _opts), do: reply(:list, bridge)
+    def delete_ingress_subscription(bridge, _id, _opts), do: reply(:delete, bridge)
+
+    defp reply(operation, bridge) do
+      send(self(), {:subscription_call, operation, bridge})
+      {:ok, Process.get(:subscription_result)}
+    end
+  end
+
+  defp controlled_bridge(id) do
+    {:ok, _} =
+      SubscriptionMessaging.put_bridge_config(%{
+        id: id,
+        adapter_module: ControlledAdapter,
+        opts: %{ingress: %{target_url: "https://example.test/owned"}}
+      })
+
+    id
+  end
+
+  for shape <- [:map, :struct] do
+    test "ensure keeps the caller bridge and adapter scope for a provider #{shape}", _ do
+      bridge = controlled_bridge("owned")
+      attrs = %{bridge_id: "foreign", adapter_name: :github, subscription_id: "remote", status: :active}
+      result = if unquote(shape) == :struct, do: IngressSubscription.new(attrs), else: attrs
+      Process.put(:subscription_result, result)
+      assert {:ok, subscription} = SubscriptionMessaging.ensure_ingress_subscription(bridge)
+      assert subscription.bridge_id == bridge
+      assert subscription.adapter_name == :telegram
+      assert {:ok, [^subscription]} = ConfigStore.list_ingress_subscriptions(SubscriptionMessaging, bridge)
+      assert {:ok, []} = ConfigStore.list_ingress_subscriptions(SubscriptionMessaging, "foreign")
+      assert_received {:subscription_call, :ensure, ^bridge}
+    end
+  end
+
+  for key <- [:subscriptions, "subscriptions", :data, "data"] do
+    test "a provider page in #{inspect(key)} keeps caller scope and every record" do
+      bridge = controlled_bridge("page")
+      entries = for id <- ["one", "two"], do: %{bridge_id: "foreign", adapter_name: :github, subscription_id: id}
+      Process.put(:subscription_result, %{unquote(key) => entries})
+      assert {:ok, subscriptions} = SubscriptionMessaging.list_ingress_subscriptions(bridge)
+      assert Enum.map(subscriptions, & &1.subscription_id) == ["one", "two"]
+      assert Enum.all?(subscriptions, &(&1.bridge_id == bridge and &1.adapter_name == :telegram))
+      assert {:ok, stored} = ConfigStore.list_ingress_subscriptions(SubscriptionMessaging, bridge)
+      assert Enum.sort(Enum.map(stored, & &1.subscription_id)) == ["one", "two"]
+      assert {:ok, []} = ConfigStore.list_ingress_subscriptions(SubscriptionMessaging, "foreign")
+      assert_received {:subscription_call, :list, ^bridge}
+    end
+  end
+
+  test "a malformed provider page is rejected before any metadata record is stored" do
+    bridge = controlled_bridge("malformed-page")
+    Process.put(:subscription_result, [%{subscription_id: "good"}, "invalid"])
+    assert {:error, :invalid_subscription_result} = SubscriptionMessaging.list_ingress_subscriptions(bridge)
+    assert {:ok, []} = ConfigStore.list_ingress_subscriptions(SubscriptionMessaging, bridge)
+  end
+
+  for result <- [:invalid, "invalid"] do
+    test "a non-page provider result #{inspect(result)} is rejected instead of treated as an empty page" do
+      bridge = controlled_bridge("invalid-page")
+      Process.put(:subscription_result, unquote(result))
+      assert {:error, :invalid_subscription_result} = SubscriptionMessaging.list_ingress_subscriptions(bridge)
+      assert {:ok, []} = ConfigStore.list_ingress_subscriptions(SubscriptionMessaging, bridge)
+    end
+  end
+
+  test "deletion cannot adopt a foreign bridge scope from a provider response" do
+    bridge = controlled_bridge("delete-owned")
+    stored = IngressSubscription.new(%{bridge_id: bridge, adapter_name: :telegram, subscription_id: "remote"})
+    foreign = IngressSubscription.new(%{bridge_id: "foreign", adapter_name: :github, subscription_id: "remote"})
+    assert {:ok, _} = ConfigStore.save_ingress_subscription(SubscriptionMessaging, stored)
+    assert {:ok, _} = ConfigStore.save_ingress_subscription(SubscriptionMessaging, foreign)
+
+    Process.put(:subscription_result, %{
+      bridge_id: "foreign",
+      adapter_name: :github,
+      subscription_id: "remote",
+      status: :deleted
+    })
+
+    assert {:ok, deleted} = SubscriptionMessaging.delete_ingress_subscription(bridge, "remote")
+    assert deleted.bridge_id == bridge
+    assert deleted.adapter_name == :telegram
+    assert deleted.status == :deleted
+    assert {:ok, []} = ConfigStore.list_ingress_subscriptions(SubscriptionMessaging, bridge)
+    assert {:ok, [^foreign]} = ConfigStore.list_ingress_subscriptions(SubscriptionMessaging, "foreign")
+  end
+
   setup do
     start_supervised!(SubscriptionMessaging)
     :ok

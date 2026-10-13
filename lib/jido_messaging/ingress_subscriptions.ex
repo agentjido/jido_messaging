@@ -136,34 +136,35 @@ defmodule Jido.Messaging.IngressSubscriptions do
   end
 
   defp normalize_subscription_list(raw_subscriptions, bridge_id, adapter_name, opts) do
-    raw_subscriptions
-    |> subscription_items()
-    |> Enum.reduce_while({:ok, []}, fn raw_subscription, {:ok, subscriptions} ->
-      case normalize_subscription(raw_subscription, bridge_id, adapter_name, opts, :active) do
-        {:ok, subscription} -> {:cont, {:ok, [subscription | subscriptions]}}
-        {:error, reason} -> {:halt, {:error, reason}}
+    with {:ok, items} <- subscription_items(raw_subscriptions) do
+      items
+      |> Enum.reduce_while({:ok, []}, fn raw_subscription, {:ok, subscriptions} ->
+        case normalize_subscription(raw_subscription, bridge_id, adapter_name, opts, :active) do
+          {:ok, subscription} -> {:cont, {:ok, [subscription | subscriptions]}}
+          {:error, reason} -> {:halt, {:error, reason}}
+        end
+      end)
+      |> case do
+        {:ok, subscriptions} -> {:ok, Enum.reverse(subscriptions)}
+        {:error, reason} -> {:error, reason}
       end
-    end)
-    |> case do
-      {:ok, subscriptions} -> {:ok, Enum.reverse(subscriptions)}
-      {:error, reason} -> {:error, reason}
     end
   end
 
-  defp subscription_items(items) when is_list(items), do: items
-  defp subscription_items(%{subscriptions: items}) when is_list(items), do: items
-  defp subscription_items(%{"subscriptions" => items}) when is_list(items), do: items
-  defp subscription_items(%{data: items}) when is_list(items), do: items
-  defp subscription_items(%{"data" => items}) when is_list(items), do: items
-  defp subscription_items(item) when is_map(item), do: [item]
-  defp subscription_items(_item), do: []
+  defp subscription_items(items) when is_list(items), do: {:ok, items}
+  defp subscription_items(%{subscriptions: items}) when is_list(items), do: {:ok, items}
+  defp subscription_items(%{"subscriptions" => items}) when is_list(items), do: {:ok, items}
+  defp subscription_items(%{data: items}) when is_list(items), do: {:ok, items}
+  defp subscription_items(%{"data" => items}) when is_list(items), do: {:ok, items}
+  defp subscription_items(item) when is_map(item), do: {:ok, [item]}
+  defp subscription_items(_item), do: {:error, :invalid_subscription_result}
 
   defp normalize_subscription(%IngressSubscription{} = subscription, bridge_id, adapter_name, opts, default_status) do
     attrs =
       subscription
       |> Map.from_struct()
-      |> Map.put_new(:bridge_id, bridge_id)
-      |> Map.put_new(:adapter_name, adapter_name)
+      |> Map.put(:bridge_id, bridge_id)
+      |> Map.put(:adapter_name, adapter_name)
       |> Map.put_new(:status, default_status)
       |> Map.put_new(:target_url, Keyword.get(opts, :target_url))
       |> Map.put_new(:subscription_id, Keyword.get(opts, :subscription_id))
@@ -176,8 +177,8 @@ defmodule Jido.Messaging.IngressSubscriptions do
     attrs =
       raw_subscription
       |> normalize_map()
-      |> Map.put_new(:bridge_id, bridge_id)
-      |> Map.put_new(:adapter_name, adapter_name)
+      |> Map.put(:bridge_id, bridge_id)
+      |> Map.put(:adapter_name, adapter_name)
       |> Map.put_new(:status, default_status)
       |> Map.put_new(:target_url, Keyword.get(opts, :target_url))
       |> Map.put_new(:subscription_id, Keyword.get(opts, :subscription_id))
