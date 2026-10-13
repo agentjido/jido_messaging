@@ -95,7 +95,7 @@ defmodule Jido.Messaging.OutboundRouter do
 
   defp resolve(instance_module, room_id, opts) do
     with {:ok, bindings} <- list_room_bindings(instance_module, room_id),
-         bridges <- ConfigStore.list_bridge_configs(instance_module, enabled: true),
+         bridges when is_list(bridges) <- ConfigStore.list_bridge_configs(instance_module, enabled: true),
          {:ok, policy} <- resolve_policy(instance_module, room_id, opts) do
       routes =
         bindings

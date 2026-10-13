@@ -51,9 +51,14 @@ defmodule Jido.Messaging.BridgeSupervisor do
   end
 
   defp do_reconcile(instance_module) do
-    desired =
-      ConfigStore.list_bridge_configs(instance_module, enabled: true)
-      |> Map.new(fn config -> {config.id, config} end)
+    case ConfigStore.list_bridge_configs(instance_module, enabled: true) do
+      configs when is_list(configs) -> reconcile_configs(instance_module, configs)
+      {:error, _} = error -> error
+    end
+  end
+
+  defp reconcile_configs(instance_module, configs) do
+    desired = Map.new(configs, fn config -> {config.id, config} end)
 
     running = Map.new(list_running(instance_module), fn {bridge_id, pid} -> {bridge_id, pid} end)
 

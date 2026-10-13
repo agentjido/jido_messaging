@@ -48,8 +48,8 @@ defmodule Jido.Messaging.ConfigStore do
     GenServer.call(pid, {:get_bridge_config, bridge_id})
   end
 
-  @doc "List bridge configs, optionally filtered by `enabled: true | false`."
-  @spec list_bridge_configs(module() | pid(), keyword()) :: [BridgeConfig.t()]
+  @doc "List complete bridge configs, or return a store failure. Accepts an optional enabled filter."
+  @spec list_bridge_configs(module() | pid(), keyword()) :: [BridgeConfig.t()] | {:error, term()}
   def list_bridge_configs(instance_or_pid, opts \\ [])
 
   def list_bridge_configs(instance_module, opts) when is_atom(instance_module) and is_list(opts) do
@@ -178,11 +178,7 @@ defmodule Jido.Messaging.ConfigStore do
   def handle_call({:list_bridge_configs, opts}, _from, state) do
     {persistence, persistence_state} = runtime_persistence(state.instance_module)
 
-    reply =
-      case persistence.list_bridge_configs(persistence_state, opts) do
-        {:ok, configs} -> configs
-        {:error, _reason} -> []
-      end
+    reply = bridge_configs(fn -> persistence.list_bridge_configs(persistence_state, opts) end, opts)
 
     {:reply, reply, state}
   end
@@ -465,6 +461,35 @@ defmodule Jido.Messaging.ConfigStore do
   catch
     _, _ -> {:error, :persistence_failed}
   end
+
+  defp bridge_configs(callback, opts) do
+    case callback.() do
+      {:ok, configs} when is_list(configs) ->
+        if Enum.all?(configs, &valid_bridge_config?/1) and
+             Enum.all?(configs, &(is_nil(opts[:enabled]) or &1.enabled == opts[:enabled])) and
+             length(configs) == length(Enum.uniq_by(configs, & &1.id)), do: configs, else: {:error, :persistence_failed}
+
+      {:error, _} = error ->
+        error
+
+      _ ->
+        {:error, :persistence_failed}
+    end
+  rescue
+    _ -> {:error, :persistence_failed}
+  catch
+    _, _ -> {:error, :persistence_failed}
+  end
+
+  defp valid_bridge_config?(%BridgeConfig{id: id, revision: revision} = config)
+       when is_binary(id) and id != "" and is_integer(revision) and revision >= 0 do
+    case Zoi.parse(BridgeConfig.schema(), Map.from_struct(config), coerce: false) do
+      {:ok, ^config} -> BridgeConfig.validate_for_storage(config) == :ok
+      _ -> false
+    end
+  end
+
+  defp valid_bridge_config?(_), do: false
 
   defp normalize_map(%_{} = struct), do: struct |> Map.from_struct() |> normalize_map()
 
