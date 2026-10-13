@@ -42,7 +42,16 @@ defmodule Jido.Messaging.OutboundGatewayTest do
 
     @impl true
     def send_message(_room_id, text, _opts) do
-      Process.sleep(150)
+      if text == "first" do
+        send(Process.whereis(Jido.Messaging.OutboundGatewayTest.Probe), {:outbound_started, self()})
+
+        receive do
+          :release_provider -> :ok
+        after
+          5_000 -> raise "test provider barrier was not released"
+        end
+      end
+
       {:ok, %{message_id: "slow:#{text}"}}
     end
   end
@@ -248,6 +257,25 @@ defmodule Jido.Messaging.OutboundGatewayTest do
 
     on_exit(fn -> :telemetry.detach(handler_id) end)
 
+    enqueue_handler_id = handler_id <> "-enqueue"
+
+    :telemetry.attach(
+      enqueue_handler_id,
+      [:jido_messaging, :outbound, :enqueued],
+      fn _event, _measurements, _metadata, _ ->
+        send(test_pid, {:outbound_enqueued, self()})
+
+        receive do
+          :release_enqueue -> :ok
+        after
+          5_000 -> raise "test enqueue barrier was not released"
+        end
+      end,
+      nil
+    )
+
+    on_exit(fn -> :telemetry.detach(enqueue_handler_id) end)
+
     context = %{
       channel: SlowChannel,
       bridge_id: "pressure_inst",
@@ -255,13 +283,21 @@ defmodule Jido.Messaging.OutboundGatewayTest do
     }
 
     task_one = Task.async(fn -> OutboundGateway.send_message(TestMessaging, context, "first") end)
-    Process.sleep(10)
+    assert_receive {:outbound_enqueued, partition}, 1_000
+    send(partition, :release_enqueue)
+    assert_receive {:outbound_started, ^partition}, 1_000
 
     task_two = Task.async(fn -> OutboundGateway.send_message(TestMessaging, context, "second") end)
+    await_dispatch_queued(partition)
+    assert Task.yield(task_two, 0) == nil
+    send(partition, :release_provider)
+    assert_receive {:outbound_enqueued, ^partition}, 1_000
 
-    assert Task.yield(task_two, 5) == nil
+    task_three = Task.async(fn -> OutboundGateway.send_message(TestMessaging, context, "third") end)
+    await_dispatch_queued(partition)
+    send(partition, :release_enqueue)
 
-    assert {:error, queue_full_error} = OutboundGateway.send_message(TestMessaging, context, "third")
+    assert {:error, queue_full_error} = Task.await(task_three, 1_000)
     assert queue_full_error.reason == :queue_full
     assert queue_full_error.category == :terminal
 
@@ -269,6 +305,21 @@ defmodule Jido.Messaging.OutboundGatewayTest do
 
     assert {:ok, _result} = Task.await(task_one, 500)
     assert {:ok, _result} = Task.await(task_two, 500)
+  end
+
+  defp await_dispatch_queued(partition, attempts \\ 1_000)
+
+  defp await_dispatch_queued(_partition, 0), do: flunk("dispatch did not reach the partition")
+
+  defp await_dispatch_queued(partition, attempts) do
+    {:messages, messages} = Process.info(partition, :messages)
+
+    if Enum.any?(messages, &match?({:"$gen_call", _, {:dispatch, _}}, &1)) do
+      :ok
+    else
+      Process.sleep(1)
+      await_dispatch_queued(partition, attempts - 1)
+    end
   end
 
   test "normalizes retryable failures and emits classification telemetry" do
