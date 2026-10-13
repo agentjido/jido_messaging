@@ -39,7 +39,7 @@ defmodule Jido.Messaging.ConfigStore do
   end
 
   @doc "Fetch a bridge config by id."
-  @spec get_bridge_config(module() | pid(), String.t()) :: {:ok, BridgeConfig.t()} | {:error, :not_found}
+  @spec get_bridge_config(module() | pid(), String.t()) :: {:ok, BridgeConfig.t()} | {:error, term()}
   def get_bridge_config(instance_module, bridge_id) when is_atom(instance_module) and is_binary(bridge_id) do
     GenServer.call(name(instance_module), {:get_bridge_config, bridge_id})
   end
@@ -168,7 +168,11 @@ defmodule Jido.Messaging.ConfigStore do
 
   def handle_call({:get_bridge_config, bridge_id}, _from, state) do
     {persistence, persistence_state} = runtime_persistence(state.instance_module)
-    {:reply, persistence.get_bridge_config(persistence_state, bridge_id), state}
+
+    result =
+      existing_record(fn -> persistence.get_bridge_config(persistence_state, bridge_id) end, BridgeConfig, bridge_id)
+
+    {:reply, if(result == {:ok, nil}, do: {:error, :not_found}, else: result), state}
   end
 
   def handle_call({:list_bridge_configs, opts}, _from, state) do
@@ -356,7 +360,7 @@ defmodule Jido.Messaging.ConfigStore do
 
   defp persistence_save_ingress_subscription(persistence, persistence_state, %IngressSubscription{} = subscription) do
     if function_exported?(persistence, :save_ingress_subscription, 2) do
-      persistence.save_ingress_subscription(persistence_state, subscription)
+      save_record(fn -> persistence.save_ingress_subscription(persistence_state, subscription) end, subscription)
     else
       {:ok, subscription}
     end
@@ -364,18 +368,41 @@ defmodule Jido.Messaging.ConfigStore do
 
   defp persistence_list_ingress_subscriptions(persistence, persistence_state, bridge_id, opts) do
     if function_exported?(persistence, :list_ingress_subscriptions, 3) do
-      persistence.list_ingress_subscriptions(persistence_state, bridge_id, opts)
+      case persistence.list_ingress_subscriptions(persistence_state, bridge_id, opts) do
+        {:ok, records} when is_list(records) ->
+          if Enum.all?(records, &match?(%IngressSubscription{bridge_id: ^bridge_id}, &1)),
+            do: {:ok, records},
+            else: {:error, :persistence_failed}
+
+        {:error, _} = error ->
+          error
+
+        _ ->
+          {:error, :persistence_failed}
+      end
     else
       {:ok, []}
     end
+  rescue
+    _ -> {:error, :persistence_failed}
+  catch
+    _, _ -> {:error, :persistence_failed}
   end
 
   defp persistence_delete_ingress_subscription(persistence, persistence_state, bridge_id, subscription_id) do
     if function_exported?(persistence, :delete_ingress_subscription, 3) do
-      persistence.delete_ingress_subscription(persistence_state, bridge_id, subscription_id)
+      case persistence.delete_ingress_subscription(persistence_state, bridge_id, subscription_id) do
+        :ok -> :ok
+        {:error, _} = error -> error
+        _ -> {:error, :persistence_failed}
+      end
     else
       {:error, :not_found}
     end
+  rescue
+    _ -> {:error, :persistence_failed}
+  catch
+    _, _ -> {:error, :persistence_failed}
   end
 
   defp get_existing_bridge(_persistence, _state, nil), do: {:ok, nil}

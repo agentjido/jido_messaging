@@ -47,10 +47,9 @@ defmodule Jido.Messaging.IngressSubscriptions do
       case AdapterBridge.list_ingress_subscriptions(adapter_module, bridge_id, adapter_opts) do
         {:ok, raw_subscriptions} ->
           with {:ok, subscriptions} <-
-                 normalize_subscription_list(raw_subscriptions, bridge_id, adapter_name, adapter_opts) do
-            Enum.each(subscriptions, &ConfigStore.save_ingress_subscription(instance_module, &1))
-            {:ok, subscriptions}
-          end
+                 normalize_subscription_list(raw_subscriptions, bridge_id, adapter_name, adapter_opts),
+               :ok <- save_subscriptions(instance_module, subscriptions),
+               do: {:ok, subscriptions}
 
         {:error, reason} ->
           if unsupported?(reason) do
@@ -73,15 +72,16 @@ defmodule Jido.Messaging.IngressSubscriptions do
 
       case AdapterBridge.delete_ingress_subscription(adapter_module, bridge_id, subscription_id, adapter_opts) do
         {:ok, raw_subscription} ->
-          _ = ConfigStore.delete_ingress_subscription(instance_module, bridge_id, subscription_id)
-
-          normalize_subscription(
-            raw_subscription,
-            bridge_id,
-            adapter_name,
-            Keyword.put(adapter_opts, :subscription_id, subscription_id),
-            :deleted
-          )
+          with {:ok, subscription} <-
+                 normalize_subscription(
+                   raw_subscription,
+                   bridge_id,
+                   adapter_name,
+                   Keyword.put(adapter_opts, :subscription_id, subscription_id),
+                   :deleted
+                 ),
+               :ok <- delete_stored_subscription(instance_module, bridge_id, subscription_id),
+               do: {:ok, %{subscription | subscription_id: subscription_id}}
 
         {:error, reason} ->
           {:error, subscription_error(reason, bridge_id, adapter_name)}
@@ -93,6 +93,23 @@ defmodule Jido.Messaging.IngressSubscriptions do
     case ConfigStore.get_bridge_config(instance_module, bridge_id) do
       {:ok, %BridgeConfig{} = config} -> {:ok, config}
       {:error, :not_found} -> {:error, :bridge_not_found}
+      {:error, _} = error -> error
+    end
+  end
+
+  defp save_subscriptions(instance_module, subscriptions) do
+    Enum.reduce_while(subscriptions, :ok, fn subscription, :ok ->
+      case ConfigStore.save_ingress_subscription(instance_module, subscription) do
+        {:ok, ^subscription} -> {:cont, :ok}
+        {:error, _} = error -> {:halt, error}
+      end
+    end)
+  end
+
+  defp delete_stored_subscription(instance_module, bridge_id, subscription_id) do
+    case ConfigStore.delete_ingress_subscription(instance_module, bridge_id, subscription_id) do
+      result when result in [:ok, {:error, :not_found}] -> :ok
+      {:error, _} = error -> error
     end
   end
 
@@ -176,6 +193,8 @@ defmodule Jido.Messaging.IngressSubscriptions do
       |> Map.put_new(:subscription_id, Keyword.get(opts, :subscription_id))
 
     {:ok, IngressSubscription.new(attrs)}
+  rescue
+    _ -> {:error, :invalid_subscription_result}
   end
 
   defp normalize_subscription(raw_subscription, bridge_id, adapter_name, opts, default_status)
