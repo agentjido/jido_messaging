@@ -500,7 +500,7 @@ defmodule Jido.Messaging.Persistence.Postgres do
 
   @impl true
   def directory_lookup(state, target, query, opts \\ []) when is_map(query) do
-    case directory_search(state, target, query, opts) do
+    case directory_search(state, target, query, Keyword.delete(opts, :limit)) do
       {:ok, [entry]} -> {:ok, entry}
       {:ok, []} -> {:error, :not_found}
       {:ok, matches} -> {:error, {:ambiguous, matches}}
@@ -510,33 +510,40 @@ defmodule Jido.Messaging.Persistence.Postgres do
 
   @impl true
   def directory_search(state, :participant, query, opts) when is_map(query) do
-    limit = Keyword.get(opts, :limit, 500)
-
-    with {:ok, participants} <- list_records(state, "participant", limit: limit) do
-      participants =
-        participants
-        |> Enum.filter(&participant_matches?(state, &1, query))
-        |> Enum.sort_by(& &1.id)
-
-      {:ok, participants}
-    end
+    directory_matches(state, "participant", &participant_matches?(state, &1, query), opts)
   end
 
   def directory_search(state, :room, query, opts) when is_map(query) do
-    limit = Keyword.get(opts, :limit, 500)
-
-    with {:ok, rooms} <- list_records(state, "room", limit: limit) do
-      rooms =
-        rooms
-        |> Enum.filter(&room_matches?(state, &1, query))
-        |> Enum.sort_by(& &1.id)
-
-      {:ok, rooms}
-    end
+    directory_matches(state, "room", &room_matches?(state, &1, query), opts)
   end
 
   def directory_search(_state, target, _query, _opts) do
     {:error, {:invalid_directory_target, target}}
+  end
+
+  defp directory_matches(state, kind, matches?, opts) do
+    case Keyword.get(opts, :limit, 500) do
+      limit when is_integer(limit) and limit >= 0 -> directory_page(state, kind, matches?, limit, nil, [])
+      _ -> {:error, :invalid_directory_limit}
+    end
+  end
+
+  defp directory_page(_state, _kind, _matches?, 0, _cursor, found), do: {:ok, Enum.reverse(found)}
+
+  defp directory_page(state, kind, matches?, limit, cursor, found) do
+    {where, params} = if cursor, do: {"kind = $1 AND id > $2", [kind, cursor]}, else: {"kind = $1", [kind]}
+
+    with {:ok, records} <- query_records(state, where, params, order: "id ASC", limit: 500) do
+      selected = records |> Enum.filter(matches?) |> Enum.take(limit)
+      found = Enum.reverse(selected, found)
+      remaining = limit - length(selected)
+
+      if remaining == 0 or length(records) < 500 do
+        {:ok, Enum.reverse(found)}
+      else
+        directory_page(state, kind, matches?, remaining, List.last(records).id, found)
+      end
+    end
   end
 
   @impl true

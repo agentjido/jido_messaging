@@ -1173,7 +1173,7 @@ defmodule Jido.Messaging.Persistence.ETS do
 
   @impl true
   def directory_lookup(state, target, query, opts \\ []) when is_map(query) do
-    case directory_search(state, target, query, opts) do
+    case directory_search(state, target, query, Keyword.delete(opts, :limit)) do
       {:ok, [entry]} ->
         {:ok, entry}
 
@@ -1189,24 +1189,24 @@ defmodule Jido.Messaging.Persistence.ETS do
   end
 
   @impl true
-  def directory_search(state, :participant, query, _opts) when is_map(query) do
+  def directory_search(state, :participant, query, opts) when is_map(query) do
     participants =
       :ets.tab2list(state.participants)
       |> Enum.map(&elem(&1, 1))
       |> Enum.filter(&participant_matches?(&1, state, query))
       |> Enum.sort_by(& &1.id)
 
-    {:ok, participants}
+    directory_page(participants, opts)
   end
 
-  def directory_search(state, :room, query, _opts) when is_map(query) do
+  def directory_search(state, :room, query, opts) when is_map(query) do
     rooms =
       :ets.tab2list(state.rooms)
       |> Enum.map(&elem(&1, 1))
       |> Enum.filter(&room_matches?(&1, state, query))
       |> Enum.sort_by(& &1.id)
 
-    {:ok, rooms}
+    directory_page(rooms, opts)
   end
 
   def directory_search(state, :agent, query, opts) when is_map(query) do
@@ -1232,6 +1232,13 @@ defmodule Jido.Messaging.Persistence.ETS do
 
   def directory_search(_state, target, _query, _opts) do
     {:error, {:invalid_directory_target, target}}
+  end
+
+  defp directory_page(records, opts) do
+    case Keyword.get(opts, :limit, 500) do
+      limit when is_integer(limit) and limit >= 0 -> {:ok, Enum.take(records, limit)}
+      _ -> {:error, :invalid_directory_limit}
+    end
   end
 
   # Jidoka agent directory projection operations

@@ -5,6 +5,9 @@ defmodule Jido.Messaging.Directory do
   Directory adapters expose consistent behavior for participant, room, and
   scoped Jidoka agent resolution. Lookup returns a single deterministic match and reports
   `{:ambiguous, matches}` when a query maps to multiple entities.
+
+  Participant and room searches apply `:limit` after matching and ID ordering.
+  Lookup does not use a search limit to hide an ambiguous result.
   """
 
   alias Jido.Messaging.Runtime
