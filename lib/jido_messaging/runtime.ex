@@ -205,7 +205,7 @@ defmodule Jido.Messaging.Runtime do
   defp maybe_add_instance_scope(opts, _persistence, _instance_module), do: opts
 
   defp current_binding(state, binding) do
-    case state.persistence.get_bridge_config(state.persistence_state, binding.id) do
+    case read_bridge_config(state, binding.id) do
       {:error, :not_found} ->
         {:ok, binding}
 
@@ -263,7 +263,7 @@ defmodule Jido.Messaging.Runtime do
   end
 
   defp binding_options(state, adapter, id, opts) do
-    case state.persistence.get_bridge_config(state.persistence_state, id) do
+    case read_bridge_config(state, id) do
       {:ok, %Jido.Messaging.BridgeConfig{adapter_module: ^adapter} = config} ->
         Jido.Messaging.SecretResolver.adapter_opts_for_config(state.instance_module, config, :configure, opts)
 
@@ -276,5 +276,17 @@ defmodule Jido.Messaging.Runtime do
       {:error, _} = error ->
         error
     end
+  end
+
+  defp read_bridge_config(state, id) do
+    case state.persistence.get_bridge_config(state.persistence_state, id) do
+      {:ok, %Jido.Messaging.BridgeConfig{id: ^id} = config} -> {:ok, config}
+      {:error, _} = error -> error
+      _ -> {:error, :persistence_failed}
+    end
+  rescue
+    _ -> {:error, :persistence_failed}
+  catch
+    _, _ -> {:error, :persistence_failed}
   end
 end
