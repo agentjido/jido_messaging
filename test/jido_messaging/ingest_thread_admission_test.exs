@@ -104,7 +104,7 @@ defmodule Jido.Messaging.IngestThreadAdmissionTest do
 
   test "failed initial storage causes no callback; a successful retry opens one thread", context do
     Process.put({ControlledPersistence, :save_modes}, [:fail])
-    assert {:error, :store_unavailable} = Instance.accept_delivery(context.delivery)
+    assert {:error, %Jido.Chat.Errors.Contract{code: :handler_failed}} = Instance.accept_delivery(context.delivery)
     assert MockTransport.calls(context.transport) == []
     assert {:ok, []} = Instance.list_messages(context.room.id)
     assert {:ok, []} = Instance.list_threads(context.room.id)

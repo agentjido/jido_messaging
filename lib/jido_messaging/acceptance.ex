@@ -1,6 +1,7 @@
 defmodule Jido.Messaging.Acceptance do
   @moduledoc false
   alias Jido.Chat.{Binding, Delivery}
+  alias Jido.Chat.Errors.Contract
   alias Jido.Chat.Signal.Policy
   alias Jido.Messaging.{AdapterBridge, Deduper, Dispatch, Events, Ingest, MessageLifecycle, Runtime}
 
@@ -46,7 +47,7 @@ defmodule Jido.Messaging.Acceptance do
 
           error ->
             _ = Deduper.release(instance, key, token)
-            error
+            acceptance_error(error)
         end
     end
   end
@@ -78,25 +79,18 @@ defmodule Jido.Messaging.Acceptance do
   end
 
   defp process(instance, binding, %{type: "jido.chat.membership.changed"} = parent) do
-    room =
-      case instance.get_room_by_external_binding(
-             AdapterBridge.channel_type(binding.adapter),
-             binding.id,
-             parent.data["room_id"]
-           ) do
-        {:ok, room} -> room.id
-        {:error, :not_found} -> nil
-      end
+    with {:ok, room} <- membership_room(instance, binding, parent) do
+      data =
+        parent.data
+        |> Map.take(~w(participant_id actor_id bot_self transition evidence previous current))
+        |> Map.put("binding_id", binding.id)
+        |> Map.put("external_room_id", parent.data["room_id"])
+        |> Map.put("room_id", room)
 
-    data =
-      parent.data
-      |> Map.take(~w(participant_id actor_id bot_self transition evidence previous current))
-      |> Map.put("binding_id", binding.id)
-      |> Map.put("external_room_id", parent.data["room_id"])
-      |> Map.put("room_id", room)
-
-    with {:ok, signal} <- Events.new("jido.messaging.membership.observed", instance, room, data, parent_signal: parent),
-         do: {:ok, [signal]}
+      with {:ok, signal} <-
+             Events.new("jido.messaging.membership.observed", instance, room, data, parent_signal: parent),
+           do: {:ok, [signal]}
+    end
   end
 
   defp process(instance, binding, %{type: type} = parent)
@@ -108,4 +102,23 @@ defmodule Jido.Messaging.Acceptance do
   end
 
   defp process(_instance, _binding, _parent), do: {:ok, []}
+
+  defp membership_room(instance, binding, parent) do
+    case instance.get_room_by_external_binding(
+           AdapterBridge.channel_type(binding.adapter),
+           binding.id,
+           parent.data["room_id"]
+         ) do
+      {:ok, %Jido.Chat.Room{id: room}} when is_binary(room) and room != "" -> {:ok, room}
+      {:error, :not_found} -> {:ok, nil}
+      _ -> Policy.error(:handler_failed)
+    end
+  rescue
+    _ -> Policy.error(:handler_failed)
+  catch
+    _, _ -> Policy.error(:handler_failed)
+  end
+
+  defp acceptance_error({:error, %Contract{}} = error), do: error
+  defp acceptance_error(_error), do: Policy.error(:handler_failed)
 end
