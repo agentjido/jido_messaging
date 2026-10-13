@@ -54,7 +54,7 @@ defmodule Jido.Messaging.WebhookPlug do
 
   defp fetch_instance_module(opts) do
     case Keyword.get(opts, :instance_module) do
-      module when is_atom(module) -> {:ok, module}
+      module when is_atom(module) and not is_nil(module) -> {:ok, module}
       _ -> {:error, :missing_instance_module}
     end
   end
@@ -80,6 +80,10 @@ defmodule Jido.Messaging.WebhookPlug do
       _ ->
         {:error, :missing_bridge_id}
     end
+  rescue
+    _ -> {:error, :missing_bridge_id}
+  catch
+    _, _ -> {:error, :missing_bridge_id}
   end
 
   defp read_raw_body(conn, opts) do
