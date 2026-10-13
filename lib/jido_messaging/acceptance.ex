@@ -12,7 +12,7 @@ defmodule Jido.Messaging.Acceptance do
   end
 
   def accept(instance, %Delivery{signals: [%Jido.Signal{} = first | _]} = delivery) do
-    with {:ok, binding} <- Runtime.binding(instance.__jido_messaging__(:runtime), first.source),
+    with {:ok, binding} <- binding(instance, first.source),
          {:ok, delivery} <- Delivery.validate(binding, delivery),
          true <- Enum.all?(delivery.signals, &(byte_size(&1.id) in 1..128)) do
       Enum.reduce_while(delivery.signals, {:ok, []}, fn parent, {:ok, signals} ->
@@ -29,10 +29,24 @@ defmodule Jido.Messaging.Acceptance do
 
   def accept(_instance, _delivery), do: Policy.error(:invalid_delivery)
 
+  defp binding(instance, source) do
+    case Runtime.binding(instance.__jido_messaging__(:runtime), source) do
+      {:ok, %Binding{} = binding} -> {:ok, binding}
+      _ -> Policy.error(:invalid_binding)
+    end
+  rescue
+    _ -> Policy.error(:invalid_binding)
+  catch
+    _, _ -> Policy.error(:invalid_binding)
+  end
+
   defp accept_item(instance, binding, parent) do
     key = {:chat_fact, binding.source, parent.type, parent.data["item_id"]}
 
-    case Deduper.claim(instance, key) do
+    case safely(fn -> Deduper.claim(instance, key) end) do
+      {:error, %Contract{}} = error ->
+        error
+
       {:error, :outcome_unknown} ->
         Policy.error(:request_outcome_unknown)
 
@@ -42,29 +56,33 @@ defmodule Jido.Messaging.Acceptance do
       {:ok, token} ->
         case process_safely(instance, binding, parent) do
           {:ok, signals} ->
-            _ = Deduper.commit(instance, key, token)
+            _ = safely(fn -> Deduper.commit(instance, key, token) end)
             # Observation errors do not release an authoritative acceptance claim.
-            _ = Dispatch.emit(instance, parent)
-            Enum.each(signals, &Dispatch.emit(instance, &1))
+            _ = safely(fn -> Dispatch.emit(instance, parent) end)
+            Enum.each(signals, fn signal -> safely(fn -> Dispatch.emit(instance, signal) end) end)
             {:ok, signals}
 
           {:error, %Contract{code: :request_outcome_unknown}} = error ->
-            _ = Deduper.retain_unknown(instance, key, token)
+            _ = safely(fn -> Deduper.retain_unknown(instance, key, token) end)
             error
 
           error ->
-            _ = Deduper.release(instance, key, token)
+            _ = safely(fn -> Deduper.release(instance, key, token) end)
             acceptance_error(error)
         end
     end
   end
 
-  defp process_safely(instance, binding, parent) do
-    process(instance, binding, parent)
+  defp safely(fun) do
+    fun.()
   rescue
     _ -> Policy.error(:handler_failed)
   catch
     _, _ -> Policy.error(:handler_failed)
+  end
+
+  defp process_safely(instance, binding, parent) do
+    safely(fn -> process(instance, binding, parent) end)
   end
 
   defp process(instance, %Binding{} = binding, %{type: "jido.chat.message.received"} = parent) do

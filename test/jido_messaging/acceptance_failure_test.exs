@@ -3,14 +3,14 @@ defmodule Jido.Messaging.AcceptanceFailureTest do
 
   alias Jido.Chat.{AdapterTestKit.MockAdapter, AdapterTestKit.MockTransport, Delivery}
   alias Jido.Chat.Errors.Contract
-  alias Jido.Chat.Signal.{Identity, MembershipChanged, MessageReceived, MessageUpdated}
+  alias Jido.Chat.Signal.{Identity, MembershipChanged, MessageDeleted, MessageReceived, MessageUpdated}
   alias Jido.Messaging.{Deduper, Runtime}
 
   defmodule ControlledPersistence do
     @behaviour Jido.Messaging.Persistence
 
     for {name, arity} <- Jido.Messaging.Persistence.ETS.__info__(:functions),
-        name not in [:get_room_by_external_binding, :save_message, :get_message] do
+        name not in [:get_room_by_external_binding, :save_message, :get_message, :delete_message] do
       args = Macro.generate_arguments(arity, __MODULE__)
       defdelegate unquote(name)(unquote_splicing(args)), to: Jido.Messaging.Persistence.ETS
     end
@@ -19,6 +19,22 @@ defmodule Jido.Messaging.AcceptanceFailureTest do
       case Process.get({__MODULE__, :read_failure}) do
         nil -> Jido.Messaging.Persistence.ETS.get_message(state, id)
         mode -> fail_write(mode)
+      end
+    end
+
+    def delete_message(state, id) do
+      Process.put({__MODULE__, :deletes}, Process.get({__MODULE__, :deletes}, 0) + 1)
+
+      case Process.get({__MODULE__, :delete_failure}) do
+        nil ->
+          Jido.Messaging.Persistence.ETS.delete_message(state, id)
+
+        mode when mode in [:after_raise, :after_throw, :after_exit, :after_error, :after_invalid] ->
+          :ok = Jido.Messaging.Persistence.ETS.delete_message(state, id)
+          fail_write(mode)
+
+        mode ->
+          fail_write(mode)
       end
     end
 
@@ -153,6 +169,74 @@ defmodule Jido.Messaging.AcceptanceFailureTest do
       )
 
     {stored, parent, delivery(context.binding, [parent])}
+  end
+
+  defp stop_child(name) do
+    supervisor = Instance.__jido_messaging__(:supervisor)
+    pid = Process.whereis(name)
+    assert is_pid(pid)
+    {id, ^pid, _, _} = Enum.find(Supervisor.which_children(supervisor), fn {_, child, _, _} -> child == pid end)
+    assert :ok = Supervisor.terminate_child(supervisor, id)
+    refute Process.alive?(pid)
+  end
+
+  test "a stopped runtime rejects a delivery with a safe binding error before a claim", context do
+    unit = delivery(context.binding, [membership(context.binding, "member", "provider-room")])
+    stop_child(Instance.__jido_messaging__(:runtime))
+    assert {:error, %Contract{code: :invalid_binding}} = Instance.accept_delivery(unit)
+    assert Deduper.count(Instance) == 0
+    assert MockTransport.calls(context.transport) == []
+    refute_received {:signal, _}
+  end
+
+  test "a stopped deduper rejects a delivery with a safe error before a store call", context do
+    unit = delivery(context.binding, [membership(context.binding, "member", "provider-room")])
+    before = snapshot()
+    stop_child(Module.concat(Instance, "Deduper"))
+    assert_safe_error(Instance.accept_delivery(unit))
+    assert snapshot() == before
+    assert Process.get({ControlledPersistence, :lookups}, []) == []
+    assert MockTransport.calls(context.transport) == []
+    refute_received {:signal, _}
+  end
+
+  for mode <- [
+        :error,
+        :raise,
+        :throw,
+        :exit,
+        :invalid,
+        :after_raise,
+        :after_throw,
+        :after_exit,
+        :after_error,
+        :after_invalid
+      ] do
+    test "lifecycle delete #{mode} returns a safe error and does not repeat a completed delete", context do
+      {stored, update, _} = lifecycle_fixture(context)
+      parent = MessageDeleted.new!(Map.drop(update.data, ["text"]), source: update.source, subject: update.subject)
+      unit = delivery(context.binding, [parent])
+      original = Jido.Signal.to_map(parent)
+      {:ok, _} = Instance.subscribe_signals(parent.type)
+      Process.put({ControlledPersistence, :delete_failure}, unquote(mode))
+      assert_safe_error(Instance.accept_delivery(unit))
+      assert Deduper.count(Instance) == 0
+      refute_received {:signal, _}
+      Process.delete({ControlledPersistence, :delete_failure})
+      assert {:ok, []} = Instance.accept_delivery(unit)
+      assert_receive {:signal, ^parent}
+      assert {:error, :not_found} = Instance.get_message(stored.id)
+
+      expected =
+        if unquote(mode) in [:after_raise, :after_throw, :after_exit, :after_error, :after_invalid], do: 1, else: 2
+
+      assert Process.get({ControlledPersistence, :deletes}) == expected
+      assert {:ok, []} = Instance.accept_delivery(unit)
+      assert Process.get({ControlledPersistence, :deletes}) == expected
+      assert Jido.Signal.to_map(parent) == original
+      assert MockTransport.calls(context.transport) == []
+      refute_received {:signal, _}
+    end
   end
 
   for mode <- [:raise, :throw, :exit, :invalid, :after_raise, :after_throw, :after_exit, :after_error, :after_invalid] do
