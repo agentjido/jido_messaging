@@ -665,9 +665,10 @@ defmodule Jido.Messaging.Persistence.SQLiteTest do
   end
 
   defp tmp_path(prefix) do
-    path = Path.join(["tmp", "#{prefix}-#{System.unique_integer([:positive])}.sqlite3"])
+    suffix = :crypto.strong_rand_bytes(16) |> Base.url_encode64(padding: false)
+    path = Path.join(["tmp", "#{prefix}-#{suffix}.sqlite3"])
     File.mkdir_p!(Path.dirname(path))
-    File.rm(path)
+    on_exit(fn -> Enum.each([path, path <> "-wal", path <> "-shm"], &File.rm/1) end)
     path
   end
 
