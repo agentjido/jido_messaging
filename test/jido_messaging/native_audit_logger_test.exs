@@ -112,6 +112,75 @@ defmodule Jido.Messaging.NativeAuditLoggerTest do
     refute Jason.encode!(Jido.Signal.to_map(failure)) =~ "private-error-value"
   end
 
+  test "direct native delivery records one received audit observation and never repeats it" do
+    transport = start_supervised!(Jido.Chat.AdapterTestKit.MockTransport)
+    {:ok, binding} = Jido.Chat.bind(Jido.Chat.AdapterTestKit.MockAdapter, id: "audit-ingress", transport: transport)
+    :ok = Jido.Messaging.Runtime.register_binding(Instance.__jido_messaging__(:runtime), binding)
+    parent = Jido.Chat.AdapterTestKit.Factories.message_received(binding)
+    {:ok, delivery} = Jido.Chat.Delivery.new(binding, "delivery-1", [parent])
+    assert :ok = AuditLogger.attach(log_level: :info)
+    {:ok, _} = Instance.subscribe_signals("jido.messaging.message.received")
+
+    log =
+      capture_log([metadata: [:room_id, :message_id, :signal_id, :causation_id]], fn ->
+        assert {:ok, [_]} = Instance.accept_delivery(delivery)
+        assert {:ok, []} = Instance.accept_delivery(delivery)
+      end)
+
+    assert_receive {:signal, received}
+    assert length(Regex.scan(~r/message\.received:/, log)) == 1
+    assert log =~ "message_id=#{received.data["message_id"]}"
+    assert log =~ "signal_id=#{received.id}"
+    assert log =~ "causation_id=#{parent.id}"
+    assert handler_attached?([:jido_messaging, :message, :received])
+    assert {:ok, [_]} = Instance.list_messages(received.data["room_id"])
+    assert Jido.Chat.AdapterTestKit.MockTransport.calls(transport) == []
+    refute_receive {:signal, _}
+  end
+
+  test "large direct delivery audit keeps canonical IDs and excludes complete message text" do
+    {:ok, binding} = Jido.Chat.bind(Jido.Chat.AdapterTestKit.MockAdapter, id: "audit-large")
+    :ok = Jido.Messaging.Runtime.register_binding(Instance.__jido_messaging__(:runtime), binding)
+    text = String.duplicate("x", 190_000)
+    parent = Jido.Chat.AdapterTestKit.Factories.message_received(binding, %{"text" => text})
+    {:ok, delivery} = Jido.Chat.Delivery.new(binding, "delivery-1", [parent])
+    {:ok, _} = Instance.subscribe_signals("jido.messaging.message.received")
+    assert :ok = AuditLogger.attach(log_level: :info)
+
+    log = capture_log(fn -> assert {:ok, [_]} = Instance.accept_delivery(delivery) end)
+    assert_receive {:signal, received}
+    assert log =~ "message.received"
+    assert handler_attached?([:jido_messaging, :message, :received])
+    assert {:ok, stored} = Instance.get_message(received.data["message_id"])
+    assert [%Text{text: ^text}] = stored.content
+    refute log =~ text
+    assert {:ok, []} = Instance.accept_delivery(delivery)
+    refute_receive {:signal, _}
+  end
+
+  test "failed Bus publication retains the audit event and accepted message without repeat telemetry" do
+    {:ok, binding} = Jido.Chat.bind(Jido.Chat.AdapterTestKit.MockAdapter, id: "audit-bus-failure")
+    :ok = Jido.Messaging.Runtime.register_binding(Instance.__jido_messaging__(:runtime), binding)
+    parent = Jido.Chat.AdapterTestKit.Factories.message_received(binding)
+    {:ok, delivery} = Jido.Chat.Delivery.new(binding, "delivery-1", [parent])
+    {:ok, bus} = Jido.Signal.Bus.whereis(Module.concat(Instance, SignalBus))
+    supervisor = Instance.__jido_messaging__(:supervisor)
+    {id, ^bus, _, _} = Enum.find(Supervisor.which_children(supervisor), fn {_, pid, _, _} -> pid == bus end)
+    assert :ok = Supervisor.terminate_child(supervisor, id)
+    assert :ok = AuditLogger.attach(log_level: :info)
+
+    log =
+      capture_log(fn ->
+        assert {:ok, [_]} = Instance.accept_delivery(delivery)
+        assert {:ok, []} = Instance.accept_delivery(delivery)
+      end)
+
+    assert length(Regex.scan(~r/message\.received:/, log)) == 1
+    assert {:ok, room} = Instance.get_room_by_external_binding(:test, binding.id, parent.data["room_id"])
+    assert {:ok, [_]} = Instance.list_messages(room.id)
+    assert handler_attached?([:jido_messaging, :message, :received])
+  end
+
   defp handler_attached?(event),
     do: Enum.any?(:telemetry.list_handlers(event), &(&1.id == "jido_messaging_audit_logger"))
 

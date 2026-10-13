@@ -133,7 +133,7 @@ defmodule Jido.Messaging.AuditLogger do
 
     log_meta = [
       room_id: metadata.room_id,
-      message_id: metadata.message.id,
+      message_id: message_id(metadata),
       sender_id: metadata.participant_id,
       correlation_id: metadata[:correlation_id]
     ]
@@ -146,7 +146,7 @@ defmodule Jido.Messaging.AuditLogger do
 
     log_meta = [
       room_id: metadata.room_id,
-      message_id: metadata.message.id,
+      message_id: message_id(metadata),
       correlation_id: metadata[:correlation_id]
     ]
 
@@ -285,5 +285,10 @@ defmodule Jido.Messaging.AuditLogger do
     ]
 
     {event_str, msg, log_meta}
+  end
+
+  defp message_id(metadata) do
+    message = metadata[:message] || %{}
+    metadata[:message_id] || Map.get(message, :id) || Map.get(message, "id")
   end
 end

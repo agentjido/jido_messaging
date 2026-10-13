@@ -59,7 +59,11 @@ defmodule Jido.Messaging.Acceptance do
             _ = safely(fn -> Deduper.commit(instance, key, token) end)
             # Observation errors do not release an authoritative acceptance claim.
             _ = safely(fn -> Dispatch.emit(instance, parent) end)
-            Enum.each(signals, fn signal -> safely(fn -> Dispatch.emit(instance, signal) end) end)
+
+            Enum.each(signals, fn signal ->
+              safely(fn -> Dispatch.emit(instance, signal, observation_options(instance, signal)) end)
+            end)
+
             {:ok, signals}
 
           {:error, %Contract{code: :request_outcome_unknown}} = error ->
@@ -71,6 +75,26 @@ defmodule Jido.Messaging.Acceptance do
             acceptance_error(error)
         end
     end
+  end
+
+  defp observation_options(instance, signal) do
+    data = signal.data
+
+    [
+      telemetry_event: Events.telemetry_event_for(signal.type),
+      telemetry_measurements: %{timestamp: DateTime.utc_now()},
+      telemetry_metadata: %{
+        instance_module: instance,
+        room_id: data["room_id"],
+        message_id: data["message_id"],
+        message: data["message"],
+        participant_id: data["sender_id"] || data["participant_id"],
+        bridge_id: data["bridge_id"] || data["binding_id"],
+        signal_id: signal.id,
+        causation_id: Jido.Signal.Context.get(signal, "causationid"),
+        code: data["code"]
+      }
+    ]
   end
 
   defp safely(fun) do
