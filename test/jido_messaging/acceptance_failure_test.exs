@@ -147,7 +147,10 @@ defmodule Jido.Messaging.AcceptanceFailureTest do
           "message_id" => "message",
           "text" => "after",
           "timestamp" => "2026-10-12T00:00:00Z"
-        }, source: context.binding.source, subject: Identity.conversation_subject(context.binding.id, "provider-room"))
+        },
+        source: context.binding.source,
+        subject: Identity.conversation_subject(context.binding.id, "provider-room")
+      )
 
     {stored, parent, delivery(context.binding, [parent])}
   end
