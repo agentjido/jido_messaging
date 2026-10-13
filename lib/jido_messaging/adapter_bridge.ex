@@ -88,7 +88,7 @@ defmodule Jido.Messaging.AdapterBridge do
   def send_media(adapter, room, payload, opts \\ []) do
     with {:ok, binding} <- configured_binding(adapter, opts),
          file <- media_payload_to_post_payload(payload) |> PostPayload.upload_candidates() |> List.first(),
-         {:ok, ref} <- Jido.Chat.put_resource(binding, "file", file) do
+         {:ok, ref} <- media_resource(binding, file, opts[:request_id]) do
       operation(
         adapter,
         :send_file,
@@ -101,12 +101,55 @@ defmodule Jido.Messaging.AdapterBridge do
   @doc false
   @spec edit_media(module(), term(), term(), map(), keyword()) :: {:ok, map()} | {:error, term()}
   def edit_media(adapter, room, message, payload, opts \\ []) do
-    with {:ok, replacement} <- send_media(adapter, room, payload, opts) do
+    with {:ok, replacement} <- send_media(adapter, room, payload, stage_options(opts, :upload)) do
       deleted =
-        operation(adapter, :delete_message, %{"room_id" => to_string(room), "message_id" => to_string(message)}, opts)
+        operation(
+          adapter,
+          :delete_message,
+          %{"room_id" => to_string(room), "message_id" => to_string(message)},
+          stage_options(opts, :delete)
+        )
 
       {:ok, attach_replacement_metadata(replacement, message, deleted)}
     end
+  end
+
+  defp stage_options(opts, stage) do
+    case opts[:request_id] do
+      id when is_binary(id) ->
+        stage_id = :crypto.hash(:sha256, :erlang.term_to_binary({:media_replacement, id, stage}))
+        Keyword.put(opts, :request_id, "media:" <> Base.url_encode64(stage_id, padding: false))
+
+      _ ->
+        opts
+    end
+  end
+
+  defp media_resource(binding, file, nil), do: Jido.Chat.put_resource(binding, "file", file)
+
+  defp media_resource(binding, file, request_id) do
+    key = {:messaging_media_resource, request_id}
+    digest = :crypto.hash(:sha256, :erlang.term_to_binary(file, [:deterministic]))
+
+    case :ets.lookup(binding.resources, key) do
+      [{^key, ^digest, ref}] ->
+        {:ok, ref}
+
+      [] ->
+        with {:ok, ref} <- Jido.Chat.put_resource(binding, "file", file) do
+          if :ets.insert_new(binding.resources, {key, digest, ref}) do
+            {:ok, ref}
+          else
+            :ok = Jido.Chat.cancel_resource(binding, ref)
+            media_resource(binding, file, request_id)
+          end
+        end
+
+      _ ->
+        Jido.Chat.Signal.Policy.error(:request_conflict)
+    end
+  rescue
+    ArgumentError -> Jido.Chat.Signal.Policy.error(:invalid_binding)
   end
 
   @doc false
@@ -422,7 +465,7 @@ defmodule Jido.Messaging.AdapterBridge do
 
     file =
       FileUpload.new(%{
-        kind: payload[:kind] || payload["kind"],
+        kind: media_kind(payload[:kind] || payload["kind"]),
         url: payload[:url] || payload["url"],
         path: payload[:path] || payload["path"],
         data: payload[:data] || payload["data"],
@@ -444,6 +487,11 @@ defmodule Jido.Messaging.AdapterBridge do
 
     PostPayload.new(attrs)
   end
+
+  defp media_kind(kind) when is_binary(kind),
+    do: Enum.find([:image, :audio, :video, :file], kind, &(Atom.to_string(&1) == kind))
+
+  defp media_kind(kind), do: kind
 
   defp media_payload_metadata(payload) when is_map(payload) do
     (payload[:metadata] || payload["metadata"] || %{})
