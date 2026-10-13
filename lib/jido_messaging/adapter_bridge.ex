@@ -136,12 +136,14 @@ defmodule Jido.Messaging.AdapterBridge do
       id = opts[:request_id] || Jido.Chat.ID.generate!()
 
       data =
-        Enum.reduce(["thread_id", "reply_to_id", "format", "cursor", "limit", "direction", "topic_name"], data, fn key,
-                                                                                                                   data ->
+        Enum.reduce([:thread_id, :reply_to_id, :format, :cursor, :limit, :direction, :topic_name], data, fn option,
+                                                                                                            data ->
+          key = Atom.to_string(option)
+
           value =
-            if key == "thread_id",
+            if option == :thread_id,
               do: opts[:external_thread_id] || opts[:thread_id],
-              else: opts[String.to_existing_atom(key)]
+              else: opts[option]
 
           value =
             if is_atom(value) and not is_nil(value) and key in ["direction", "format"],
