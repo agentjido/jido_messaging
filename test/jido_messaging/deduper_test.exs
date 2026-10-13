@@ -137,16 +137,28 @@ defmodule Jido.Messaging.DeduperTest do
   describe "TTL expiration" do
     test "keys expire after TTL" do
       key = {:expire, "test"}
-      # Use minimal TTL to speed up test
-      ttl_ms = 20
+      ttl_ms = 60_000
+
+      assert :new = Deduper.check_and_mark(TestMessaging, key, ttl_ms)
+      deduper = Module.concat(TestMessaging, "Deduper")
+      owner = self()
+
+      :sys.replace_state(deduper, fn state ->
+        [{^key, :seen, expires_at}] = :ets.lookup(state.table, key)
+        send(owner, {:deadline_in_future, expires_at > System.monotonic_time(:millisecond)})
+        state
+      end)
+
+      assert_receive {:deadline_in_future, true}
+      assert :duplicate = Deduper.check_and_mark(TestMessaging, key, ttl_ms)
+
+      :sys.replace_state(deduper, fn state ->
+        true = :ets.insert(state.table, {key, :seen, System.monotonic_time(:millisecond) - 1})
+        state
+      end)
 
       assert :new = Deduper.check_and_mark(TestMessaging, key, ttl_ms)
       assert :duplicate = Deduper.check_and_mark(TestMessaging, key, ttl_ms)
-
-      # Wait for TTL expiration - this sleep is necessary for time-based testing
-      Process.sleep(ttl_ms + 10)
-
-      assert :new = Deduper.check_and_mark(TestMessaging, key, ttl_ms)
     end
   end
 end
