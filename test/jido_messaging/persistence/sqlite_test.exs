@@ -475,7 +475,8 @@ defmodule Jido.Messaging.Persistence.SQLiteTest do
     assert {:ok, ^room} = SQLite.save_room(state, room)
     assert {:ok, ^message} = SQLite.save_message(state, message)
 
-    assert {:error, %ArgumentError{}} = SQLite.get_messages(state, room.id, limit: %{bad: true})
+    assert {:error, :invalid_limit} = SQLite.get_messages(state, room.id, limit: %{bad: true})
+    assert {:error, %ArgumentError{}} = SQLite.get_messages(state, %{bad: true}, limit: 10)
     assert {:ok, [^message]} = SQLite.get_messages(state, room.id, limit: 10)
 
     :ok = Sqlite3.close(state.db)
