@@ -301,8 +301,12 @@ defmodule Jido.Messaging.Execution do
     case result do
       {:ok, signal} ->
         case Dispatch.emit(instance, signal) do
-          {:ok, _} -> {:ok, signal}
-          {:error, _} -> failure(instance, request, operation, "observation_failed")
+          {:ok, _} ->
+            {:ok, signal}
+
+          {:error, _} ->
+            cancel_unpublished_result(instance, signal)
+            failure(instance, request, operation, "observation_failed")
         end
 
       error ->
@@ -313,6 +317,15 @@ defmodule Jido.Messaging.Execution do
   catch
     _, _ -> failure(instance, request, operation, "persistence_failed")
   end
+
+  defp cancel_unpublished_result(instance, %Jido.Signal{
+         data: %{"result" => %{"resource_ref" => %{"kind" => "result"} = ref}}
+       }) do
+    _ = Jido.Messaging.cancel_resource(instance, ref)
+    :ok
+  end
+
+  defp cancel_unpublished_result(_instance, _signal), do: :ok
 
   defp provider(instance, runtime, request, operation, decision, _opts) do
     name = String.replace_prefix(operation, "provider.", "")
