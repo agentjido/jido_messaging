@@ -150,6 +150,12 @@ defmodule Mix.Tasks.Jido.Messaging.DemoTest do
     assert Process.whereis(Jido.Messaging.Demo.Supervisor) == nil
   end
 
+  test "malformed dotenv content fails before runtime startup" do
+    File.write!(".env", "TELEGRAM_BOT_TOKEN='unterminated\n")
+    assert_raise Mix.Error, ~r/Failed to load demo environment/, fn -> Demo.start_demo([]) end
+    assert Process.whereis(Jido.Messaging.Demo.Supervisor) == nil
+  end
+
   test "an invalid topology application stops its newly started supervisor" do
     File.write!("bad-room.yaml", "mode: echo\nrooms:\n  - name: Missing ID\n")
     assert_raise Mix.Error, ~r/Failed to apply topology/, fn -> Demo.start_demo(["--topology", "bad-room.yaml"]) end

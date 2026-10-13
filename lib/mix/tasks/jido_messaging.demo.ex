@@ -185,7 +185,11 @@ defmodule Mix.Tasks.Jido.Messaging.Demo do
 
   defp load_dotenv do
     env_file = Path.join(File.cwd!(), ".env")
-    Dotenvy.source!([System.get_env(), env_file, System.get_env()])
+
+    case Dotenvy.source([System.get_env(), env_file, System.get_env()]) do
+      {:ok, _values} -> :ok
+      {:error, reason} -> Mix.raise("Failed to load demo environment: #{inspect(reason)}")
+    end
 
     if File.exists?(env_file) do
       Logger.info("[Demo] Loaded .env file")
