@@ -57,6 +57,28 @@ defmodule Jido.Messaging.OutboundGatewayRouteFailureTest do
     assert opts[:thread_id] == "provider-thread"
   end
 
+  test "an unloaded adapter uses its declared channel type before provider dispatch", context do
+    adapter = Jido.Messaging.Test.ColdGatewayAdapter
+    assert Code.ensure_loaded?(adapter)
+    assert :code.delete(adapter)
+    :code.purge(adapter)
+    assert :code.is_loaded(adapter) == false
+    on_exit(fn -> Code.ensure_loaded?(adapter) end)
+
+    key = {:cold_gateway, context.context.bridge_id, "cold-room", nil}
+    :ok = SessionManager.set(Instance, key, %{external_room_id: "cold-selected-room"})
+    target = context.context |> Map.delete(:channel_type) |> Map.merge(%{channel: adapter, room_id: "cold-room"})
+
+    assert {:ok, result} =
+             OutboundGateway.send_message(Instance, target, "complete cold text", transport: context.transport)
+
+    assert result.route_resolution.session_key == key
+    assert result.route_resolution.source == :state_hit
+
+    assert [%{payload: %{room_id: "cold-selected-room", text: "complete cold text"}}] =
+             MockTransport.calls(context.transport)
+  end
+
   test "nested canonical room uses the supplied delivery endpoint for a session miss", context do
     target = Map.merge(context.context, %{room: %{id: "nested-room"}, delivery_external_room_id: "delivery-room"})
     assert {:ok, result} = OutboundGateway.send_message(Instance, target, "hello", transport: context.transport)

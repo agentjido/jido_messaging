@@ -379,7 +379,8 @@ defmodule Jido.Messaging.OutboundGateway do
       is_atom(context[:channel_type]) and not is_nil(context[:channel_type]) ->
         context[:channel_type]
 
-      is_atom(context[:channel]) and function_exported?(context[:channel], :channel_type, 0) ->
+      is_atom(context[:channel]) and Code.ensure_loaded?(context[:channel]) and
+          function_exported?(context[:channel], :channel_type, 0) ->
         context[:channel].channel_type()
 
       true ->
