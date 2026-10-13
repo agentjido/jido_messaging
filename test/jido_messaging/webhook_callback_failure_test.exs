@@ -21,6 +21,30 @@ defmodule Jido.Messaging.WebhookCallbackFailureTest do
     def normalize_event(binding, %WebhookRequest{payload: payload}) do
       send(Process.whereis(__MODULE__.Probe), {:webhook_callback, :normalize})
 
+      case binding.options[:settings][:normalize] do
+        :raise ->
+          raise "private normalization failure"
+
+        :throw ->
+          throw(:private_normalization_failure)
+
+        :exit ->
+          exit(:private_normalization_failure)
+
+        :invalid ->
+          :invalid
+
+        :mixed_invalid ->
+          {:ok, delivery} = normalized_delivery(binding, Map.put(payload, "kind", "message"))
+          [fact] = delivery.signals
+          {:ok, %{delivery | signals: [fact, %{fact | dataschema: "urn:invalid:schema"}]}}
+
+        _ ->
+          normalized_delivery(binding, payload)
+      end
+    end
+
+    defp normalized_delivery(binding, payload) do
       signals =
         if payload["kind"] == "message",
           do: [
@@ -64,6 +88,29 @@ defmodule Jido.Messaging.WebhookCallbackFailureTest do
         value -> value
       end
     end
+  end
+
+  for failure <- [:raise, :throw, :exit, :invalid, :mixed_invalid] do
+    test "#{failure} normalizer failure makes no canonical record" do
+      configure(%{normalize: unquote(failure)})
+      response = call_plug(~s({"kind":"message"}))
+      assert response.status == 400
+      assert_receive {:webhook_callback, :verify}
+      assert_receive {:webhook_callback, :normalize}
+      assert_receive {:webhook_callback, :format}
+      assert {:ok, []} = Instance.list_rooms()
+
+      assert {:error, :not_found} =
+               Instance.get_message_by_external_id(:webhook_failure_fixture, "owned-bridge", "owned-message")
+    end
+  end
+
+  test "successful response map keeps transport status, headers and body" do
+    configure(%{format: %{status: 202, headers: %{"x-fixture" => "owned"}, body: "accepted"}})
+    response = call_plug()
+    assert response.status == 202
+    assert response.resp_body == "accepted"
+    assert Plug.Conn.get_resp_header(response, "x-fixture") == ["owned"]
   end
 
   setup do
