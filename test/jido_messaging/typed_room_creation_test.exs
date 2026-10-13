@@ -158,4 +158,21 @@ defmodule Jido.Messaging.TypedRoomCreationTest do
     assert {:ok, ^room} = Instance.get_room(room.id)
     refute_receive {:signal, _}
   end
+
+  test "creation supports each stored room kind and rejects unknown kind", context do
+    for kind <- ~w(direct group channel thread) do
+      command = request(%{"request_id" => "kind-#{kind}", "kind" => kind})
+      assert {:ok, result} = Instance.execute(command, context.actor)
+      assert result.data["result"]["kind"] == kind
+      assert {:ok, room} = Instance.get_room(result.data["result"]["id"])
+      assert Atom.to_string(room.type) == kind
+    end
+
+    assert {:error, %Jido.Chat.Errors.Contract{code: :invalid_request}} =
+             CreateRoom.new(%{"request_id" => "unknown", "name" => "Unknown", "kind" => "unknown"})
+
+    assert {:ok, rooms} = Instance.list_rooms()
+    assert length(rooms) == 4
+    assert Process.get({ControlledPersistence, :writes}) == 4
+  end
 end

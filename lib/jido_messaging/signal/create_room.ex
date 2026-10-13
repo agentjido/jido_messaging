@@ -14,7 +14,7 @@ defmodule Jido.Messaging.Signal.CreateRoom do
     schema:
       Zoi.from_json_schema(
         Jason.decode!(
-          ~S|{"type":"object","properties":{"request_id":{"type":"string","minLength":1},"room_id":{"type":"string","minLength":1},"name":{"type":"string"},"kind":{"enum":["direct","group","channel","thread","unknown"]}},"required":["request_id","name","kind"],"additionalProperties":false}|
+          ~S|{"type":"object","properties":{"request_id":{"type":"string","minLength":1},"room_id":{"type":"string","minLength":1},"name":{"type":"string"},"kind":{"enum":["direct","group","channel","thread"]}},"required":["request_id","name","kind"],"additionalProperties":false}|
         )
       )
 end
