@@ -7,6 +7,7 @@ defmodule Jido.Messaging.Demo.Topology do
   """
 
   alias Jido.Chat.Room
+  alias Jido.Messaging.RoomBinding
 
   @type t :: map()
   @type summary :: %{
@@ -154,7 +155,7 @@ defmodule Jido.Messaging.Demo.Topology do
       room_id = get_value(entry, :id)
 
       with room_id when is_binary(room_id) and room_id != "" <- room_id do
-        case instance_module.get_room(room_id) do
+        case setup_call(fn -> instance_module.get_room(room_id) end, &valid_room?(&1, room_id)) do
           {:ok, _room} ->
             {:cont, :ok}
 
@@ -167,7 +168,9 @@ defmodule Jido.Messaging.Demo.Topology do
               external_bindings: get_value(entry, :external_bindings, %{})
             }
 
-            case instance_module.save_room(Room.new(room_attrs)) do
+            room = Room.new(room_attrs)
+
+            case setup_call(fn -> instance_module.save_room(room) end, &(&1 == room)) do
               {:ok, _room} -> {:cont, :ok}
               {:error, reason} -> {:halt, {:error, {:room_create_failed, reason, room_entry}}}
             end
@@ -200,7 +203,10 @@ defmodule Jido.Messaging.Demo.Topology do
           |> Map.drop([:room_id, :channel, :bridge_id, :external_room_id])
           |> normalize_room_binding_attrs()
 
-        case instance_module.get_room_by_external_binding(channel, bridge_id, external_room_id) do
+        case setup_call(
+               fn -> instance_module.get_room_by_external_binding(channel, bridge_id, external_room_id) end,
+               &valid_room?(&1, nil)
+             ) do
           {:ok, %Room{id: ^room_id}} ->
             {:cont, :ok}
 
@@ -208,12 +214,11 @@ defmodule Jido.Messaging.Demo.Topology do
             {:halt, {:error, {:room_binding_scope_conflict, owner_id, room_id, binding_entry}}}
 
           {:error, :not_found} ->
-            case instance_module.create_room_binding(
-                   room_id,
-                   channel,
-                   bridge_id,
-                   external_room_id,
-                   attrs
+            case setup_call(
+                   fn ->
+                     instance_module.create_room_binding(room_id, channel, bridge_id, external_room_id, attrs)
+                   end,
+                   &valid_binding?(&1, room_id, channel, bridge_id, external_room_id, attrs)
                  ) do
               {:ok, _binding} ->
                 {:cont, :ok}
@@ -230,6 +235,37 @@ defmodule Jido.Messaging.Demo.Topology do
       end
     end)
   end
+
+  defp setup_call(fun, valid?) do
+    case fun.() do
+      {:ok, record} ->
+        if valid?.(record), do: {:ok, record}, else: {:error, :invalid_topology_result}
+
+      {:error, _} = error ->
+        error
+
+      _ ->
+        {:error, :invalid_topology_result}
+    end
+  rescue
+    _ -> {:error, :topology_store_failed}
+  catch
+    _, _ -> {:error, :topology_store_failed}
+  end
+
+  defp valid_room?(%Room{} = room, id),
+    do: (is_nil(id) or room.id == id) and Room.new(Map.from_struct(room)) == room
+
+  defp valid_room?(_room, _id), do: false
+
+  defp valid_binding?(%RoomBinding{} = binding, room, channel, bridge, external, attrs) do
+    binding.room_id == room and binding.channel == channel and binding.bridge_id == bridge and
+      binding.external_room_id == external and binding.direction == attrs.direction and
+      binding.enabled == attrs.enabled and is_binary(binding.id) and binding.id != "" and
+      match?(%DateTime{}, binding.inserted_at)
+  end
+
+  defp valid_binding?(_binding, _room, _channel, _bridge, _external, _attrs), do: false
 
   defp apply_routing_policies(_instance_module, []), do: :ok
 
