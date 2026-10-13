@@ -56,9 +56,40 @@ defmodule Jido.Messaging.ConfigStoreReadFailureTest do
     end
 
     defp write(fun) do
-      Agent.update(__MODULE__.Control, &Map.update!(&1, :writes, fn n -> n + 1 end))
-      fun.()
+      Agent.update(__MODULE__.Control, &Map.update!(&1, :attempts, fn n -> n + 1 end))
+
+      case Agent.get(__MODULE__.Control, & &1.write_mode) do
+        :pass ->
+          Agent.update(__MODULE__.Control, &Map.update!(&1, :writes, fn n -> n + 1 end))
+          fun.()
+
+        {:after_write, failure} ->
+          Agent.update(__MODULE__.Control, &Map.update!(&1, :writes, fn n -> n + 1 end))
+          {:ok, _} = fun.()
+          fail_after_write(failure)
+
+        :error ->
+          {:error, :write_unavailable}
+
+        :raise ->
+          raise "private write failure"
+
+        :throw ->
+          throw(:private_write_failure)
+
+        :exit ->
+          exit(:private_write_failure)
+
+        :invalid ->
+          :invalid
+      end
     end
+
+    defp fail_after_write(:error), do: {:error, :write_unavailable}
+    defp fail_after_write(:raise), do: raise("private after-write failure")
+    defp fail_after_write(:throw), do: throw(:private_after_write_failure)
+    defp fail_after_write(:exit), do: exit(:private_after_write_failure)
+    defp fail_after_write(:invalid), do: :invalid
   end
 
   defmodule Runtime do
@@ -68,11 +99,62 @@ defmodule Jido.Messaging.ConfigStoreReadFailureTest do
   setup do
     start_supervised!(%{
       id: ControlledStore.Control,
-      start: {Agent, :start_link, [fn -> %{mode: :pass, writes: 0} end, [name: ControlledStore.Control]]}
+      start:
+        {Agent, :start_link,
+         [fn -> %{mode: :pass, write_mode: :pass, writes: 0, attempts: 0} end, [name: ControlledStore.Control]]}
     })
 
     start_supervised!(Runtime)
     :ok
+  end
+
+  for kind <- [:bridge, :routing], failure <- [:error, :raise, :throw, :exit, :invalid] do
+    test "#{kind} #{failure} write failure retains old revision and permits one retry" do
+      kind = unquote(kind)
+      pid = Process.whereis(ConfigStore.name(Runtime))
+      assert {:ok, initial} = put_config(kind, pid, initial_attrs(kind))
+      before = Agent.get(ControlledStore.Control, & &1)
+      Agent.update(ControlledStore.Control, &%{&1 | write_mode: unquote(failure)})
+      expected = expected_write_failure(unquote(failure))
+      assert {:error, ^expected} = put_config(kind, pid, update_attrs(kind, initial.revision))
+      assert Process.alive?(pid)
+      assert {:ok, ^initial} = get_config(kind, pid)
+      current = Agent.get(ControlledStore.Control, & &1)
+      assert current.attempts == before.attempts + 1
+      assert current.writes == before.writes
+      Agent.update(ControlledStore.Control, &%{&1 | write_mode: :pass})
+      assert {:ok, next} = put_config(kind, pid, update_attrs(kind, initial.revision))
+      assert next.revision == initial.revision + 1
+      assert Agent.get(ControlledStore.Control, & &1.writes) == before.writes + 1
+    end
+  end
+
+  defp expected_write_failure(:error), do: :write_unavailable
+  defp expected_write_failure(_failure), do: :persistence_failed
+
+  for kind <- [:bridge, :routing], failure <- [:error, :raise, :throw, :exit, :invalid] do
+    test "#{kind} #{failure} after-write failure keeps one revision and rejects stale retry" do
+      kind = unquote(kind)
+      pid = Process.whereis(ConfigStore.name(Runtime))
+      assert {:ok, initial} = put_config(kind, pid, initial_attrs(kind))
+      before = Agent.get(ControlledStore.Control, & &1)
+      Agent.update(ControlledStore.Control, &%{&1 | write_mode: {:after_write, unquote(failure)}})
+      expected = expected_write_failure(unquote(failure))
+      assert {:error, ^expected} = put_config(kind, pid, update_attrs(kind, initial.revision))
+      assert Process.alive?(pid)
+      assert {:ok, saved} = get_config(kind, pid)
+      assert saved.revision == initial.revision + 1
+      assert Agent.get(ControlledStore.Control, & &1.writes) == before.writes + 1
+      Agent.update(ControlledStore.Control, &%{&1 | write_mode: :pass})
+
+      assert {:error, {:revision_conflict, expected_revision, actual_revision}} =
+               put_config(kind, pid, update_attrs(kind, initial.revision))
+
+      assert expected_revision == initial.revision
+      assert actual_revision == saved.revision
+      assert Agent.get(ControlledStore.Control, & &1.attempts) == before.attempts + 1
+      assert {:ok, ^saved} = get_config(kind, pid)
+    end
   end
 
   for kind <- [:bridge, :routing],

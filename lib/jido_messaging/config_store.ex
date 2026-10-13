@@ -158,7 +158,7 @@ defmodule Jido.Messaging.ConfigStore do
            :ok <- validate_revision(expected_revision, existing),
            :ok <- validate_bridge_secrets(attrs, existing),
            {:ok, config} <- normalize_bridge_config(attrs, existing),
-           {:ok, _saved} <- persistence.save_bridge_config(persistence_state, config) do
+           {:ok, _saved} <- save_record(fn -> persistence.save_bridge_config(persistence_state, config) end, config) do
         trigger_reconcile(state.instance_module)
         {:ok, config}
       end
@@ -223,7 +223,7 @@ defmodule Jido.Messaging.ConfigStore do
       with {:ok, existing} <- get_existing_routing_policy(persistence, persistence_state, room_id),
            :ok <- validate_revision(expected_revision, existing),
            {:ok, policy} <- normalize_routing_policy(attrs, existing),
-           {:ok, _saved} <- persistence.save_routing_policy(persistence_state, policy) do
+           {:ok, _saved} <- save_record(fn -> persistence.save_routing_policy(persistence_state, policy) end, policy) do
         {:ok, policy}
       end
 
@@ -392,6 +392,18 @@ defmodule Jido.Messaging.ConfigStore do
     case read.() do
       {:ok, %{__struct__: ^module, id: ^id} = record} -> {:ok, record}
       {:error, :not_found} -> {:ok, nil}
+      {:error, _reason} = error -> error
+      _ -> {:error, :persistence_failed}
+    end
+  rescue
+    _ -> {:error, :persistence_failed}
+  catch
+    _, _ -> {:error, :persistence_failed}
+  end
+
+  defp save_record(write, record) do
+    case write.() do
+      {:ok, ^record} -> {:ok, record}
       {:error, _reason} = error -> error
       _ -> {:error, :persistence_failed}
     end
