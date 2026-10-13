@@ -149,8 +149,12 @@ defmodule Jido.Messaging.MsgContext.Normalizer do
         max_len = byte_size(body)
 
         if offset == 0 and length > 0 and length <= max_len do
-          binary_part(body, length, max_len - length)
-          |> String.replace(~r/^[\s,:;\-]+/u, "")
+          span = binary_part(body, 0, length)
+          remaining = binary_part(body, length, max_len - length)
+
+          if String.valid?(span) and String.valid?(remaining),
+            do: String.replace(remaining, ~r/^[\s,:;\-]+/u, ""),
+            else: body
         else
           body
         end
