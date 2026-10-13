@@ -172,20 +172,37 @@ defmodule Jido.Messaging.Demo.Bridge do
   defp setup_shared_room(state) do
     messaging = state.instance_module
 
-    # Create or get the shared room
-    case get_or_create_shared_room(messaging) do
-      {:ok, room} ->
-        # Create bindings for each platform
-        Enum.each(state.bindings, fn {channel, _adapter, bridge_id, external_id} ->
-          create_binding_if_missing(messaging, room.id, channel, bridge_id, external_id)
-        end)
-
-        Logger.info("[Bridge] Shared room #{room.id} ready with #{length(state.bindings)} bindings")
-        :ok
-
-      {:error, reason} ->
-        {:error, reason}
+    with :ok <- validate_binding_owners(messaging, state.bindings),
+         {:ok, room} <- get_or_create_shared_room(messaging),
+         :ok <- create_bindings(messaging, room.id, state.bindings) do
+      Logger.info("[Bridge] Shared room #{room.id} ready with #{length(state.bindings)} bindings")
+      :ok
     end
+  rescue
+    _ -> {:error, :setup_failed}
+  catch
+    _, _ -> {:error, :setup_failed}
+  end
+
+  defp validate_binding_owners(messaging, bindings) do
+    Enum.reduce_while(bindings, :ok, fn {channel, _adapter, bridge, external}, :ok ->
+      case messaging.get_room_by_external_binding(channel, bridge, external) do
+        {:ok, %{id: @shared_room_id}} -> {:cont, :ok}
+        {:error, :not_found} -> {:cont, :ok}
+        {:ok, %{id: owner}} -> {:halt, {:error, {:room_binding_scope_conflict, owner, @shared_room_id}}}
+        {:error, _} = error -> {:halt, error}
+        _ -> {:halt, {:error, :setup_failed}}
+      end
+    end)
+  end
+
+  defp create_bindings(messaging, room_id, bindings) do
+    Enum.reduce_while(bindings, :ok, fn {channel, _adapter, bridge, external}, :ok ->
+      case create_binding_if_missing(messaging, room_id, channel, bridge, external) do
+        :ok -> {:cont, :ok}
+        {:error, _} = error -> {:halt, error}
+      end
+    end)
   end
 
   defp get_or_create_shared_room(messaging) do
@@ -205,12 +222,15 @@ defmodule Jido.Messaging.Demo.Bridge do
         }
 
         messaging.save_room(room)
+
+      {:error, _} = error ->
+        error
     end
   end
 
   defp create_binding_if_missing(messaging, room_id, channel, bridge_id, external_id) do
     case messaging.get_room_by_external_binding(channel, bridge_id, external_id) do
-      {:ok, _existing} ->
+      {:ok, %{id: ^room_id}} ->
         Logger.debug("[Bridge] Binding already exists: #{channel}/#{bridge_id}/#{external_id}")
         :ok
 
@@ -228,6 +248,12 @@ defmodule Jido.Messaging.Demo.Bridge do
             Logger.warning("[Bridge] Failed to create binding: #{inspect(reason)}")
             {:error, reason}
         end
+
+      {:ok, %{id: owner}} ->
+        {:error, {:room_binding_scope_conflict, owner, room_id}}
+
+      {:error, _} = error ->
+        error
     end
   end
 
