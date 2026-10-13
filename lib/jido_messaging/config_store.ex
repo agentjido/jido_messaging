@@ -61,7 +61,7 @@ defmodule Jido.Messaging.ConfigStore do
   end
 
   @doc "Delete a bridge config."
-  @spec delete_bridge_config(module() | pid(), String.t()) :: :ok | {:error, :not_found}
+  @spec delete_bridge_config(module() | pid(), String.t()) :: :ok | {:error, term()}
   def delete_bridge_config(instance_module, bridge_id) when is_atom(instance_module) and is_binary(bridge_id) do
     GenServer.call(name(instance_module), {:delete_bridge_config, bridge_id})
   end
@@ -120,7 +120,7 @@ defmodule Jido.Messaging.ConfigStore do
   end
 
   @doc "Fetch room routing policy."
-  @spec get_routing_policy(module() | pid(), String.t()) :: {:ok, RoutingPolicy.t()} | {:error, :not_found}
+  @spec get_routing_policy(module() | pid(), String.t()) :: {:ok, RoutingPolicy.t()} | {:error, term()}
   def get_routing_policy(instance_module, room_id) when is_atom(instance_module) and is_binary(room_id) do
     GenServer.call(name(instance_module), {:get_routing_policy, room_id})
   end
@@ -130,7 +130,7 @@ defmodule Jido.Messaging.ConfigStore do
   end
 
   @doc "Delete room routing policy."
-  @spec delete_routing_policy(module() | pid(), String.t()) :: :ok | {:error, :not_found}
+  @spec delete_routing_policy(module() | pid(), String.t()) :: :ok | {:error, term()}
   def delete_routing_policy(instance_module, room_id) when is_atom(instance_module) and is_binary(room_id) do
     GenServer.call(name(instance_module), {:delete_routing_policy, room_id})
   end
@@ -191,7 +191,7 @@ defmodule Jido.Messaging.ConfigStore do
     {persistence, persistence_state} = runtime_persistence(state.instance_module)
 
     reply =
-      case persistence.delete_bridge_config(persistence_state, bridge_id) do
+      case delete_record(fn -> persistence.delete_bridge_config(persistence_state, bridge_id) end) do
         :ok ->
           trigger_reconcile(state.instance_module)
           :ok
@@ -236,12 +236,16 @@ defmodule Jido.Messaging.ConfigStore do
 
   def handle_call({:get_routing_policy, room_id}, _from, state) do
     {persistence, persistence_state} = runtime_persistence(state.instance_module)
-    {:reply, persistence.get_routing_policy(persistence_state, room_id), state}
+
+    result =
+      existing_record(fn -> persistence.get_routing_policy(persistence_state, room_id) end, RoutingPolicy, room_id)
+
+    {:reply, if(result == {:ok, nil}, do: {:error, :not_found}, else: result), state}
   end
 
   def handle_call({:delete_routing_policy, room_id}, _from, state) do
     {persistence, persistence_state} = runtime_persistence(state.instance_module)
-    {:reply, persistence.delete_routing_policy(persistence_state, room_id), state}
+    {:reply, delete_record(fn -> persistence.delete_routing_policy(persistence_state, room_id) end), state}
   end
 
   defp normalize_bridge_config(attrs, existing) do
@@ -417,10 +421,20 @@ defmodule Jido.Messaging.ConfigStore do
 
   defp existing_record(read, module, id) do
     case read.() do
-      {:ok, %{__struct__: ^module, id: ^id} = record} -> {:ok, record}
-      {:error, :not_found} -> {:ok, nil}
-      {:error, _reason} = error -> error
-      _ -> {:error, :persistence_failed}
+      {:ok, %RoutingPolicy{id: ^id, room_id: room}} when module == RoutingPolicy and room != id ->
+        {:error, :persistence_failed}
+
+      {:ok, %{__struct__: ^module, id: ^id} = record} ->
+        {:ok, record}
+
+      {:error, :not_found} ->
+        {:ok, nil}
+
+      {:error, _reason} = error ->
+        error
+
+      _ ->
+        {:error, :persistence_failed}
     end
   rescue
     _ -> {:error, :persistence_failed}
@@ -432,6 +446,18 @@ defmodule Jido.Messaging.ConfigStore do
     case write.() do
       {:ok, ^record} -> {:ok, record}
       {:error, _reason} = error -> error
+      _ -> {:error, :persistence_failed}
+    end
+  rescue
+    _ -> {:error, :persistence_failed}
+  catch
+    _, _ -> {:error, :persistence_failed}
+  end
+
+  defp delete_record(callback) do
+    case callback.() do
+      :ok -> :ok
+      {:error, _} = error -> error
       _ -> {:error, :persistence_failed}
     end
   rescue

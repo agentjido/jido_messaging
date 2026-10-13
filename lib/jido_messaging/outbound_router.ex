@@ -96,7 +96,7 @@ defmodule Jido.Messaging.OutboundRouter do
   defp resolve(instance_module, room_id, opts) do
     with {:ok, bindings} <- list_room_bindings(instance_module, room_id),
          bridges <- ConfigStore.list_bridge_configs(instance_module, enabled: true),
-         policy <- resolve_policy(instance_module, room_id, opts) do
+         {:ok, policy} <- resolve_policy(instance_module, room_id, opts) do
       routes =
         bindings
         |> Enum.filter(&eligible_outbound_binding?/1)
@@ -115,15 +115,16 @@ defmodule Jido.Messaging.OutboundRouter do
   defp resolve_policy(instance_module, room_id, opts) do
     case Keyword.get(opts, :routing_policy) do
       %RoutingPolicy{} = policy ->
-        policy
+        {:ok, policy}
 
       policy when is_map(policy) ->
-        RoutingPolicy.new(Map.put(policy, :room_id, room_id))
+        {:ok, RoutingPolicy.new(Map.put(policy, :room_id, room_id))}
 
       _ ->
         case ConfigStore.get_routing_policy(instance_module, room_id) do
-          {:ok, %RoutingPolicy{} = policy} -> policy
-          {:error, :not_found} -> RoutingPolicy.new(%{room_id: room_id})
+          {:ok, %RoutingPolicy{} = policy} -> {:ok, policy}
+          {:error, :not_found} -> {:ok, RoutingPolicy.new(%{room_id: room_id})}
+          {:error, _} = error -> error
         end
     end
   end
