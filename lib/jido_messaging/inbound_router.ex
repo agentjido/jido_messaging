@@ -63,9 +63,19 @@ defmodule Jido.Messaging.InboundRouter do
   end
 
   defp verify(binding, request) do
-    if function_exported?(binding.adapter, :verify_webhook, 2),
-      do: binding.adapter.verify_webhook(request, binding.options),
-      else: {:error, :unsupported}
+    if function_exported?(binding.adapter, :verify_webhook, 2) do
+      case binding.adapter.verify_webhook(request, binding.options) do
+        :ok -> :ok
+        {:error, _reason} = error -> error
+        _ -> {:error, :webhook_verification_failed}
+      end
+    else
+      {:error, :unsupported}
+    end
+  rescue
+    _ -> {:error, :webhook_verification_failed}
+  catch
+    _, _ -> {:error, :webhook_verification_failed}
   end
 
   defp format(binding, request, result) do
@@ -79,6 +89,10 @@ defmodule Jido.Messaging.InboundRouter do
     else
       default(result)
     end
+  rescue
+    _ -> default(result)
+  catch
+    _, _ -> default(result)
   end
 
   defp default({:ok, _}), do: WebhookResponse.accepted()
