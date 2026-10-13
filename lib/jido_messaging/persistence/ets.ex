@@ -909,7 +909,7 @@ defmodule Jido.Messaging.Persistence.ETS do
 
           {:error, :not_found} ->
             # Remove stale binding only if it still points at the missing room.
-            true = :ets.delete_object(state.room_bindings, {binding_key, room_id})
+            :ok = delete_stale_room_binding(state, binding_key, room_id)
             get_or_create_room_by_external_binding(state, channel, bridge_id, external_id, attrs)
         end
 
@@ -2081,6 +2081,25 @@ defmodule Jido.Messaging.Persistence.ETS do
         }
       })
     )
+  end
+
+  defp delete_stale_room_binding(state, key, room_id) do
+    true = :ets.delete_object(state.room_bindings, {key, room_id})
+
+    state.room_bindings_by_id
+    |> :ets.tab2list()
+    |> Enum.each(fn
+      {id, %RoomBinding{room_id: ^room_id} = binding} ->
+        if binding_key(binding.channel, binding.bridge_id, binding.external_room_id) == key do
+          true = :ets.delete_object(state.room_bindings_by_id, {id, binding})
+          true = :ets.delete_object(state.room_bindings_by_room, {room_id, id})
+        end
+
+      _ ->
+        :ok
+    end)
+
+    :ok
   end
 
   defp build_bound_participant(channel, external_id, attrs) do
