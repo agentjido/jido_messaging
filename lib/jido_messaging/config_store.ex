@@ -421,7 +421,6 @@ defmodule Jido.Messaging.ConfigStore do
 
   defp maybe_struct_to_map(nil), do: %{}
   defp maybe_struct_to_map(%_{} = struct), do: Map.from_struct(struct)
-  defp maybe_struct_to_map(map) when is_map(map), do: map
 
   defp map_get(map, key) when is_map(map) and is_atom(key) do
     Map.get(map, key, Map.get(map, Atom.to_string(key)))
