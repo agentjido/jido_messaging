@@ -67,7 +67,8 @@ defmodule Jido.Messaging.Events do
     definition = Enum.find(Jido.Messaging.signal_definitions(), &(&1.type() == type and &1.__signal_kind__() == :fact))
 
     with true <- not is_nil(definition),
-         true <- is_nil(opts[:dataschema]) do
+         true <- is_nil(opts[:dataschema]),
+         :ok <- message_scope(type, data, room) do
       projected = project(type, data, room, opts)
 
       case build(definition, instance, room, projected, opts) do
@@ -78,11 +79,34 @@ defmodule Jido.Messaging.Events do
           result
       end
     else
+      {:error, _} = error -> error
       _ -> Policy.error(:unknown_definition)
     end
   rescue
     _ -> Policy.error(:invalid_request)
   end
+
+  defp message_scope(type, data, room) when type in @message_fact_types do
+    case value(data, "message") do
+      %Message{room_id: ^room} ->
+        :ok
+
+      %Message{} ->
+        Policy.error(:invalid_context)
+
+      message when is_map(message) ->
+        case value(message, "room_id") do
+          nil -> :ok
+          ^room -> :ok
+          _ -> Policy.error(:invalid_context)
+        end
+
+      _ ->
+        :ok
+    end
+  end
+
+  defp message_scope(_type, _data, _room), do: :ok
 
   defp build(definition, instance, room, projected, opts) do
     with {:ok, signal} <-
