@@ -279,7 +279,8 @@ defmodule Jido.Messaging.Persistence.Postgres do
     limit = Keyword.get(opts, :limit, 50)
     thread_id = Keyword.get(opts, :thread_id)
 
-    with {:ok, direction} <- cursor_direction(opts),
+    with true <- is_integer(limit) and limit > 0,
+         {:ok, direction} <- cursor_direction(opts),
          {scope_where, scope_params} <- message_scope(room_id, thread_id),
          {where, params} <- with_instance_scope(state, scope_where, scope_params),
          {:ok, cursor} <- resolve_message_cursor(state, where, params, direction),
@@ -287,6 +288,9 @@ defmodule Jido.Messaging.Persistence.Postgres do
          {:ok, rows} <- query_message_page(state, where, params, order, limit) do
       messages = decode_rows(rows)
       {:ok, if(reverse?, do: Enum.reverse(messages), else: messages)}
+    else
+      false -> {:error, :invalid_limit}
+      {:error, _} = error -> error
     end
   end
 
