@@ -2,12 +2,13 @@ defmodule Jido.Messaging.Events do
   @moduledoc "Typed Messaging facts from committed records and explicit runtime events."
 
   alias Jido.Chat.Signal.Policy
-  alias Jido.Messaging.Message
+  alias Jido.Messaging.{Message, Runtime}
   alias Jido.Messaging.Signal.{Context, Identity}
 
   @fact_fields Jason.decode!(
-                 ~S|{"jido.messaging.room.message_added":["message","message_id","room_id","thread_id","reply_to_id","sender_id","text","role","status","external_room_id","external_message_id","bridge_id"],"jido.messaging.message.received":["message","message_id","room_id","thread_id","reply_to_id","sender_id","text","role","status","external_room_id","external_message_id","bridge_id"],"jido.messaging.message.sent":["message","message_id","room_id","thread_id","reply_to_id","sender_id","text","role","status","external_room_id","external_message_id","bridge_id"],"jido.messaging.message.failed":["room_id","message_id","bridge_id","code"],"jido.messaging.room.created":["room_id","name","kind"],"jido.messaging.room.participant_joined":["room_id","participant_id","reason"],"jido.messaging.room.participant_left":["room_id","participant_id","reason"],"jido.messaging.participant.presence_changed":["room_id","participant_id","presence"],"jido.messaging.participant.typing":["room_id","participant_id","typing","thread_id"],"jido.messaging.message.reaction_added":["room_id","message_id","participant_id","reaction"],"jido.messaging.message.reaction_removed":["room_id","message_id","participant_id","reaction"],"jido.messaging.message.delivered":["room_id","message_id","participant_id","timestamp"],"jido.messaging.message.read":["room_id","message_id","participant_id","timestamp"],"jido.messaging.thread.created":["room_id","thread_id","message_id","participant_id"],"jido.messaging.thread.reply_added":["room_id","thread_id","message_id","participant_id"],"jido.messaging.agent.triggered":["room_id","agent_id","message_id","thread_id","code"],"jido.messaging.agent.started":["room_id","agent_id","message_id","thread_id","code"],"jido.messaging.agent.completed":["room_id","agent_id","message_id","thread_id","code"],"jido.messaging.agent.failed":["room_id","agent_id","message_id","thread_id","code"],"jido.messaging.instance.started":["instance_id","bridge_id","code"],"jido.messaging.instance.connecting":["instance_id","bridge_id","code"],"jido.messaging.instance.connected":["instance_id","bridge_id","code"],"jido.messaging.instance.disconnected":["instance_id","bridge_id","code"],"jido.messaging.instance.stopped":["instance_id","bridge_id","code"],"jido.messaging.instance.error":["instance_id","bridge_id","code"],"jido.messaging.membership.observed":["binding_id","external_room_id","room_id","participant_id","actor_id","bot_self","transition","evidence","previous","current"],"jido.messaging.thread.changed":["room_id","thread_id","message_id","participant_id","change"]}|
+                 ~S|{"jido.messaging.room.message_added":["message","message_id","room_id","thread_id","reply_to_id","sender_id","text","role","status","external_room_id","external_message_id","bridge_id","resource_ref"],"jido.messaging.message.received":["message","message_id","room_id","thread_id","reply_to_id","sender_id","text","role","status","external_room_id","external_message_id","bridge_id","resource_ref"],"jido.messaging.message.sent":["message","message_id","room_id","thread_id","reply_to_id","sender_id","text","role","status","external_room_id","external_message_id","bridge_id","resource_ref"],"jido.messaging.message.failed":["room_id","message_id","bridge_id","code"],"jido.messaging.room.created":["room_id","name","kind"],"jido.messaging.room.participant_joined":["room_id","participant_id","reason"],"jido.messaging.room.participant_left":["room_id","participant_id","reason"],"jido.messaging.participant.presence_changed":["room_id","participant_id","presence"],"jido.messaging.participant.typing":["room_id","participant_id","typing","thread_id"],"jido.messaging.message.reaction_added":["room_id","message_id","participant_id","reaction"],"jido.messaging.message.reaction_removed":["room_id","message_id","participant_id","reaction"],"jido.messaging.message.delivered":["room_id","message_id","participant_id","timestamp"],"jido.messaging.message.read":["room_id","message_id","participant_id","timestamp"],"jido.messaging.thread.created":["room_id","thread_id","message_id","participant_id"],"jido.messaging.thread.reply_added":["room_id","thread_id","message_id","participant_id"],"jido.messaging.agent.triggered":["room_id","agent_id","message_id","thread_id","code"],"jido.messaging.agent.started":["room_id","agent_id","message_id","thread_id","code"],"jido.messaging.agent.completed":["room_id","agent_id","message_id","thread_id","code"],"jido.messaging.agent.failed":["room_id","agent_id","message_id","thread_id","code"],"jido.messaging.instance.started":["instance_id","bridge_id","code"],"jido.messaging.instance.connecting":["instance_id","bridge_id","code"],"jido.messaging.instance.connected":["instance_id","bridge_id","code"],"jido.messaging.instance.disconnected":["instance_id","bridge_id","code"],"jido.messaging.instance.stopped":["instance_id","bridge_id","code"],"jido.messaging.instance.error":["instance_id","bridge_id","code"],"jido.messaging.membership.observed":["binding_id","external_room_id","room_id","participant_id","actor_id","bot_self","transition","evidence","previous","current"],"jido.messaging.thread.changed":["room_id","thread_id","message_id","participant_id","change"]}|
                )
+  @message_fact_types ~w(jido.messaging.room.message_added jido.messaging.message.received jido.messaging.message.sent)
   @type event_type :: atom() | String.t()
 
   @doc "Builds a registered fact from a committed canonical message."
@@ -66,21 +67,51 @@ defmodule Jido.Messaging.Events do
     definition = Enum.find(Jido.Messaging.signal_definitions(), &(&1.type() == type and &1.__signal_kind__() == :fact))
 
     with true <- not is_nil(definition),
-         true <- is_nil(opts[:dataschema]),
-         {:ok, signal} <-
-           definition.new(project(type, data, room, opts),
-             source: source(instance, opts),
-             subject: Identity.room_subject(room)
-           ),
-         {:ok, signal} <- Context.attach(signal, opts),
-         {:ok, signal} <- Policy.validate(signal) do
-      {:ok, signal}
+         true <- is_nil(opts[:dataschema]) do
+      projected = project(type, data, room, opts)
+
+      case build(definition, instance, room, projected, opts) do
+        {:error, %Jido.Chat.Errors.Contract{code: :signal_too_large}} = error when type in @message_fact_types ->
+          referenced_message(definition, instance, room, projected, opts, error)
+
+        result ->
+          result
+      end
     else
-      {:error, _} = error -> error
       _ -> Policy.error(:unknown_definition)
     end
   rescue
     _ -> Policy.error(:invalid_request)
+  end
+
+  defp build(definition, instance, room, projected, opts) do
+    with {:ok, signal} <-
+           definition.new(projected, source: source(instance, opts), subject: Identity.room_subject(room)),
+         {:ok, signal} <- Context.attach(signal, opts),
+         {:ok, signal} <- Policy.validate(signal),
+         do: {:ok, signal}
+  end
+
+  defp referenced_message(definition, instance, room, projected, opts, original_error) do
+    with binding <- Runtime.resource_owner(instance.__jido_messaging__(:runtime)),
+         {:ok, ref} <- Jido.Chat.Resources.put(binding, "result", projected, []) do
+      bounded = projected |> Map.take(~w(message_id room_id sender_id)) |> Map.put("resource_ref", ref)
+
+      case build(definition, instance, room, bounded, opts) do
+        {:ok, _} = result ->
+          result
+
+        error ->
+          _ = Jido.Chat.Resources.cancel(binding, ref)
+          error
+      end
+    else
+      _ -> original_error
+    end
+  rescue
+    _ -> original_error
+  catch
+    _, _ -> original_error
   end
 
   @doc "Returns the stable source for a runtime instance."

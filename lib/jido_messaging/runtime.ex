@@ -47,6 +47,10 @@ defmodule Jido.Messaging.Runtime do
   def request_table(runtime), do: GenServer.call(runtime, :request_table)
 
   @doc false
+  @spec resource_owner(atom()) :: Jido.Chat.Resources.owner()
+  def resource_owner(runtime), do: GenServer.call(runtime, :resource_owner)
+
+  @doc false
   @spec register_binding(atom(), Jido.Chat.Binding.t()) :: :ok
   def register_binding(runtime, binding), do: GenServer.call(runtime, {:register_binding, binding})
 
@@ -115,6 +119,16 @@ defmodule Jido.Messaging.Runtime do
 
   @impl true
   def handle_call(:request_table, _from, state), do: {:reply, state.request_admissions, state}
+
+  @impl true
+  def handle_call(:resource_owner, _from, state) do
+    owner = %{
+      id: Jido.Messaging.Signal.Identity.instance_source(Atom.to_string(state.instance_module)),
+      resources: state.request_admissions
+    }
+
+    {:reply, owner, state}
+  end
 
   @impl true
   def handle_call({:register_binding, binding}, _from, state) do

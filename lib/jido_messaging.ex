@@ -124,6 +124,38 @@ defmodule Jido.Messaging do
   @spec accept_delivery(module(), Jido.Chat.Delivery.t()) :: {:ok, [Jido.Signal.t()]} | {:error, term()}
   def accept_delivery(instance, delivery), do: Jido.Messaging.Acceptance.accept(instance, delivery)
 
+  @doc "Resolves a private resource for the call that created its reference."
+  @spec resolve_resource(module(), map()) :: {:ok, term()} | {:error, term()}
+  def resolve_resource(instance, ref) do
+    with {:ok, owner} <- resource_owner(instance, ref), do: Jido.Chat.Resources.resolve(owner, ref)
+  end
+
+  @doc "Cancels a private call-scoped resource and clears its value."
+  @spec cancel_resource(module(), map()) :: :ok | {:error, term()}
+  def cancel_resource(instance, ref) do
+    with {:ok, owner} <- resource_owner(instance, ref), do: Jido.Chat.Resources.cancel(owner, ref)
+  end
+
+  defp resource_owner(instance, %{"binding_id" => id}) do
+    runtime = instance.__jido_messaging__(:runtime)
+    owner = Jido.Messaging.Runtime.resource_owner(runtime)
+
+    if owner.id == id do
+      {:ok, owner}
+    else
+      case Jido.Messaging.Runtime.binding(runtime, id) do
+        {:ok, _} = result -> result
+        _ -> Jido.Chat.Signal.Policy.error(:invalid_resource)
+      end
+    end
+  rescue
+    _ -> Jido.Chat.Signal.Policy.error(:invalid_resource)
+  catch
+    _, _ -> Jido.Chat.Signal.Policy.error(:resource_expired)
+  end
+
+  defp resource_owner(_instance, _ref), do: Jido.Chat.Signal.Policy.error(:invalid_resource)
+
   alias Jido.Chat.{Participant, Room}
   alias Jido.Messaging.BridgeRoomSpec
   alias Jido.Messaging.TopologyValidator
@@ -226,6 +258,12 @@ defmodule Jido.Messaging do
 
       @doc "Accepts a complete normalized Chat delivery."
       def accept_delivery(delivery), do: Jido.Messaging.accept_delivery(__MODULE__, delivery)
+
+      @doc "Resolves a private resource for its creator call."
+      def resolve_resource(ref), do: Jido.Messaging.resolve_resource(__MODULE__, ref)
+
+      @doc "Cancels a private call-scoped resource."
+      def cancel_resource(ref), do: Jido.Messaging.cancel_resource(__MODULE__, ref)
 
       # Delegated API functions
 

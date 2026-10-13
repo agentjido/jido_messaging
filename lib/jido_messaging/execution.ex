@@ -515,11 +515,21 @@ defmodule Jido.Messaging.Execution do
              content: [Text.new(request.data["text"])],
              thread_id: request.data["thread_id"]
            }),
-         {:ok, message} <- Jido.Messaging.save_message_struct(runtime, message) do
-      _ = Events.message_added(instance, message, parent_signal: request) |> publish(instance)
-      completed(instance, request, "post_message", Events.message_summary(message))
+         {:ok, fact, result} <- prepare_local_message(instance, runtime, request, message) do
+      case Jido.Messaging.save_message_struct(runtime, message) do
+        {:ok, _saved} ->
+          case Dispatch.emit(instance, fact) do
+            {:ok, _} -> {:ok, result}
+            _ -> failure(instance, request, "post_message", "observation_failed")
+          end
+
+        _ ->
+          cancel_message_resources(instance, fact, result)
+          failure(instance, request, "post_message", "persistence_failed")
+      end
     else
       false -> failure(instance, request, "post_message", "authorization_denied")
+      {:error, %Jido.Chat.Errors.Contract{}} = error -> error
       _ -> failure(instance, request, "post_message", "persistence_failed")
     end
   end
@@ -537,6 +547,50 @@ defmodule Jido.Messaging.Execution do
       {:error, :participant_scope_mismatch} -> failure(instance, request, operation, "authorization_denied")
       _ -> failure(instance, request, operation, "persistence_failed")
     end
+  end
+
+  defp prepare_local_message(instance, runtime, request, message) do
+    with {:ok, fact} <- Events.message_added(instance, message, parent_signal: request) do
+      case local_message_completed(instance, runtime, request, message) do
+        {:ok, result} ->
+          {:ok, fact, result}
+
+        error ->
+          if fact.data["resource_ref"], do: Jido.Messaging.cancel_resource(instance, fact.data["resource_ref"])
+          error
+      end
+    end
+  end
+
+  defp local_message_completed(instance, runtime, request, message) do
+    summary = Events.message_summary(message)
+
+    case completed(instance, request, "post_message", summary) do
+      {:error, %Jido.Chat.Errors.Contract{code: :signal_too_large}} ->
+        owner = Runtime.resource_owner(runtime)
+
+        with {:ok, ref} <- Jido.Chat.Resources.put(owner, "result", summary, []) do
+          case completed(instance, request, "post_message", %{"resource_ref" => ref}) do
+            {:ok, _} = result ->
+              result
+
+            error ->
+              _ = Jido.Chat.Resources.cancel(owner, ref)
+              error
+          end
+        end
+
+      result ->
+        result
+    end
+  end
+
+  defp cancel_message_resources(instance, fact, result) do
+    for ref <- [fact.data["resource_ref"], result.data["result"]["resource_ref"]], is_map(ref) do
+      _ = Jido.Messaging.cancel_resource(instance, ref)
+    end
+
+    :ok
   end
 
   defp participant_scope(runtime, data, decision) do
