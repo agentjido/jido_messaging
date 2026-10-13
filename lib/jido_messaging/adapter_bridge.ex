@@ -440,7 +440,7 @@ defmodule Jido.Messaging.AdapterBridge do
 
   defp normalize_capability_list(caps) when is_list(caps) do
     caps
-    |> Enum.filter(&is_atom/1)
+    |> Enum.filter(&(is_atom(&1) and not is_nil(&1)))
     |> Enum.uniq()
     |> then(fn caps ->
       if :text in caps, do: caps, else: [:text | caps]
