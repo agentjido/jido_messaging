@@ -124,6 +124,58 @@ defmodule Jido.Messaging.AcceptanceFailureTest do
     )
   end
 
+  defp lifecycle_fixture(context) do
+    {:ok, room} =
+      Instance.get_or_create_room_by_external_binding(:test, context.binding.id, "provider-room", %{type: :group})
+
+    {:ok, stored} =
+      Instance.save_message(%{
+        room_id: room.id,
+        sender_id: "peer",
+        role: :user,
+        content: [Jido.Chat.Content.Text.new("before")],
+        external_id: "message",
+        metadata: %{channel: :test, bridge_id: context.binding.id}
+      })
+
+    parent =
+      MessageUpdated.new!(
+        %{
+          "delivery_id" => "unit",
+          "item_id" => "update",
+          "room_id" => "provider-room",
+          "message_id" => "message",
+          "text" => "after",
+          "timestamp" => "2026-10-12T00:00:00Z"
+        }, source: context.binding.source, subject: Identity.conversation_subject(context.binding.id, "provider-room"))
+
+    {stored, parent, delivery(context.binding, [parent])}
+  end
+
+  for mode <- [:raise, :throw, :exit, :invalid, :after_raise, :after_throw, :after_exit, :after_error, :after_invalid] do
+    test "lifecycle store #{mode} returns a safe error and retries without repeating a committed update", context do
+      {stored, parent, unit} = lifecycle_fixture(context)
+      {:ok, _} = Instance.subscribe_signals(parent.type)
+      Process.put({ControlledPersistence, :write_failure}, unquote(mode))
+      assert_safe_error(Instance.accept_delivery(unit))
+      refute_received {:signal, _}
+      Process.delete({ControlledPersistence, :write_failure})
+      assert {:ok, []} = Instance.accept_delivery(unit)
+      assert_receive {:signal, ^parent}
+      assert {:ok, updated} = Instance.get_message(stored.id)
+      assert [%Jido.Chat.Content.Text{text: "after"}] = updated.content
+
+      expected_writes =
+        if unquote(mode) in [:after_raise, :after_throw, :after_exit, :after_error, :after_invalid], do: 2, else: 3
+
+      assert Process.get({ControlledPersistence, :writes}) == expected_writes
+      assert {:ok, []} = Instance.accept_delivery(unit)
+      assert Process.get({ControlledPersistence, :writes}) == expected_writes
+      assert MockTransport.calls(context.transport) == []
+      refute_received {:signal, _}
+    end
+  end
+
   for mode <- [:raise, :throw, :exit, :invalid] do
     test "message store #{mode} before a write releases both claims for one retry", context do
       unit = delivery(context.binding, [message(context.binding)])
