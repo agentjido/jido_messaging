@@ -2326,12 +2326,18 @@ defmodule Jido.Messaging do
       runtime
       |> assigned_thread_ids_for_agent(room_server, room_id, agent_id)
       |> Enum.reduce_while(:ok, fn thread_id, :ok ->
-        with :ok <- stop_thread_runner(instance_module, room_id, thread_id, agent_id),
-             _ <- clear_persisted_thread_assignment(runtime, room_id, thread_id),
-             :ok <- room_server_unassign_thread(room_server, thread_id) do
-          {:cont, :ok}
-        else
-          {:error, reason} -> {:halt, {:error, reason}}
+        case unassign_thread(instance_module, room_id, thread_id) do
+          {:ok, _thread} ->
+            {:cont, :ok}
+
+          {:error, :not_found} ->
+            with :ok <- stop_thread_runner(instance_module, room_id, thread_id, agent_id),
+                 :ok <- room_server_unassign_thread(room_server, thread_id),
+                 do: {:cont, :ok},
+                 else: ({:error, reason} -> {:halt, {:error, reason}})
+
+          {:error, reason} ->
+            {:halt, {:error, reason}}
         end
       end)
       |> case do
@@ -2853,16 +2859,6 @@ defmodule Jido.Messaging do
 
   defp ensure_agent_runner(instance_module, room_id, thread_id, agent_id, agent_spec) do
     start_thread_runner(instance_module, room_id, thread_id, agent_id, agent_spec)
-  end
-
-  defp clear_persisted_thread_assignment(runtime, room_id, thread_id) do
-    with {:ok, thread} <- get_thread(runtime, thread_id),
-         :ok <- ensure_thread_room(thread, room_id) do
-      updated_thread = %{thread | assigned_agent_id: nil, updated_at: DateTime.utc_now()}
-      save_thread_struct(runtime, updated_thread)
-    else
-      _ -> :ok
-    end
   end
 
   defp persist_thread_assignment(runtime, %Thread{} = thread) do

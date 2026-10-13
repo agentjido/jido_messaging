@@ -126,6 +126,59 @@ defmodule Jido.Messaging.AgentAssignmentStoreFailureTest do
     end
   end
 
+  for failure <- [:error, :raise, :throw, :exit, :invalid, :foreign_record] do
+    test "unregister #{failure} save failure retains registration and restores the old assignment", context do
+      fail_next([unquote(failure), :pass])
+      assert {:error, _} = Instance.unregister_agent(context.room.id, "alpha")
+      assert_old_assignment(context)
+      assert {:ok, agents} = Instance.list_agents(context.room.id)
+      assert Enum.any?(agents, &(&1.agent_id == "alpha"))
+      assert Process.get({Store, :attempts}) == 2
+      assert :ok = Instance.unregister_agent(context.room.id, "alpha")
+      assert {:ok, cleared} = Instance.get_thread(context.assigned.id)
+      assert cleared.assigned_agent_id == nil
+      assert AgentSupervisor.count_agents(Instance) == 0
+    end
+  end
+
+  for failure <- [:error, :raise, :throw, :exit, :invalid] do
+    test "unregister after-write #{failure} cannot remove the agent after a failed cleanup", context do
+      fail_next([{:after_write, unquote(failure)}, :pass])
+      assert {:error, _} = Instance.unregister_agent(context.room.id, "alpha")
+      assert_old_assignment(context)
+      assert Process.get({Store, :attempts}) == 2
+      assert {:ok, agents} = Instance.list_agents(context.room.id)
+      assert Enum.any?(agents, &(&1.agent_id == "alpha"))
+    end
+  end
+
+  test "unregister reports cleanup and rollback failure while retaining registration", context do
+    fail_next([:error, :error])
+
+    assert {:error, {:unassignment_failed, :save_unavailable, :save_unavailable}} =
+             Instance.unregister_agent(context.room.id, "alpha")
+
+    assert {:ok, agents} = Instance.list_agents(context.room.id)
+    assert Enum.any?(agents, &(&1.agent_id == "alpha"))
+    assert {:ok, stored} = Instance.get_thread(context.assigned.id)
+    assert stored == context.assigned
+    assert AgentSupervisor.count_agents(Instance) == 0
+    assert :ok = Jido.Messaging.restore_agent_runners(Instance)
+    assert_old_assignment(context)
+  end
+
+  test "unregister clears an absent thread runtime assignment without a store write", context do
+    {_store, state} = Runtime.get_persistence(Instance.__jido_messaging__(:runtime))
+    :ets.delete(state.threads, context.assigned.id)
+    fail_next([])
+    assert :ok = Instance.unregister_agent(context.room.id, "alpha")
+    assert AgentSupervisor.count_agents(Instance) == 0
+    assert RoomServer.thread_assignment(context.server, context.assigned.id) == nil
+    assert Process.get({Store, :attempts}) == 0
+    assert {:ok, agents} = Instance.list_agents(context.room.id)
+    refute Enum.any?(agents, &(&1.agent_id == "alpha"))
+  end
+
   defp assignment_operation(:assign, context),
     do: Instance.assign_thread(context.room.id, context.assigned.id, "beta")
 
