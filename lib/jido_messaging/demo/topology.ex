@@ -194,7 +194,7 @@ defmodule Jido.Messaging.Demo.Topology do
       with room_id when is_binary(room_id) and room_id != "" <- room_id,
            bridge_id when is_binary(bridge_id) and bridge_id != "" <- bridge_id,
            external_room_id when is_binary(external_room_id) and external_room_id != "" <- external_room_id,
-           channel when is_atom(channel) <- channel do
+           channel when channel in [:telegram, :discord] <- channel do
         attrs =
           entry
           |> Map.drop([:room_id, :channel, :bridge_id, :external_room_id])
@@ -341,6 +341,7 @@ defmodule Jido.Messaging.Demo.Topology do
 
   defp normalize_bridge_configs_for_room(_), do: []
 
+  defp normalize_id(nil), do: nil
   defp normalize_id(value) when is_binary(value) and value != "", do: value
   defp normalize_id(value) when is_integer(value), do: Integer.to_string(value)
   defp normalize_id(value) when is_atom(value), do: Atom.to_string(value)

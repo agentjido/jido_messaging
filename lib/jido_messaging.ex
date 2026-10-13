@@ -2688,7 +2688,7 @@ defmodule Jido.Messaging do
     direction = map_get(binding, :direction) |> normalize_direction()
     enabled = map_get(binding, :enabled) |> normalize_bool()
 
-    with true <- is_atom(channel),
+    with true <- channel in [:telegram, :discord],
          true <- is_binary(bridge_id),
          true <- is_binary(external_room_id) do
       attrs =
@@ -2749,6 +2749,7 @@ defmodule Jido.Messaging do
   defp normalize_bool(0), do: false
   defp normalize_bool(_), do: true
 
+  defp normalize_id(nil), do: nil
   defp normalize_id(value) when is_binary(value) and value != "", do: value
   defp normalize_id(value) when is_integer(value), do: Integer.to_string(value)
   defp normalize_id(value) when is_atom(value), do: Atom.to_string(value)
