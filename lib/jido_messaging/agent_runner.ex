@@ -88,7 +88,7 @@ defmodule Jido.Messaging.AgentRunner do
     registry = Module.concat(instance_module, Registry.Agents)
 
     case Registry.lookup(registry, {room_id, thread_id, agent_id}) do
-      [{pid, _}] -> pid
+      [{pid, _}] -> if Process.alive?(pid), do: pid
       [] -> nil
     end
   end
