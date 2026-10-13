@@ -2358,7 +2358,7 @@ defmodule Jido.Messaging do
             {:ok, persisted_thread}
           else
             {:error, reason} ->
-              _ = save_thread_struct(runtime, thread)
+              _ = persist_thread_assignment(runtime, thread)
               {:error, reason}
           end
 
@@ -2851,7 +2851,20 @@ defmodule Jido.Messaging do
   end
 
   defp persist_thread_assignment(runtime, %Thread{} = thread) do
-    save_thread_struct(runtime, thread)
+    case save_thread_struct(runtime, thread) do
+      {:ok, %Thread{id: id, room_id: room_id} = saved} when id == thread.id and room_id == thread.room_id ->
+        {:ok, saved}
+
+      {:error, _} = error ->
+        error
+
+      _ ->
+        {:error, :persistence_failed}
+    end
+  rescue
+    _ -> {:error, :persistence_failed}
+  catch
+    _, _ -> {:error, :persistence_failed}
   end
 
   defp resolve_thread_assignment(instance_module, room_id, thread_id, %Thread{} = thread) do
@@ -2885,7 +2898,7 @@ defmodule Jido.Messaging do
   end
 
   defp unassign_thread_state(runtime, room_server, updated_thread) do
-    with {:ok, persisted_thread} <- save_thread_struct(runtime, updated_thread),
+    with {:ok, persisted_thread} <- persist_thread_assignment(runtime, updated_thread),
          :ok <- room_server_unassign_thread(room_server, updated_thread.id) do
       {:ok, persisted_thread}
     end
@@ -2898,7 +2911,7 @@ defmodule Jido.Messaging do
          %Thread{} = original_thread,
          previous_agent_spec
        ) do
-    with {:ok, _thread} <- save_thread_struct(runtime, original_thread),
+    with {:ok, _thread} <- persist_thread_assignment(runtime, original_thread),
          :ok <- restore_room_server_assignment(room_server, original_thread, previous_agent_spec),
          :ok <- restore_thread_runner(instance_module, original_thread, previous_agent_spec) do
       :ok
@@ -2930,15 +2943,9 @@ defmodule Jido.Messaging do
          agent_spec
        )
        when is_binary(agent_id) and is_map(agent_spec) do
-    case AgentRunner.whereis(instance_module, room_id, thread_id, agent_id) do
-      pid when is_pid(pid) ->
-        :ok
-
-      nil ->
-        case start_thread_runner(instance_module, room_id, thread_id, agent_id, agent_spec) do
-          {:ok, _pid} -> :ok
-          {:error, reason} -> {:error, reason}
-        end
+    case start_thread_runner(instance_module, room_id, thread_id, agent_id, agent_spec) do
+      {:ok, _pid} -> :ok
+      {:error, reason} -> {:error, reason}
     end
   end
 
