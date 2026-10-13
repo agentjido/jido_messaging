@@ -7,8 +7,11 @@ defmodule Jido.Messaging.IdentityVerifier do
   proof verification. Successful evidence does not grant a messaging action.
   """
 
+  alias Jido.Chat.{Participant, Room}
+
   alias Jido.Messaging.{
     IdentityCredential,
+    IdentityCredentials,
     IdentityData,
     IdentityEvidence,
     Runtime
@@ -33,7 +36,7 @@ defmodule Jido.Messaging.IdentityVerifier do
     now = DateTime.utc_now()
 
     with :ok <- require_callbacks(persistence),
-         {:ok, credential} <- persistence.get_identity_credential(state, credential_id),
+         {:ok, credential} <- IdentityCredentials.get(runtime, credential_id),
          :ok <- validate_current_records(persistence, state, credential, context, now),
          {:ok, assertion_id} <- validate_proof(credential, proof, now, opts),
          {:ok, provider} <- provider(opts),
@@ -41,12 +44,7 @@ defmodule Jido.Messaging.IdentityVerifier do
          {:ok, provider_result} <- validate_provider_result(credential, provider_result),
          assertion_key = assertion_key(credential.id, assertion_id),
          :ok <-
-           persistence.consume_identity_assertion(
-             state,
-             credential.id,
-             assertion_key,
-             credential.expires_at
-           ) do
+           consume_assertion(persistence, state, credential, assertion_key) do
       {:ok,
        build_evidence(
          credential,
@@ -72,8 +70,9 @@ defmodule Jido.Messaging.IdentityVerifier do
     room_id = context |> IdentityData.value(:room_id) |> IdentityData.required!(:room_id)
     {persistence, state} = Runtime.get_persistence(runtime)
 
-    with {:ok, _subject} <- persistence.get_participant(state, subject),
-         {:ok, _room} <- persistence.get_room(state, room_id) do
+    with {:ok, _subject} <-
+           verification_record(fn -> persistence.get_participant(state, subject) end, Participant, subject),
+         {:ok, _room} <- verification_record(fn -> persistence.get_room(state, room_id) end, Room, room_id) do
       {:ok, IdentityEvidence.uncredentialed(subject, audience, room_id, opts)}
     end
   rescue
@@ -107,9 +106,19 @@ defmodule Jido.Messaging.IdentityVerifier do
         {:error, :identity_credential_room_mismatch}
 
       true ->
-        with {:ok, _subject} <- persistence.get_participant(state, credential.subject_principal_id),
-             {:ok, _issuer} <- persistence.get_participant(state, credential.issuer_principal_id),
-             {:ok, _room} <- persistence.get_room(state, room_id) do
+        with {:ok, _subject} <-
+               verification_record(
+                 fn -> persistence.get_participant(state, credential.subject_principal_id) end,
+                 Participant,
+                 credential.subject_principal_id
+               ),
+             {:ok, _issuer} <-
+               verification_record(
+                 fn -> persistence.get_participant(state, credential.issuer_principal_id) end,
+                 Participant,
+                 credential.issuer_principal_id
+               ),
+             {:ok, _room} <- verification_record(fn -> persistence.get_room(state, room_id) end, Room, room_id) do
           :ok
         end
     end
@@ -287,5 +296,29 @@ defmodule Jido.Messaging.IdentityVerifier do
     if Enum.all?(callbacks, fn {name, arity} -> function_exported?(persistence, name, arity) end),
       do: :ok,
       else: {:error, :unsupported}
+  end
+
+  defp verification_record(callback, module, id) do
+    case callback.() do
+      {:ok, %{__struct__: ^module, id: ^id} = record} -> {:ok, record}
+      {:error, _} = error -> error
+      _ -> {:error, :persistence_failed}
+    end
+  rescue
+    _ -> {:error, :persistence_failed}
+  catch
+    _, _ -> {:error, :persistence_failed}
+  end
+
+  defp consume_assertion(persistence, state, credential, key) do
+    case persistence.consume_identity_assertion(state, credential.id, key, credential.expires_at) do
+      :ok -> :ok
+      {:error, _} = error -> error
+      _ -> {:error, :persistence_failed}
+    end
+  rescue
+    _ -> {:error, :persistence_failed}
+  catch
+    _, _ -> {:error, :persistence_failed}
   end
 end
