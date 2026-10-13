@@ -438,19 +438,49 @@ defmodule Jido.Messaging.Security do
 
   defp run_security_hook(fun, timeout_ms) when is_function(fun, 0) do
     started_at = System.monotonic_time(:millisecond)
-    task = Task.async(fun)
+    owner = self()
+    result_ref = make_ref()
 
-    case Task.yield(task, timeout_ms) do
-      {:ok, result} ->
+    {pid, monitor_ref} =
+      spawn_monitor(fn ->
+        send(owner, {result_ref, invoke_security_hook(fun)})
+      end)
+
+    receive do
+      {^result_ref, {:ok, result}} ->
+        Process.demonitor(monitor_ref, [:flush])
         {:ok, result, elapsed_ms(started_at)}
 
-      {:exit, reason} ->
+      {^result_ref, {:error, reason}} ->
+        Process.demonitor(monitor_ref, [:flush])
         {:error, reason, elapsed_ms(started_at)}
 
-      nil ->
-        _ = Task.shutdown(task, :brutal_kill)
+      {:DOWN, ^monitor_ref, :process, ^pid, reason} ->
+        {:error, reason, elapsed_ms(started_at)}
+    after
+      timeout_ms ->
+        Process.exit(pid, :kill)
+
+        receive do
+          {:DOWN, ^monitor_ref, :process, ^pid, _reason} -> :ok
+        end
+
+        receive do
+          {^result_ref, _result} -> :ok
+        after
+          0 -> :ok
+        end
+
         {:timeout, elapsed_ms(started_at)}
     end
+  end
+
+  defp invoke_security_hook(fun) do
+    {:ok, fun.()}
+  rescue
+    exception -> {:error, {:exception, exception}}
+  catch
+    kind, reason -> {:error, {kind, reason}}
   end
 
   defp classify_failure(:timeout), do: :retry
