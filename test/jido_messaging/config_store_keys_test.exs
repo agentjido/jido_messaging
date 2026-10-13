@@ -56,13 +56,32 @@ defmodule Jido.Messaging.ConfigStoreKeysTest do
     :ok
   end
 
+  test "routing policy accepts only fixed string-to-atom conversions" do
+    for {key, values} <- [
+          {:delivery_mode, [:best_effort, :primary, :broadcast]},
+          {:failover_policy, [:none, :next_available, :broadcast]},
+          {:dedupe_scope, [:message_id, :thread, :room]}
+        ],
+        value <- values do
+      for input <- [value, Atom.to_string(value)] do
+        policy = RoutingPolicy.new(%{key => input, :room_id => "enum-room"})
+        assert Map.fetch!(policy, key) == value
+      end
+    end
+
+    unknown = "jido_unknown_policy_#{System.unique_integer([:positive])}"
+    policy = RoutingPolicy.new(%{room_id: "enum-room", delivery_mode: unknown})
+    assert policy.delivery_mode == unknown
+    assert_raise ArgumentError, fn -> String.to_existing_atom(unknown) end
+  end
+
   test "string routing fields retain the same revision and values as struct updates" do
     pid = Process.whereis(ConfigStore.name(Runtime))
 
     attrs = %{
-      "delivery_mode" => :primary,
-      "failover_policy" => :none,
-      "dedupe_scope" => :thread,
+      "delivery_mode" => "primary",
+      "failover_policy" => "none",
+      "dedupe_scope" => "thread",
       "fallback_order" => ["selected-bridge"],
       "metadata" => %{"owner" => "caller"},
       "revision" => 0

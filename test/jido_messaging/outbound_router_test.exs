@@ -241,6 +241,38 @@ defmodule Jido.Messaging.OutboundRouterTest do
     refute_received {:provider_call, _}
   end
 
+  test "YAML string routing values produce a typed broadcast with two callbacks", %{room: room} do
+    :ok = put_bridge("telegram", BackupOkAdapter)
+    :ok = put_bridge("discord", DiscordOkAdapter)
+    {:ok, _} = RouterMessaging.create_room_binding(room.id, :telegram, "telegram", "100", %{direction: :both})
+    {:ok, _} = RouterMessaging.create_room_binding(room.id, :discord, "discord", "200", %{direction: :both})
+
+    assert {:ok, _} =
+             Jido.Messaging.Demo.Topology.apply(RouterMessaging, %{
+               "routing_policies" => [
+                 %{
+                   "room_id" => room.id,
+                   "delivery_mode" => "broadcast",
+                   "failover_policy" => "none",
+                   "dedupe_scope" => "room",
+                   "fallback_order" => ["telegram", "discord"]
+                 }
+               ]
+             })
+
+    {actor, _grant} = actor(room)
+    request = route_request(room, "yaml-broadcast")
+    assert {:ok, result} = RouterMessaging.execute(request, actor)
+    assert result.data["result"]["attempted"] == 2
+    assert Enum.map(result.data["result"]["delivered"], & &1["bridge_id"]) == ["telegram", "discord"]
+    assert result.data["result"]["failed"] == []
+    assert_received {:provider_call, BackupOkAdapter}
+    assert_received {:provider_call, DiscordOkAdapter}
+    assert {:ok, ^result} = RouterMessaging.execute(request, actor)
+    refute_received {:provider_call, _}
+    assert {:ok, _} = Jido.Signal.Serialization.serialize(result)
+  end
+
   test "a route without a grant causes zero callbacks before any route starts", %{room: room} do
     :ok = put_bridge("telegram", BackupOkAdapter)
     :ok = put_bridge("discord", DiscordOkAdapter)

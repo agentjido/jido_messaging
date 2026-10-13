@@ -37,6 +37,88 @@ defmodule Jido.Messaging.Demo.TopologyTest do
       assert {:ok, []} = TopologyTestMessaging.list_rooms()
       assert [] = TopologyTestMessaging.list_bridge_configs()
     end
+
+    test "a non-map middle #{section} entry rejects all five sections before writes" do
+      topology = %{
+        "bridge_rooms" => [%{"room_id" => "bridge-room"}],
+        "bridge_configs" => [%{"id" => "bridge", "adapter_module" => Jido.Chat.AdapterTestKit.MockAdapter}],
+        "rooms" => [%{"id" => "room", "type" => "group"}],
+        "room_bindings" => [
+          %{"room_id" => "room", "channel" => "telegram", "bridge_id" => "bridge", "external_room_id" => "peer"}
+        ],
+        "routing_policies" => [%{"room_id" => "room", "fallback_order" => ["bridge"]}]
+      }
+
+      entries = topology[unquote(section)]
+      invalid = Map.put(topology, unquote(section), entries ++ [:invalid] ++ entries)
+      assert {:error, {:invalid_topology_section, unquote(section)}} = Topology.apply(TopologyTestMessaging, invalid)
+      assert {:ok, []} = TopologyTestMessaging.list_rooms()
+      assert [] = TopologyTestMessaging.list_bridge_configs()
+      assert {:ok, []} = TopologyTestMessaging.list_room_bindings("room")
+      assert {:error, :not_found} = TopologyTestMessaging.get_routing_policy("room")
+    end
+  end
+
+  test "string keys retain nested bridge settings, room binding fields and routing policy" do
+    topology = %{
+      "bridge_configs" => [
+        %{
+          "id" => "settings-bridge",
+          "adapter_module" => "Elixir.Jido.Chat.AdapterTestKit.MockAdapter",
+          "enabled" => false,
+          "opts" => %{"nested" => %{"keep-as-string" => ["one", "two"]}},
+          "secret_refs" => %{"api" => "opaque-fixture-ref"},
+          "capabilities" => %{"custom" => true}
+        }
+      ],
+      "rooms" => [
+        %{"id" => "settings-room", "type" => "direct", "metadata" => %{"closed-context" => "complete"}}
+      ],
+      "room_bindings" => [
+        %{
+          "room_id" => "settings-room",
+          "channel" => "telegram",
+          "bridge_id" => "settings-bridge",
+          "external_room_id" => 123,
+          "direction" => "inbound",
+          "enabled" => "false"
+        }
+      ],
+      "routing_policies" => [
+        %{
+          "room_id" => "settings-room",
+          "delivery_mode" => "primary",
+          "failover_policy" => "none",
+          "dedupe_scope" => "thread",
+          "fallback_order" => ["settings-bridge"],
+          "metadata" => %{"context" => "complete"}
+        }
+      ]
+    }
+
+    assert {:ok, %{bridge_configs: 1, rooms: 1, room_bindings: 1, routing_policies: 1}} =
+             Topology.apply(TopologyTestMessaging, topology)
+
+    assert {:ok, bridge} = TopologyTestMessaging.get_bridge_config("settings-bridge")
+    assert bridge.adapter_module == Jido.Chat.AdapterTestKit.MockAdapter
+    assert bridge.enabled == false
+    assert bridge.opts == %{"nested" => %{"keep-as-string" => ["one", "two"]}}
+    assert bridge.secret_refs == %{"api" => "opaque-fixture-ref"}
+    assert bridge.credentials == %{}
+    assert bridge.capabilities == %{"custom" => true}
+    assert {:ok, room} = TopologyTestMessaging.get_room("settings-room")
+    assert room.type == :direct
+    assert room.metadata == %{"closed-context" => "complete"}
+    assert {:ok, [binding]} = TopologyTestMessaging.list_room_bindings(room.id)
+    assert binding.external_room_id == "123"
+    assert binding.direction == :inbound
+    assert binding.enabled == false
+    assert {:ok, policy} = TopologyTestMessaging.get_routing_policy(room.id)
+    assert policy.delivery_mode == :primary
+    assert policy.failover_policy == :none
+    assert policy.dedupe_scope == :thread
+    assert policy.fallback_order == [bridge.id]
+    assert policy.metadata == %{"context" => "complete"}
   end
 
   test "atom and string topology keys select the same canonical sections" do
