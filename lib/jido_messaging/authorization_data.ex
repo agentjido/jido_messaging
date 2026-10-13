@@ -72,6 +72,12 @@ defmodule Jido.Messaging.AuthorizationData do
   @doc false
   @spec constraints!(term()) :: map()
   def constraints!(constraints) when is_map(constraints) and not is_struct(constraints) do
+    keys = Enum.map(Map.keys(constraints), &normalize_key!/1)
+
+    if length(keys) != length(Enum.uniq(keys)) do
+      raise ArgumentError, "grant constraints contain duplicate fields"
+    end
+
     normalized =
       Map.new(constraints, fn {key, value} ->
         case normalize_key!(key) do

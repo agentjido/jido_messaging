@@ -102,6 +102,10 @@ defmodule Jido.Messaging.AgentMessagingEndpoint do
   defp maybe_last_seen_at(_endpoint, :available, now), do: now
   defp maybe_last_seen_at(endpoint, _availability, _now), do: endpoint.last_seen_at
 
-  defp value(map, key, default \\ nil),
-    do: Map.get(map, key) || Map.get(map, Atom.to_string(key)) || default
+  defp value(map, key, default \\ nil) do
+    case Map.fetch(map, key) do
+      {:ok, value} -> value
+      :error -> Map.get(map, Atom.to_string(key), default)
+    end
+  end
 end
