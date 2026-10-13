@@ -12,6 +12,40 @@ defmodule Jido.Messaging.Demo.TopologyTest do
     :ok
   end
 
+  test "a topology cannot report another room's provider binding as its requested binding" do
+    {:ok, _} = TopologyTestMessaging.create_room(%{id: "owner", type: :group})
+    {:ok, _} = TopologyTestMessaging.create_room(%{id: "requested", type: :group})
+    {:ok, existing} = TopologyTestMessaging.create_room_binding("owner", :telegram, "bridge", "peer")
+
+    topology = %{
+      "room_bindings" => [
+        %{"room_id" => "requested", "channel" => "telegram", "bridge_id" => "bridge", "external_room_id" => "peer"}
+      ]
+    }
+
+    assert {:error, {:room_binding_scope_conflict, "owner", "requested", _}} =
+             Topology.apply(TopologyTestMessaging, topology)
+
+    assert {:ok, [^existing]} = TopologyTestMessaging.list_room_bindings("owner")
+    assert {:ok, []} = TopologyTestMessaging.list_room_bindings("requested")
+  end
+
+  for section <- ~w(bridge_rooms bridge_configs rooms room_bindings routing_policies) do
+    test "malformed #{section} input fails before any topology record is stored" do
+      topology = Map.put(%{"rooms" => [%{"id" => "must-not-exist", "type" => "group"}]}, unquote(section), :invalid)
+      assert {:error, {:invalid_topology_section, unquote(section)}} = Topology.apply(TopologyTestMessaging, topology)
+      assert {:ok, []} = TopologyTestMessaging.list_rooms()
+      assert [] = TopologyTestMessaging.list_bridge_configs()
+    end
+  end
+
+  test "atom and string topology keys select the same canonical sections" do
+    topology = %{rooms: [%{id: "atom-room", type: :direct, name: "Atom"}]}
+    assert {:ok, %{rooms: 1}} = Topology.apply(TopologyTestMessaging, topology)
+    assert {:ok, room} = TopologyTestMessaging.get_room("atom-room")
+    assert room.type == :direct
+  end
+
   test "loads topology YAML and resolves mode + bridge values" do
     path = Path.join(System.tmp_dir!(), "jido_messaging_topology_#{System.unique_integer([:positive])}.yaml")
 
