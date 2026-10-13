@@ -2287,10 +2287,7 @@ defmodule Jido.Messaging.Persistence.SQLite do
   defp binding_lock(state, key, fun) do
     resource = {__MODULE__, Path.expand(state.path), state.instance_id, :binding, key}
 
-    case binding_transaction({resource, self()}, fun) do
-      :aborted -> {:error, :binding_lock_aborted}
-      result -> result
-    end
+    binding_transaction({resource, self()}, fun)
   end
 
   # The default global lock backoff can reach eight seconds. Keep the same
@@ -2497,10 +2494,7 @@ defmodule Jido.Messaging.Persistence.SQLite do
       normalize_term(external_id)
     }
 
-    case binding_transaction({resource, self()}, fun) do
-      :aborted -> {:error, :participant_binding_lock_aborted}
-      result -> result
-    end
+    binding_transaction({resource, self()}, fun)
   end
 
   defp do_save_external_identity_binding(state, %ExternalIdentityBinding{} = binding) do
