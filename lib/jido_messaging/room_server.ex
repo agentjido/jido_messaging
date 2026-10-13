@@ -586,7 +586,8 @@ defmodule Jido.Messaging.RoomServer do
     if root_exists do
       reply_with_thread = %{reply | thread_id: root_message_id}
       messages = [reply_with_thread | state.messages] |> Enum.take(state.message_limit)
-      new_state = %{state | messages: messages}
+      contexts = Map.take(state.message_contexts, Enum.map(messages, & &1.id))
+      new_state = %{state | messages: messages, message_contexts: contexts}
 
       emit_signal(:message_added, state, %{
         room_id: state.room.id,
