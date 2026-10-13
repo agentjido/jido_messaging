@@ -244,6 +244,31 @@ defmodule Jido.Messaging.Persistence.SQLiteTest do
     :ok = Sqlite3.close(state.db)
   end
 
+  test "releases a binding lock after room construction fails" do
+    path = tmp_path("sqlite-binding-failure-release")
+    {:ok, state} = SQLite.init(path: path)
+
+    assert {:error, _reason} =
+             SQLite.get_or_create_room_by_external_binding(state, :slack, "workspace-failure", "channel-failure", nil)
+
+    result =
+      Task.async(fn ->
+        SQLite.get_or_create_room_by_external_binding(
+          state,
+          :slack,
+          "workspace-failure",
+          "channel-failure",
+          %{type: :channel, name: "recovered"}
+        )
+      end)
+      |> Task.await(5_000)
+
+    assert {:ok, room} = result
+    assert {:ok, ^room} = SQLite.get_room_by_external_binding(state, :slack, "workspace-failure", "channel-failure")
+    assert {:ok, [^room]} = SQLite.list_rooms(state)
+    :ok = Sqlite3.close(state.db)
+  end
+
   test "scopes provider identities by bridge and supports explicit links" do
     path = tmp_path("sqlite-participant-scope")
     {:ok, state} = SQLite.init(path: path)
