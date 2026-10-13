@@ -1201,22 +1201,47 @@ defmodule Jido.Messaging.Ingest do
 
   defp run_policy_module(_stage, _policy_module, fun, timeout_ms) do
     started_at = System.monotonic_time(:millisecond)
-    task = Task.async(fun)
+    owner = self()
+    result_ref = make_ref()
 
-    case Task.yield(task, timeout_ms) do
-      {:ok, result} ->
-        elapsed_ms = elapsed_ms(started_at)
-        {:ok, result, elapsed_ms}
+    {pid, monitor_ref} =
+      spawn_monitor(fn -> send(owner, {result_ref, invoke_policy_module(fun)}) end)
 
-      {:exit, reason} ->
-        elapsed_ms = elapsed_ms(started_at)
-        {:error, reason, elapsed_ms}
+    receive do
+      {^result_ref, {:ok, result}} ->
+        Process.demonitor(monitor_ref, [:flush])
+        {:ok, result, elapsed_ms(started_at)}
 
-      nil ->
-        _ = Task.shutdown(task, :brutal_kill)
-        elapsed_ms = elapsed_ms(started_at)
-        {:timeout, elapsed_ms}
+      {^result_ref, {:error, reason}} ->
+        Process.demonitor(monitor_ref, [:flush])
+        {:error, reason, elapsed_ms(started_at)}
+
+      {:DOWN, ^monitor_ref, :process, ^pid, reason} ->
+        {:error, reason, elapsed_ms(started_at)}
+    after
+      timeout_ms ->
+        Process.exit(pid, :kill)
+
+        receive do
+          {:DOWN, ^monitor_ref, :process, ^pid, _reason} -> :ok
+        end
+
+        receive do
+          {^result_ref, _result} -> :ok
+        after
+          0 -> :ok
+        end
+
+        {:timeout, elapsed_ms(started_at)}
     end
+  end
+
+  defp invoke_policy_module(fun) do
+    {:ok, fun.()}
+  rescue
+    exception -> {:error, {:exception, exception}}
+  catch
+    kind, reason -> {:error, {kind, reason}}
   end
 
   defp handle_policy_timeout(stage, policy_module, elapsed_ms, opts, state) do
