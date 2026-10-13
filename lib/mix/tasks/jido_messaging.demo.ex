@@ -61,6 +61,13 @@ defmodule Mix.Tasks.Jido.Messaging.Demo do
 
   @impl Mix.Task
   def run(args) do
+    {:ok, _pid} = start_demo(args)
+    Process.sleep(:infinity)
+  end
+
+  @doc false
+  @spec start_demo([String.t()]) :: {:ok, pid()}
+  def start_demo(args) do
     {opts, _, _} =
       OptionParser.parse(args,
         switches: [
@@ -134,10 +141,16 @@ defmodule Mix.Tasks.Jido.Messaging.Demo do
       Logger.info("[Demo] Started Jido runtime for ChatAgent")
     end
 
-    {:ok, _pid} = Jido.Messaging.Demo.Supervisor.start_link(supervisor_opts)
-    apply_topology!(topology)
+    {:ok, pid} = Jido.Messaging.Demo.Supervisor.start_link(supervisor_opts)
 
-    Process.sleep(:infinity)
+    try do
+      apply_topology!(topology)
+      {:ok, pid}
+    rescue
+      exception ->
+        Supervisor.stop(pid)
+        reraise exception, __STACKTRACE__
+    end
   end
 
   defp maybe_load_topology!(nil), do: nil
@@ -172,18 +185,16 @@ defmodule Mix.Tasks.Jido.Messaging.Demo do
 
   defp load_dotenv do
     env_file = Path.join(File.cwd!(), ".env")
+    Dotenvy.source!([System.get_env(), env_file, System.get_env()])
 
     if File.exists?(env_file) do
-      Dotenvy.source!([env_file])
       Logger.info("[Demo] Loaded .env file")
     end
 
     :ok
   end
 
-  defp validate_config!(:echo) do
-    validate_telegram_token!()
-  end
+  defp validate_config!(:echo), do: :ok
 
   defp validate_config!(:bridge) do
     validate_telegram_token!()
@@ -198,7 +209,7 @@ defmodule Mix.Tasks.Jido.Messaging.Demo do
 
   defp validate_telegram_token! do
     token =
-      Dotenvy.env!("TELEGRAM_BOT_TOKEN", :string, default: nil) ||
+      Dotenvy.env!("TELEGRAM_BOT_TOKEN", :string, nil) ||
         Application.get_env(:jido_chat_telegram, :telegram_bot_token)
 
     unless token do
@@ -218,7 +229,7 @@ defmodule Mix.Tasks.Jido.Messaging.Demo do
 
   defp validate_discord_token! do
     token =
-      Dotenvy.env!("DISCORD_BOT_TOKEN", :string, default: nil) ||
+      Dotenvy.env!("DISCORD_BOT_TOKEN", :string, nil) ||
         Application.get_env(:nostrum, :token)
 
     unless token do
@@ -238,7 +249,7 @@ defmodule Mix.Tasks.Jido.Messaging.Demo do
   end
 
   defp validate_cerebras_key! do
-    key = Dotenvy.env!("CEREBRAS_API_KEY", :string, default: nil)
+    key = Dotenvy.env!("CEREBRAS_API_KEY", :string, nil)
 
     unless key do
       Mix.raise("""
@@ -294,7 +305,7 @@ defmodule Mix.Tasks.Jido.Messaging.Demo do
   defp resolve_adapter_module(config_key, env_key, default_module_name) do
     configured =
       Application.get_env(:jido_messaging, config_key) ||
-        Dotenvy.env!(env_key, :string, default: default_module_name)
+        Dotenvy.env!(env_key, :string, default_module_name)
 
     case configured do
       module when is_atom(module) ->
@@ -402,7 +413,7 @@ defmodule Mix.Tasks.Jido.Messaging.Demo do
   end
 
   defp get_telegram_chat_id do
-    case Dotenvy.env!("TELEGRAM_CHAT_ID", :integer, default: nil) do
+    case Dotenvy.env!("TELEGRAM_CHAT_ID", :integer, nil) do
       nil ->
         Mix.raise("""
         Missing Telegram chat ID for bridge mode!
@@ -422,7 +433,7 @@ defmodule Mix.Tasks.Jido.Messaging.Demo do
   end
 
   defp get_discord_channel_id do
-    case Dotenvy.env!("DISCORD_CHANNEL_ID", :integer, default: nil) do
+    case Dotenvy.env!("DISCORD_CHANNEL_ID", :integer, nil) do
       nil ->
         Mix.raise("""
         Missing Discord channel ID for bridge mode!
