@@ -68,18 +68,6 @@ defmodule Jido.Messaging.Ingest do
       is_self: sender["is_self"] || false
     }
 
-    media =
-      Enum.map(data["media"] || [], fn item ->
-        kind = Enum.find([:image, :audio, :video, :file], &(Atom.to_string(&1) == item["kind"]))
-
-        Jido.Chat.Media.new(%{
-          kind: kind,
-          media_type: item["media_type"],
-          filename: item["name"],
-          metadata: %{resource_ref: item["resource_ref"]}
-        })
-      end)
-
     mentions =
       Enum.map(data["mention_details"] || [], fn item ->
         %{user_id: item["id"], username: item["username"], offset: item["offset"], length: item["length"]}
@@ -87,29 +75,75 @@ defmodule Jido.Messaging.Ingest do
 
     kind = Enum.find([:direct, :group, :channel, :thread], &(Atom.to_string(&1) == data["conversation_kind"]))
 
-    incoming = %{
-      external_room_id: data["room_id"],
-      external_message_id: data["message_id"],
-      external_user_id: sender["id"],
-      external_thread_id: data["thread_id"],
-      external_reply_to_id: data["reply_to_id"],
-      text: data["text"],
-      author: author,
-      username: sender["username"],
-      display_name: sender["display_name"],
-      chat_type: kind,
-      chat_title: data["conversation_name"],
-      media: media,
-      mentions: mentions,
-      was_mentioned: data["mentioned"] || false,
-      raw: %{},
-      signal_media: data["media"],
-      reply_context: data["reply_context"],
-      provider_self: sender["is_self"] || false,
-      timestamp: provider_timestamp(data["timestamp"])
-    }
+    with {:ok, media} <- resolve_fact_media(binding, data["media"] || []) do
+      incoming = %{
+        external_room_id: data["room_id"],
+        external_message_id: data["message_id"],
+        external_user_id: sender["id"],
+        external_thread_id: data["thread_id"],
+        external_reply_to_id: data["reply_to_id"],
+        text: data["text"],
+        author: author,
+        username: sender["username"],
+        display_name: sender["display_name"],
+        chat_type: kind,
+        chat_title: data["conversation_name"],
+        media: media,
+        mentions: mentions,
+        was_mentioned: data["mentioned"] || false,
+        raw: %{},
+        signal_media: data["media"],
+        reply_context: data["reply_context"],
+        provider_self: sender["is_self"] || false,
+        timestamp: provider_timestamp(data["timestamp"])
+      }
 
-    ingest_incoming(instance, binding.adapter, binding.id, incoming, parent_signal: signal, emit_received: false)
+      ingest_incoming(instance, binding.adapter, binding.id, incoming, parent_signal: signal, emit_received: false)
+    end
+  end
+
+  defp resolve_fact_media(binding, items) do
+    Enum.reduce_while(items, {:ok, []}, fn item, {:ok, media} ->
+      with true <- item["resource_ref"]["kind"] in ["media", "file"],
+           {:ok, private} <- Jido.Chat.resolve_resource(binding, item["resource_ref"]),
+           true <- is_map(private) and not is_struct(private) do
+        kind = Enum.find([:image, :audio, :video, :file], &(Atom.to_string(&1) == item["kind"]))
+
+        payload =
+          Enum.reduce(
+            [
+              :url,
+              :data,
+              :media_type,
+              :filename,
+              :size_bytes,
+              :width,
+              :height,
+              :duration,
+              :thumbnail_url,
+              :alt_text,
+              :transcript
+            ],
+            %{},
+            fn field, acc ->
+              case Map.get(private, field) || Map.get(private, Atom.to_string(field)) do
+                nil -> acc
+                value -> Map.put(acc, field, value)
+              end
+            end
+          )
+          |> Map.put(:kind, kind)
+          |> Map.put_new(:media_type, item["media_type"])
+          |> Map.put_new(:filename, item["name"])
+          |> Map.put_new(:alt_text, item["caption"])
+          |> Map.put_new(:transcript, item["caption"])
+
+        {:cont, {:ok, media ++ [payload]}}
+      else
+        {:error, _} = error -> {:halt, error}
+        _ -> {:halt, Jido.Chat.Signal.Policy.error(:invalid_resource)}
+      end
+    end)
   end
 
   defp provider_timestamp(value) when is_binary(value) do
