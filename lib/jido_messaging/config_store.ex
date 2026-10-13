@@ -151,11 +151,11 @@ defmodule Jido.Messaging.ConfigStore do
     id = map_get(attrs, :id)
 
     {persistence, persistence_state} = runtime_persistence(state.instance_module)
-    existing = get_existing_bridge(persistence, persistence_state, id)
     expected_revision = map_get(attrs, :revision)
 
     reply =
-      with :ok <- validate_revision(expected_revision, existing),
+      with {:ok, existing} <- get_existing_bridge(persistence, persistence_state, id),
+           :ok <- validate_revision(expected_revision, existing),
            :ok <- validate_bridge_secrets(attrs, existing),
            {:ok, config} <- normalize_bridge_config(attrs, existing),
            {:ok, _saved} <- persistence.save_bridge_config(persistence_state, config) do
@@ -217,11 +217,11 @@ defmodule Jido.Messaging.ConfigStore do
   def handle_call({:put_routing_policy, room_id, attrs}, _from, state) do
     attrs = attrs |> normalize_map() |> Map.put(:room_id, room_id)
     {persistence, persistence_state} = runtime_persistence(state.instance_module)
-    existing = get_existing_routing_policy(persistence, persistence_state, room_id)
     expected_revision = map_get(attrs, :revision)
 
     reply =
-      with :ok <- validate_revision(expected_revision, existing),
+      with {:ok, existing} <- get_existing_routing_policy(persistence, persistence_state, room_id),
+           :ok <- validate_revision(expected_revision, existing),
            {:ok, policy} <- normalize_routing_policy(attrs, existing),
            {:ok, _saved} <- persistence.save_routing_policy(persistence_state, policy) do
         {:ok, policy}
@@ -378,20 +378,27 @@ defmodule Jido.Messaging.ConfigStore do
     end
   end
 
-  defp get_existing_bridge(_persistence, _state, nil), do: nil
+  defp get_existing_bridge(_persistence, _state, nil), do: {:ok, nil}
 
   defp get_existing_bridge(persistence, persistence_state, bridge_id) do
-    case persistence.get_bridge_config(persistence_state, bridge_id) do
-      {:ok, config} -> config
-      {:error, :not_found} -> nil
-    end
+    existing_record(fn -> persistence.get_bridge_config(persistence_state, bridge_id) end, BridgeConfig, bridge_id)
   end
 
   defp get_existing_routing_policy(persistence, persistence_state, room_id) do
-    case persistence.get_routing_policy(persistence_state, room_id) do
-      {:ok, policy} -> policy
-      {:error, :not_found} -> nil
+    existing_record(fn -> persistence.get_routing_policy(persistence_state, room_id) end, RoutingPolicy, room_id)
+  end
+
+  defp existing_record(read, module, id) do
+    case read.() do
+      {:ok, %{__struct__: ^module, id: ^id} = record} -> {:ok, record}
+      {:error, :not_found} -> {:ok, nil}
+      {:error, _reason} = error -> error
+      _ -> {:error, :persistence_failed}
     end
+  rescue
+    _ -> {:error, :persistence_failed}
+  catch
+    _, _ -> {:error, :persistence_failed}
   end
 
   defp normalize_map(%_{} = struct), do: struct |> Map.from_struct() |> normalize_map()
