@@ -839,9 +839,13 @@ defmodule Jido.Messaging.Persistence.ETS do
           true = :ets.insert(state.agent_thread_routes, {route.thread_id, route})
           {:ok, route}
 
-        [{_thread_id, %AgentThreadRoute{id: route_id}}] when route_id == route.id ->
+        [{_thread_id, %AgentThreadRoute{id: route_id, room_id: room_id}}]
+        when route_id == route.id and room_id == route.room_id ->
           true = :ets.insert(state.agent_thread_routes, {route.thread_id, route})
           {:ok, route}
+
+        [{_thread_id, %AgentThreadRoute{id: route_id}}] when route_id == route.id ->
+          {:error, :agent_thread_route_identity_immutable}
 
         [{_thread_id, existing}] ->
           {:error, {:agent_thread_route_conflict, existing.id}}

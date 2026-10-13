@@ -912,8 +912,11 @@ defmodule Jido.Messaging.Persistence.SQLite do
           {:ok, %AgentThreadRoute{id: route_id}} when route_id != route.id ->
             {:error, {:agent_thread_route_conflict, route_id}}
 
-          {:ok, _existing} ->
+          {:ok, %AgentThreadRoute{room_id: room_id}} when room_id == route.room_id ->
             persist_agent_thread_route(transaction_state, route)
+
+          {:ok, _existing} ->
+            {:error, :agent_thread_route_identity_immutable}
 
           {:error, :not_found} ->
             persist_agent_thread_route(transaction_state, route)
