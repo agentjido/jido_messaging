@@ -156,7 +156,13 @@ defmodule Jido.Messaging.IngressSubscriptions do
   defp subscription_items(%{"subscriptions" => items}) when is_list(items), do: {:ok, items}
   defp subscription_items(%{data: items}) when is_list(items), do: {:ok, items}
   defp subscription_items(%{"data" => items}) when is_list(items), do: {:ok, items}
-  defp subscription_items(item) when is_map(item), do: {:ok, [item]}
+
+  defp subscription_items(item) when is_map(item) do
+    if Enum.any?([:subscriptions, "subscriptions", :data, "data"], &Map.has_key?(item, &1)),
+      do: {:error, :invalid_subscription_result},
+      else: {:ok, [item]}
+  end
+
   defp subscription_items(_item), do: {:error, :invalid_subscription_result}
 
   defp normalize_subscription(%IngressSubscription{} = subscription, bridge_id, adapter_name, opts, default_status) do

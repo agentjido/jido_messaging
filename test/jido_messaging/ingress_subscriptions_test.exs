@@ -178,6 +178,15 @@ defmodule Jido.Messaging.IngressSubscriptionsTest do
     end
   end
 
+  for key <- [:subscriptions, "subscriptions", :data, "data"] do
+    test "a malformed #{inspect(key)} page cannot become a single subscription record" do
+      bridge = controlled_bridge("bad-wrapper")
+      Process.put(:subscription_result, %{unquote(key) => :invalid})
+      assert {:error, :invalid_subscription_result} = SubscriptionMessaging.list_ingress_subscriptions(bridge)
+      assert {:ok, []} = ConfigStore.list_ingress_subscriptions(SubscriptionMessaging, bridge)
+    end
+  end
+
   test "deletion cannot adopt a foreign bridge scope from a provider response" do
     bridge = controlled_bridge("delete-owned")
     stored = IngressSubscription.new(%{bridge_id: bridge, adapter_name: :telegram, subscription_id: "remote"})
