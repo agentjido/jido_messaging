@@ -204,6 +204,9 @@ defmodule Jido.Messaging.AgentSupervisor do
       {:error, :runtime_unavailable} ->
         Process.sleep(50)
         retry_restore_assigned_runners(instance_module, attempts_left - 1)
+
+      {:error, _reason} ->
+        :ok
     end
   end
 end

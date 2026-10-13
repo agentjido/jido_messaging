@@ -2311,8 +2311,9 @@ defmodule Jido.Messaging do
     normalized_spec = normalize_agent_spec(agent_spec, opts)
 
     with {:ok, room_server} <- ensure_room_server(instance_module, room_id),
-         {:ok, registered_spec} <- RoomServer.register_agent(room_server, normalized_spec) do
-      restore_agent_assignments(instance_module, room_id, room_server, registered_spec)
+         {:ok, threads} <- assignment_threads(runtime_name(instance_module), room_id),
+         {:ok, registered_spec} <- room_server_register_agent(room_server, normalized_spec),
+         :ok <- restore_agent_assignments(instance_module, room_id, room_server, registered_spec, threads) do
       {:ok, registered_spec}
     end
   end
@@ -2322,9 +2323,9 @@ defmodule Jido.Messaging do
       when is_atom(instance_module) and is_binary(room_id) and is_binary(agent_id) do
     runtime = runtime_name(instance_module)
 
-    with {:ok, room_server} <- ensure_room_server(instance_module, room_id) do
-      runtime
-      |> assigned_thread_ids_for_agent(room_server, room_id, agent_id)
+    with {:ok, room_server} <- ensure_room_server(instance_module, room_id),
+         {:ok, thread_ids} <- assigned_thread_ids_for_agent(runtime, room_server, room_id, agent_id) do
+      thread_ids
       |> Enum.reduce_while(:ok, fn thread_id, :ok ->
         case unassign_thread(instance_module, room_id, thread_id) do
           {:ok, _thread} ->
@@ -2480,39 +2481,15 @@ defmodule Jido.Messaging do
       {:error, :runtime_unavailable}
     else
       RoomSupervisor.list_rooms(instance_module)
-      |> Enum.each(fn {room_id, room_server} ->
-        agent_specs =
-          room_server
-          |> room_server_list_agents()
-          |> case do
-            {:ok, agents} -> Map.new(agents, &{&1.agent_id, &1})
-            {:error, _reason} -> %{}
-          end
-
-        case list_threads(runtime, room_id) do
-          {:ok, threads} ->
-            Enum.each(threads, fn
-              %Thread{id: thread_id, assigned_agent_id: agent_id}
-              when is_binary(agent_id) and map_size(agent_specs) > 0 ->
-                case Map.fetch(agent_specs, agent_id) do
-                  {:ok, agent_spec} ->
-                    _ = ensure_agent_runner(instance_module, room_id, thread_id, agent_id, agent_spec)
-                    :ok
-
-                  :error ->
-                    :ok
-                end
-
-              _thread ->
-                :ok
-            end)
-
-          {:error, _reason} ->
-            :ok
+      |> Enum.reduce_while(:ok, fn {room_id, room_server}, :ok ->
+        with {:ok, agents} <- room_server_list_agents(room_server),
+             {:ok, threads} <- assignment_threads(runtime, room_id),
+             :ok <- restore_registered_threads(instance_module, room_id, room_server, agents, threads) do
+          {:cont, :ok}
+        else
+          {:error, _} = error -> {:halt, error}
         end
       end)
-
-      :ok
     end
   end
 
@@ -2802,59 +2779,70 @@ defmodule Jido.Messaging do
     |> Map.put_new(:trigger, Keyword.get(opts, :trigger, :thread))
   end
 
-  defp restore_agent_assignments(instance_module, room_id, room_server, agent_spec) do
-    runtime = runtime_name(instance_module)
+  defp restore_registered_threads(instance_module, room_id, room_server, agents, threads) do
+    Enum.reduce_while(agents, :ok, fn agent_spec, :ok ->
+      case restore_agent_assignments(instance_module, room_id, room_server, agent_spec, threads) do
+        :ok -> {:cont, :ok}
+        {:error, _} = error -> {:halt, error}
+      end
+    end)
+  end
+
+  defp restore_agent_assignments(instance_module, room_id, room_server, agent_spec, threads) do
     agent_id = agent_spec.agent_id
 
-    with {:ok, threads} <- list_threads(runtime, room_id) do
-      Enum.each(threads, fn
-        %Thread{id: thread_id, assigned_agent_id: ^agent_id} ->
-          case room_server_thread_assignment(room_server, thread_id) do
-            nil ->
-              _ = room_server_assign_thread(room_server, thread_id, agent_id)
-              _ = ensure_agent_runner(instance_module, room_id, thread_id, agent_id, agent_spec)
-
-            ^agent_id ->
-              _ = ensure_agent_runner(instance_module, room_id, thread_id, agent_id, agent_spec)
-
-            _other ->
-              :ok
+    Enum.reduce_while(threads, :ok, fn
+      %Thread{id: thread_id, assigned_agent_id: ^agent_id}, :ok ->
+        with {:ok, assignment} <- room_server_thread_assignment_result(room_server, thread_id) do
+          if assignment in [nil, agent_id] do
+            with :ok <- room_server_assign_thread(room_server, thread_id, agent_id),
+                 {:ok, _pid} <- ensure_agent_runner(instance_module, room_id, thread_id, agent_id, agent_spec),
+                 do: {:cont, :ok},
+                 else: ({:error, _} = error -> {:halt, error})
+          else
+            {:cont, :ok}
           end
+        else
+          {:error, _} = error -> {:halt, error}
+        end
 
-        _thread ->
-          :ok
-      end)
-    end
-
-    :ok
+      _thread, :ok ->
+        {:cont, :ok}
+    end)
   end
 
   defp assigned_thread_ids_for_agent(runtime, room_server, room_id, agent_id) do
-    in_memory_thread_ids =
-      case room_server_list_thread_assignments(room_server) do
-        {:ok, assignments} ->
-          Enum.flat_map(assignments, fn
-            {thread_id, ^agent_id} -> [thread_id]
-            {_thread_id, _assigned_agent_id} -> []
-          end)
+    with {:ok, assignments} <- room_server_list_thread_assignments(room_server),
+         {:ok, threads} <- assignment_threads(runtime, room_id) do
+      in_memory = for {thread_id, ^agent_id} <- assignments, do: thread_id
+      persisted = for %Thread{id: thread_id, assigned_agent_id: ^agent_id} <- threads, do: thread_id
+      {:ok, Enum.uniq(in_memory ++ persisted)}
+    end
+  end
 
-        {:error, _reason} ->
-          []
-      end
+  defp assignment_threads(runtime, room_id) do
+    case list_threads(runtime, room_id) do
+      {:ok, threads} when is_list(threads) ->
+        if Enum.all?(threads, fn
+             %Thread{id: id, room_id: ^room_id, assigned_agent_id: agent} ->
+               is_binary(id) and id != "" and (is_nil(agent) or is_binary(agent))
 
-    persisted_thread_ids =
-      case list_threads(runtime, room_id) do
-        {:ok, threads} ->
-          Enum.flat_map(threads, fn
-            %Thread{id: thread_id, assigned_agent_id: ^agent_id} -> [thread_id]
-            _thread -> []
-          end)
+             _ ->
+               false
+           end) and length(threads) == length(Enum.uniq_by(threads, & &1.id)),
+           do: {:ok, threads},
+           else: {:error, :persistence_failed}
 
-        {:error, _reason} ->
-          []
-      end
+      {:error, _} = error ->
+        error
 
-    Enum.uniq(in_memory_thread_ids ++ persisted_thread_ids)
+      _ ->
+        {:error, :persistence_failed}
+    end
+  rescue
+    _ -> {:error, :persistence_failed}
+  catch
+    _, _ -> {:error, :persistence_failed}
   end
 
   defp ensure_agent_runner(instance_module, room_id, thread_id, agent_id, agent_spec) do
