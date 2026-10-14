@@ -337,7 +337,7 @@ defmodule Jido.Messaging.TypedProviderOperationMatrixTest do
   alias Jido.Chat.AdapterTestKit.Factories
   alias Jido.Messaging.{AuthorizationAction, AuthorizationScope, Runtime}
 
-  @operations Path.expand("../../../jido_chat/docs/migration/operations.json", __DIR__)
+  @operations Path.join(Mix.Project.deps_paths()[:jido_chat], "docs/migration/operations.json")
               |> File.read!()
               |> Jason.decode!()
               |> Map.fetch!("operations")

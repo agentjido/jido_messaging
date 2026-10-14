@@ -5,7 +5,7 @@ defmodule Jido.Messaging.TypedRequestAdmissionTest do
   alias Jido.Messaging.{AuthorizationScope, Runtime}
   alias Jido.Messaging.Signal.SendMessage
 
-  @requests Path.expand("../../../jido_chat/docs/migration/catalog.json", __DIR__)
+  @requests Path.join(Mix.Project.deps_paths()[:jido_chat], "docs/migration/catalog.json")
             |> File.read!()
             |> Jason.decode!()
             |> Map.fetch!("definitions")

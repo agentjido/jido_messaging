@@ -9,7 +9,7 @@ defmodule Jido.Messaging.ProviderFactObservationTest do
     use Jido.Messaging, persistence: Jido.Messaging.Persistence.ETS, runtime_profile: :core
   end
 
-  @catalog Path.expand("../../../jido_chat/docs/migration/catalog.json", __DIR__)
+  @catalog Path.join(Mix.Project.deps_paths()[:jido_chat], "docs/migration/catalog.json")
            |> File.read!()
            |> Jason.decode!()
   @observations Enum.filter(@catalog["definitions"], fn entry ->
