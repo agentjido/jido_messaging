@@ -6,9 +6,12 @@ defmodule Jido.Messaging.Persistence.AuthorizationRevisionOwnershipTest do
 
   for {adapter, factory, cleanup} <- [
         {Persistence.ETS, :start_ets, :stop_ets},
-        {Persistence.SQLite, :start_sqlite, :stop_sqlite}
+        {Persistence.SQLite, :start_sqlite, :stop_sqlite},
+        {Persistence.Postgres, :start_postgres, :stop_postgres}
       ],
       kind <- [:membership, :grant, :policy] do
+    if adapter == Persistence.Postgres, do: @tag(:postgres)
+
     test "#{adapter} #{kind} keeps immutable identity and terminal revocation across exact revisions" do
       adapter = unquote(adapter)
       kind = unquote(kind)
@@ -42,8 +45,11 @@ defmodule Jido.Messaging.Persistence.AuthorizationRevisionOwnershipTest do
 
   for {adapter, factory, cleanup} <- [
         {Persistence.ETS, :start_ets, :stop_ets},
-        {Persistence.SQLite, :start_sqlite, :stop_sqlite}
+        {Persistence.SQLite, :start_sqlite, :stop_sqlite},
+        {Persistence.Postgres, :start_postgres, :stop_postgres}
       ] do
+    if adapter == Persistence.Postgres, do: @tag(:postgres)
+
     test "#{adapter} conflicting scope IDs cannot replace the owned membership or policy index" do
       adapter = unquote(adapter)
       {:ok, state} = apply(Factory, unquote(factory), [])

@@ -73,9 +73,5 @@ jobs:
       - run: mix local.hex --force
       - run: mix local.rebar --force
       - run: mix deps.get
-      - name: Run PostgreSQL contract tests
-        run: >-
-          mix test
-          test/jido_messaging/persistence/conformance_test.exs
-          test/jido_messaging/persistence/postgres_test.exs
-          --only postgres
+      - name: Run all PostgreSQL tests
+        run: mix test --only postgres --warnings-as-errors

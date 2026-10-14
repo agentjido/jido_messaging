@@ -15,6 +15,11 @@ defmodule Jido.Messaging.Persistence.Postgres do
   Migration work uses a PostgreSQL advisory lock and a package-specific
   migration table.
 
+  Principal, membership, grant, and invocation-policy storage supports authorized
+  messaging and typed commands. Optional identity credentials, external identity
+  lifecycle, agent projections, delegation, continuity, trust evidence, and
+  activity projections are not implemented by this adapter.
+
   ## Options
 
     * `:instance_id` - Stable record namespace. Defaults to `"default"` for
@@ -37,9 +42,14 @@ defmodule Jido.Messaging.Persistence.Postgres do
   alias Jido.Chat.{Participant, Room}
 
   alias Jido.Messaging.{
+    AuthorizationScope,
     BridgeConfig,
+    Grant,
     IngressSubscription,
+    InvocationPolicy,
+    Membership,
     Message,
+    Principal,
     RoomBinding,
     RoutingPolicy,
     Thread
@@ -215,17 +225,20 @@ defmodule Jido.Messaging.Persistence.Postgres do
 
   @impl true
   def delete_room(state, room_id) do
-    run(
-      state,
-      """
-      DELETE FROM #{@table}
-      WHERE instance_id = $1
-        AND ((kind = 'room' AND id = $2)
-         OR (kind IN ('message', 'thread', 'room_binding', 'routing_policy') AND room_id = $2))
-      """,
-      [state.instance_id, room_id],
-      :delete_room
-    )
+    authorization_delete(state, fn transaction_state ->
+      run(
+        transaction_state,
+        """
+        DELETE FROM #{@table}
+        WHERE instance_id = $1
+          AND ((kind = 'room' AND id = $2)
+           OR (kind IN ('message', 'thread', 'room_binding', 'routing_policy',
+                        'membership', 'principal_grant', 'invocation_policy') AND room_id = $2))
+        """,
+        [state.instance_id, room_id],
+        :delete_room
+      )
+    end)
   end
 
   @impl true
@@ -235,7 +248,13 @@ defmodule Jido.Messaging.Persistence.Postgres do
 
   @impl true
   def save_participant(state, %Participant{} = participant) do
-    persist(state, "participant", participant.id, participant)
+    with_authorization_lock(state, fn transaction_state ->
+      with :ok <- validate_existing_principal(transaction_state, participant),
+           {:ok, participant} <- persist(transaction_state, "participant", participant.id, participant),
+           {:ok, _principal} <- ensure_principal(transaction_state, participant) do
+        {:ok, participant}
+      end
+    end)
   end
 
   @impl true
@@ -243,17 +262,148 @@ defmodule Jido.Messaging.Persistence.Postgres do
 
   @impl true
   def delete_participant(state, participant_id) do
-    run(
-      state,
-      """
-      DELETE FROM #{@table}
-      WHERE instance_id = $1
-        AND ((kind = 'participant' AND id = $2)
-          OR (kind = 'participant_binding' AND room_id = $2))
-      """,
-      [state.instance_id, participant_id],
-      :delete_participant
-    )
+    authorization_delete(state, fn transaction_state ->
+      run(
+        transaction_state,
+        """
+        DELETE FROM #{@table}
+        WHERE instance_id = $1
+          AND ((kind IN ('participant', 'principal') AND id = $2)
+            OR (kind = 'participant_binding' AND room_id = $2)
+            OR (kind IN ('membership', 'principal_grant', 'invocation_policy') AND sender_id = $2))
+        """,
+        [state.instance_id, participant_id],
+        :delete_participant
+      )
+    end)
+  end
+
+  @impl true
+  def save_principal(state, %Principal{} = principal) do
+    with_authorization_lock(state, fn transaction_state ->
+      with {:ok, participant} <- get_participant(transaction_state, principal.participant_id),
+           :ok <- validate_principal_projection(principal, participant),
+           :ok <- validate_principal_controller(transaction_state, principal) do
+        persist(transaction_state, "principal", principal.id, principal, room_id: principal.participant_id)
+      end
+    end)
+  end
+
+  @impl true
+  def get_principal(state, principal_id) do
+    case fetch_record(state, "principal", principal_id) do
+      {:error, :not_found} ->
+        with_authorization_lock(state, fn transaction_state ->
+          with {:ok, participant} <- get_participant(transaction_state, principal_id) do
+            ensure_principal(transaction_state, participant)
+          end
+        end)
+
+      result ->
+        result
+    end
+  end
+
+  @impl true
+  def save_membership(state, %Membership{} = membership) do
+    with_authorization_lock(state, fn transaction_state ->
+      with :ok <- validate_authorization_revision(transaction_state, "membership", membership, &membership_identity?/2),
+           :ok <- validate_membership_scope(transaction_state, membership) do
+        persist(transaction_state, "membership", membership.id, membership,
+          room_id: membership.room_id,
+          sender_id: membership.principal_id,
+          inserted_at: membership.inserted_at,
+          external_id: membership.principal_id
+        )
+      end
+    end)
+  end
+
+  @impl true
+  def get_membership(state, membership_id), do: fetch_record(state, "membership", membership_id)
+
+  @impl true
+  def get_membership_by_scope(state, room_id, principal_id) do
+    fetch_one(state, "membership", [{"room_id", room_id}, {"sender_id", principal_id}])
+  end
+
+  @impl true
+  def list_memberships(state, room_id, opts \\ []) do
+    with {:ok, records} <- query_records(state, "kind = $1 AND room_id = $2", ["membership", room_id], limit: 501) do
+      {:ok,
+       records
+       |> filter_authorization_record(:principal_id, Keyword.get(opts, :principal_id))
+       |> filter_authorization_record(:status, Keyword.get(opts, :status))
+       |> take_authorization_records(opts)}
+    end
+  end
+
+  @impl true
+  def save_principal_grant(state, %Grant{} = grant) do
+    with_authorization_lock(state, fn transaction_state ->
+      with :ok <- validate_authorization_revision(transaction_state, "principal_grant", grant, &grant_identity?/2) do
+        persist(transaction_state, "principal_grant", grant.id, grant,
+          room_id: grant.scope.room_id,
+          thread_id: grant.scope.thread_id,
+          sender_id: grant.principal_id,
+          inserted_at: grant.inserted_at,
+          bridge_id: grant.scope.bridge_id,
+          external_id: AuthorizationScope.key(grant.scope)
+        )
+      end
+    end)
+  end
+
+  @impl true
+  def get_principal_grant(state, grant_id), do: fetch_record(state, "principal_grant", grant_id)
+
+  @impl true
+  def list_principal_grants(state, principal_id, opts \\ []) do
+    with {:ok, records} <-
+           query_records(state, "kind = $1 AND sender_id = $2", ["principal_grant", principal_id], limit: 501) do
+      records = filter_authorization_record(records, :status, Keyword.get(opts, :status))
+      action = Keyword.get(opts, :action)
+      records = if is_nil(action), do: records, else: Enum.filter(records, &(action in &1.actions))
+      {:ok, take_authorization_records(records, opts)}
+    end
+  end
+
+  @impl true
+  def save_invocation_policy(state, %InvocationPolicy{} = policy) do
+    scope_key = AuthorizationScope.key(policy.scope)
+
+    with_authorization_lock(state, fn transaction_state ->
+      with :ok <- validate_authorization_revision(transaction_state, "invocation_policy", policy, &policy_identity?/2),
+           :ok <- validate_policy_scope(transaction_state, policy, scope_key) do
+        persist(transaction_state, "invocation_policy", policy.id, policy,
+          room_id: policy.scope.room_id,
+          thread_id: policy.scope.thread_id,
+          sender_id: policy.target_principal_id,
+          inserted_at: policy.inserted_at,
+          bridge_id: policy.scope.bridge_id,
+          external_id: scope_key
+        )
+      end
+    end)
+  end
+
+  @impl true
+  def get_invocation_policy(state, policy_id), do: fetch_record(state, "invocation_policy", policy_id)
+
+  @impl true
+  def get_invocation_policy_by_scope(state, target_principal_id, scope_key) do
+    fetch_one(state, "invocation_policy", [{"sender_id", target_principal_id}, {"external_id", scope_key}])
+  end
+
+  @impl true
+  def list_invocation_policies(state, target_principal_id, opts \\ []) do
+    with {:ok, records} <-
+           query_records(state, "kind = $1 AND sender_id = $2", ["invocation_policy", target_principal_id], limit: 501) do
+      {:ok,
+       records
+       |> filter_authorization_record(:status, Keyword.get(opts, :status))
+       |> take_authorization_records(opts)}
+    end
   end
 
   @impl true
@@ -682,6 +832,146 @@ defmodule Jido.Messaging.Persistence.Postgres do
   @impl true
   def delete_routing_policy(state, room_id) do
     delete_existing_record(state, "routing_policy", room_id)
+  end
+
+  # Database locks apply across pools and BEAM nodes. A namespace lock keeps
+  # scope claims, record revisions, principal projections, and cleanup in order.
+  defp with_authorization_lock(state, fun) do
+    transaction(state, fn transaction_state ->
+      with {:ok, _result} <-
+             query(
+               transaction_state,
+               "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+               ["jido_messaging:authorization:" <> state.instance_id],
+               :authorization_lock
+             ) do
+        fun.(transaction_state)
+      end
+    end)
+  end
+
+  defp authorization_delete(state, fun) do
+    case with_authorization_lock(state, fn transaction_state ->
+           case fun.(transaction_state) do
+             :ok -> {:ok, :ok}
+             {:error, _reason} = error -> error
+           end
+         end) do
+      {:ok, :ok} -> :ok
+      {:error, _reason} = error -> error
+    end
+  end
+
+  defp ensure_principal(state, participant) do
+    case fetch_record(state, "principal", participant.id) do
+      {:error, :not_found} ->
+        principal = Principal.from_participant(participant)
+        persist(state, "principal", principal.id, principal, room_id: principal.participant_id)
+
+      result ->
+        result
+    end
+  end
+
+  defp validate_existing_principal(state, participant) do
+    case fetch_record(state, "principal", participant.id) do
+      {:ok, principal} -> validate_principal_projection(principal, participant)
+      {:error, :not_found} -> :ok
+      {:error, _reason} = error -> error
+    end
+  end
+
+  defp validate_principal_projection(principal, participant) do
+    if principal.id == participant.id and principal.participant_id == participant.id and
+         principal.type == participant.type do
+      :ok
+    else
+      {:error, :principal_participant_mismatch}
+    end
+  end
+
+  defp validate_principal_controller(_state, %Principal{controller_principal_id: nil}), do: :ok
+
+  defp validate_principal_controller(_state, %Principal{id: id, controller_principal_id: id}),
+    do: {:error, :principal_cannot_control_itself}
+
+  defp validate_principal_controller(state, principal) do
+    case get_principal(state, principal.controller_principal_id) do
+      {:ok, %Principal{status: :active, verification_state: :revoked}} ->
+        {:error, :controller_principal_verification_revoked}
+
+      {:ok, %Principal{status: :active}} ->
+        :ok
+
+      {:ok, %Principal{status: status}} ->
+        {:error, {:controller_principal_inactive, status}}
+
+      {:error, :not_found} ->
+        {:error, :controller_principal_not_found}
+
+      {:error, _reason} = error ->
+        error
+    end
+  end
+
+  defp validate_authorization_revision(state, kind, record, identity?) do
+    case fetch_record(state, kind, record.id) do
+      {:error, :not_found} when record.revision == 1 -> :ok
+      {:error, :not_found} -> {:error, {:invalid_initial_revision, record.revision}}
+      {:ok, stored} when stored == record -> :ok
+      {:ok, stored} -> validate_revision_transition(stored, record, identity?)
+      {:error, _reason} = error -> error
+    end
+  end
+
+  defp validate_revision_transition(stored, record, identity?) do
+    cond do
+      not identity?.(stored, record) -> {:error, :authorization_identity_immutable}
+      stored.status == :revoked and record.status != :revoked -> {:error, :authorization_revocation_terminal}
+      record.revision == stored.revision + 1 -> :ok
+      true -> {:error, {:stale_revision, stored.revision}}
+    end
+  end
+
+  defp validate_membership_scope(state, membership) do
+    case get_membership_by_scope(state, membership.room_id, membership.principal_id) do
+      {:ok, %{id: id}} when id == membership.id -> :ok
+      {:ok, %{id: id}} -> {:error, {:membership_scope_conflict, id}}
+      {:error, :not_found} -> :ok
+      {:error, _reason} = error -> error
+    end
+  end
+
+  defp validate_policy_scope(state, policy, scope_key) do
+    case get_invocation_policy_by_scope(state, policy.target_principal_id, scope_key) do
+      {:ok, %{id: id}} when id == policy.id -> :ok
+      {:ok, %{id: id}} -> {:error, {:invocation_policy_scope_conflict, id}}
+      {:error, :not_found} -> :ok
+      {:error, _reason} = error -> error
+    end
+  end
+
+  defp membership_identity?(stored, record) do
+    stored.principal_id == record.principal_id and stored.room_id == record.room_id and
+      stored.issuer_principal_id == record.issuer_principal_id
+  end
+
+  defp grant_identity?(stored, record) do
+    stored.principal_id == record.principal_id and stored.issuer_principal_id == record.issuer_principal_id
+  end
+
+  defp policy_identity?(stored, record) do
+    stored.target_principal_id == record.target_principal_id and
+      stored.issuer_principal_id == record.issuer_principal_id and stored.scope == record.scope
+  end
+
+  defp filter_authorization_record(records, _field, nil), do: records
+  defp filter_authorization_record(records, field, value), do: Enum.filter(records, &(Map.get(&1, field) == value))
+
+  defp take_authorization_records(records, opts) do
+    limit = Keyword.get(opts, :limit, 100)
+    limit = if is_integer(limit) and limit > 0, do: min(limit, 501), else: 100
+    Enum.take(records, limit)
   end
 
   defp connect(opts, instance_id) do

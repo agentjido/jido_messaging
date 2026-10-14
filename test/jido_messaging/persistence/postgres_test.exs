@@ -27,7 +27,7 @@ defmodule Jido.Messaging.Persistence.PostgresTest do
 
     state = start_state()
 
-    assert {:ok, %{database_version: 2, current_version: 2, pending_versions: []}} =
+    assert {:ok, %{database_version: 3, current_version: 3, pending_versions: []}} =
              Postgres.migration_status(state)
   end
 
@@ -49,13 +49,13 @@ defmodule Jido.Messaging.Persistence.PostgresTest do
       )
     end)
 
-    assert {:error, {:unsupported_schema_version, 0, 2}} = Postgres.migration_status(state)
-    assert {:error, {:unsupported_schema_version, 0, 2}} = Postgres.migrate(state)
+    assert {:error, {:unsupported_schema_version, 0, 3}} = Postgres.migration_status(state)
+    assert {:error, {:unsupported_schema_version, 0, 3}} = Postgres.migrate(state)
   end
 
   test "requires migrations and installs them in a host schema" do
     admin = start_state()
-    schema = "jido_messaging_test_#{System.unique_integer([:positive, :monotonic])}"
+    schema = "jido_messaging_test_#{System.system_time(:microsecond)}_#{System.unique_integer([:positive, :monotonic])}"
     assert {:ok, _result} = Postgrex.query(admin.conn, "CREATE SCHEMA #{schema}", [])
 
     {:ok, pool} =
@@ -78,14 +78,45 @@ defmodule Jido.Messaging.Persistence.PostgresTest do
       owned_pool?: false
     }
 
-    assert {:error, {:migration_required, 0, [1, 2]}} = Postgres.health_check(state)
+    assert {:error, {:migration_required, 0, [1, 2, 3]}} = Postgres.health_check(state)
 
-    assert {:error, {:migration_required, 0, [1, 2]}} =
+    assert {:error, {:migration_required, 0, [1, 2, 3]}} =
              Postgres.init(pool: pool, instance_id: "schema-test")
+
+    for {version, name, statements} <- Enum.take(Postgres.Migrations.all(), 2) do
+      for statement <- statements, do: assert({:ok, _} = Postgrex.query(pool, statement, []))
+
+      assert {:ok, _} =
+               Postgrex.query(
+                 pool,
+                 "CREATE TABLE IF NOT EXISTS jido_messaging_schema_migrations (version BIGINT PRIMARY KEY, name TEXT NOT NULL)",
+                 []
+               )
+
+      assert {:ok, _} =
+               Postgrex.query(pool, "INSERT INTO jido_messaging_schema_migrations (version, name) VALUES ($1, $2)", [
+                 version,
+                 name
+               ])
+    end
+
+    participant = Participant.new(%{id: "old-participant", type: :human})
+
+    assert {:ok, _} =
+             Postgrex.query(
+               pool,
+               "INSERT INTO jido_messaging_records (instance_id, kind, id, payload) VALUES ($1, 'participant', $2, $3)",
+               [state.instance_id, participant.id, :erlang.term_to_binary(participant)]
+             )
+
+    assert {:error, {:migration_required, 2, [3]}} = Postgres.health_check(state)
 
     assert :ok = Postgres.migrate(pool: pool)
     assert {:ok, initialized} = Postgres.init(pool: pool, instance_id: "schema-test")
     assert :ok = Postgres.health_check(initialized)
+    assert {:ok, ^participant} = Postgres.get_participant(initialized, participant.id)
+    assert {:ok, principal} = Postgres.get_principal(initialized, participant.id)
+    assert principal.id == participant.id
   end
 
   test "history migration normalizes old SQL keys and retains ID cursors and payloads" do

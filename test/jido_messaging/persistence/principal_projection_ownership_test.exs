@@ -7,8 +7,11 @@ defmodule Jido.Messaging.Persistence.PrincipalProjectionOwnershipTest do
 
   for {adapter, factory, cleanup} <- [
         {Persistence.ETS, :start_ets, :stop_ets},
-        {Persistence.SQLite, :start_sqlite, :stop_sqlite}
+        {Persistence.SQLite, :start_sqlite, :stop_sqlite},
+        {Persistence.Postgres, :start_postgres, :stop_postgres}
       ] do
+    if adapter == Persistence.Postgres, do: @tag(:postgres)
+
     test "#{adapter} projection and controller errors preserve principal ownership" do
       adapter = unquote(adapter)
       {:ok, state} = apply(Factory, unquote(factory), [])
@@ -52,6 +55,7 @@ defmodule Jido.Messaging.Persistence.PrincipalProjectionOwnershipTest do
       assert {:ok, ^controller_principal} = adapter.save_principal(state, controller_principal)
       controlled = %{principal | controller_principal_id: controller.id}
       assert {:ok, ^controlled} = adapter.save_principal(state, controlled)
+      assert {:ok, ^agent} = adapter.save_participant(state, agent)
       assert {:ok, ^controlled} = adapter.get_principal(state, agent.id)
       assert {:ok, ^agent} = adapter.get_participant(state, agent.id)
       assert {:ok, ^controller} = adapter.get_participant(state, controller.id)
