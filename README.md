@@ -12,12 +12,19 @@ Messaging and notification system for the Jido ecosystem. Provides a unified int
 
 ## Release Status
 
-This package is being prepared for the Jido 1.x messaging release line.
-`jido_messaging` is built around `Jido.Chat` and the Elixir implementation
-aligned to the Vercel Chat SDK ([chat-sdk.dev/docs](https://www.chat-sdk.dev/docs)).
+This branch proposes Messaging 2.0 and the public Signal communication contract.
+The compatible new Hex releases are not yet published. Development and test use
+fixed upstream source commits. Production requires Chat 2.0 and a compatible
+Jido AI 3.0 release for optional AI support.
 
-See [Message Correctness Hardening](docs/message-correctness-hardening.md) for
-the current guarantees, compatibility notes, and verification gates.
+Use `MyApp.Messaging.accept_delivery/1` for a complete normalized Chat delivery.
+Use `MyApp.Messaging.execute/2` for typed commands and queries with the configured
+runtime authority. Accepted parent facts remain unchanged. Runtime children keep
+the trace and direct causation ID. Native Bus selection uses exact type, source
+and subject. Provider membership evidence does not change grants or presence.
+
+See the [migration guide](https://github.com/agentjido/jido_chat/blob/codex/public-signal-v3/docs/migration/MIGRATION_GUIDE.md)
+for removed interfaces, the runnable example, publication order and rollback pins.
 
 ## Features
 
@@ -33,7 +40,7 @@ Add `jido_messaging` to your list of dependencies in `mix.exs`:
 ```elixir
 def deps do
   [
-    {:jido_messaging, "~> 1.1"}
+    {:jido_messaging, "~> 2.0"}
   ]
 end
 ```
@@ -537,7 +544,7 @@ def deps do
     {:jido_chat, "~> 1.0"},
     {:jido_chat_telegram, "~> 1.1"},
     {:jido_chat_discord, "~> 1.0"},
-    {:jido_messaging, "~> 1.1"}
+    {:jido_messaging, "~> 2.0"}
   ]
 end
 ```
@@ -599,23 +606,18 @@ resolver error details.
 
 ### Ingress Wiring Pattern
 
-`jido_messaging` is now the shared ingress runtime:
+1. The host or adapter listener receives and verifies a complete provider unit.
+2. The configured adapter normalizes it into a validated `Jido.Chat.Delivery`.
+3. `MyApp.Messaging.accept_delivery/1` accepts the unchanged parent facts.
+4. The runtime publishes its typed observations with direct parent causation.
 
-1. Host app receives webhook/gateway payload.
-2. Call `MyApp.Messaging.route_webhook_request/4` or `route_payload/3`.
-3. Runtime resolves bridge config, verifies/parses via adapter callbacks, and routes through `Jido.Chat.process_event/4`.
-4. Message events are ingested; non-message events return typed envelopes.
+The host can mount `Jido.Messaging.WebhookPlug` for a configured bridge. This
+private adapter ingress uses the same native normalization and acceptance path.
+Captured listeners send complete deliveries to the configured Messaging sink.
+Raw maps and retired event envelopes are not accepted by that sink.
 
-Canonical APIs:
-
-- `MyApp.Messaging.route_webhook_request(bridge_id, request_meta, payload, opts \\ [])`
-- `MyApp.Messaging.route_payload(bridge_id, payload, opts \\ [])`
-- `Jido.Messaging.WebhookPlug` (generic host-mounted Plug endpoint)
-- `MyApp.Messaging.create_bridge_room(spec)` (room + bindings + policy bootstrap)
-
-For adapter-owned listeners (Telegram polling / Discord gateway), pass a sink MFA that targets:
-
-- `Jido.Messaging.IngressSink.emit(instance_module, bridge_id, payload, opts)`
+Use `MyApp.Messaging.create_bridge_room/1` to create the runtime room, bindings
+and routing policy. Use secret references for durable bridge configuration.
 
 ### Host Webhook Endpoint (Generic Plug)
 
