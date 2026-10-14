@@ -4,24 +4,7 @@ defmodule Jido.Messaging.ChatActions.SignalResult do
   alias Jido.Messaging.{Events, Runtime}
   alias Jido.Messaging.Signal.{Context, Identity, OperationCompleted, OperationFailed}
 
-  @shapes %{
-    fetch_message: :message,
-    fetch_channel_messages: :message_page,
-    fetch_thread: :thread,
-    fetch_thread_messages: :message_page,
-    list_threads: :thread_page,
-    lookup_participant: :user,
-    lookup_user: :user,
-    fetch_channel_metadata: :conversation,
-    post_message: :message,
-    post_channel_message: :message,
-    send_direct_message: :message,
-    start_typing: :acknowledgement,
-    edit_message: :message,
-    delete_message: :acknowledgement,
-    add_reaction: :acknowledgement,
-    remove_reaction: :acknowledgement
-  }
+  @shapes Jido.Messaging.Operations.Definitions.tool_shapes()
 
   @doc false
   @spec completed(atom(), map(), term(), map(), keyword()) :: {:ok, Jido.Signal.t()} | {:error, term()}

@@ -3,49 +3,9 @@ defmodule Jido.Messaging.Execution do
   alias Jido.Chat.Content.Text
   alias Jido.Chat.Signal.Policy
   alias Jido.Messaging.{AuthorizationScope, Authorizer, Dispatch, Events, Message, RoomServer, RoomSupervisor, Runtime}
+  alias Jido.Messaging.Operations.Definitions
   alias Jido.Messaging.Signal.{Context, Identity, OperationCompleted, OperationFailed}
   alias Jido.Signal.Catalog
-
-  @provider_actions %{
-    send_message: :post_message,
-    send_file: :post_message,
-    post_message: :post_message,
-    edit_message: :edit_message,
-    delete_message: :delete_message,
-    start_typing: :start_typing,
-    fetch_metadata: :fetch_channel_metadata,
-    fetch_thread: :fetch_thread,
-    fetch_message: :fetch_message,
-    get_user: :lookup_user,
-    fetch_subject: :fetch_thread,
-    get_thread_participants: :lookup_participant,
-    mark_as_read: :receive_message,
-    fetch_media: :fetch_message,
-    add_reaction: :add_reaction,
-    remove_reaction: :remove_reaction,
-    post_ephemeral: :post_message,
-    post_channel_message: :post_channel_message,
-    stream: :post_message,
-    open_modal: :post_message,
-    load_options: :fetch_message,
-    fetch_messages: :fetch_thread_messages,
-    fetch_channel_messages: :fetch_channel_messages,
-    list_threads: :list_threads,
-    open_thread: :post_message,
-    open_dm: :send_direct_message
-  }
-  @runtime_operations %{
-    Jido.Messaging.Signal.PostMessage => {:post_message, :post_message},
-    Jido.Messaging.Signal.CreateRoom => {:create_room, :post_message},
-    Jido.Messaging.Signal.ParticipantJoinedRequest => {:participant_joined, :receive_message},
-    Jido.Messaging.Signal.ParticipantLeftRequest => {:participant_left, :receive_message},
-    Jido.Messaging.Signal.SetPresence => {:set_presence, :receive_message},
-    Jido.Messaging.Signal.SetTyping => {:set_typing, :receive_message},
-    Jido.Messaging.Signal.AddRoomReaction => {:add_room_reaction, :add_reaction},
-    Jido.Messaging.Signal.RemoveRoomReaction => {:remove_room_reaction, :remove_reaction},
-    Jido.Messaging.Signal.MarkDelivered => {:mark_delivered, :receive_message},
-    Jido.Messaging.Signal.MarkRead => {:mark_read, :receive_message}
-  }
 
   @doc false
   @spec execute(module(), Jido.Signal.t(), keyword()) :: {:ok, Jido.Signal.t()} | {:error, term()}
@@ -74,34 +34,17 @@ defmodule Jido.Messaging.Execution do
   def execute(_instance, _request, _opts), do: Policy.error(:invalid_request)
 
   defp definition(request) do
-    module = Enum.find(Jido.Messaging.signal_definitions(), &(&1.type() == request.type))
-
-    cond do
-      is_nil(module) or module.__signal_kind__() not in [:command, :query] ->
+    case Definitions.lookup(request.type) do
+      nil ->
         Policy.error(:invalid_request)
 
-      module == Jido.Messaging.Signal.SendMessage and is_nil(request.data["bridge_id"]) ->
-        {:ok, module, "route_outbound", :post_message}
+      %{definition: module, operation: operation, action: action} ->
+        operation =
+          if module == Jido.Messaging.Signal.SendMessage and is_nil(request.data["bridge_id"]),
+            do: Definitions.route_operation(),
+            else: operation
 
-      Map.has_key?(@runtime_operations, module) ->
-        {operation, action} = @runtime_operations[module]
-        {:ok, module, Atom.to_string(operation), action}
-
-      true ->
-        name = module |> Module.split() |> List.last()
-
-        provider =
-          Enum.find(Jido.Chat.Operations.Definitions.all(), fn {_type, {definition, _op, _fields, _shape, _schema}} ->
-            Module.split(definition) |> List.last() == if(name == "PostProviderMessage", do: "PostMessage", else: name)
-          end)
-
-        case provider do
-          {_type, {_definition, operation, _fields, _shape, _schema}} ->
-            {:ok, module, "provider." <> Atom.to_string(operation), @provider_actions[operation]}
-
-          _ ->
-            Policy.error(:invalid_request)
-        end
+        {:ok, module, operation, action}
     end
   end
 
@@ -330,10 +273,7 @@ defmodule Jido.Messaging.Execution do
   defp provider(instance, runtime, request, operation, decision, _opts) do
     name = String.replace_prefix(operation, "provider.", "")
 
-    {_type, {definition, _op, _fields, _shape, _schema}} =
-      Enum.find(Jido.Chat.Operations.Definitions.all(), fn {_type, {_module, op, _fields, _shape, _schema}} ->
-        Atom.to_string(op) == name
-      end)
+    definition = Definitions.provider_definition(operation)
 
     with {:ok, binding} <- Runtime.binding(runtime, request.data["bridge_id"]),
          {:ok, receipt} <- receipt_plan(runtime, request, name, decision) do
