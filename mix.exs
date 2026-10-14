@@ -72,21 +72,24 @@ defmodule Jido.Messaging.MixProject do
       # Runtime dependencies
       chat_dependency(),
       {:jason, "~> 1.4"},
-      {:zoi,
-       git: "https://github.com/mikehostetler/zoi.git", ref: "2fff2a23e23e7ac0b26f62f49bbc1b12f7818ac9", override: true},
-      {:jido,
-       git: "https://github.com/agentjido/jido.git", ref: "90763478104f1edbf0afcfcf9444621c3f9755e8", override: true},
-      {:jido_action,
-       git: "https://github.com/agentjido/jido_action.git",
-       ref: "8e9b3f7b268e175091b0eb3720bab3b8633d3c24",
-       override: true},
-      {:runic, "== 0.1.0-alpha.11", override: true},
-      {:jido_signal,
-       git: "https://github.com/agentjido/jido_signal.git",
-       ref: "d6611eca1c95eb507843baceb55991e4801d8421",
-       override: true},
-      {:jido_ai,
-       git: "https://github.com/agentjido/jido_ai.git", ref: "1f19ff262081bc13eb30da7bff8bfe42685d63c8", optional: true},
+      upstream_dependency(:zoi, "~> 0.18.11", "mikehostetler/zoi", "2fff2a23e23e7ac0b26f62f49bbc1b12f7818ac9"),
+      upstream_dependency(:jido, "~> 3.0.0-beta.1", "agentjido/jido", "90763478104f1edbf0afcfcf9444621c3f9755e8"),
+      upstream_dependency(
+        :jido_action,
+        "~> 3.0.0-beta.12",
+        "agentjido/jido_action",
+        "8e9b3f7b268e175091b0eb3720bab3b8633d3c24"
+      ),
+      {:runic, "== 0.1.0-alpha.11"},
+      upstream_dependency(
+        :jido_signal,
+        "~> 3.0.0-beta.4",
+        "agentjido/jido_signal",
+        "d6611eca1c95eb507843baceb55991e4801d8421"
+      ),
+      upstream_dependency(:jido_ai, "~> 2.3", "agentjido/jido_ai", "1f19ff262081bc13eb30da7bff8bfe42685d63c8",
+        optional: true
+      ),
       {:yaml_elixir, "~> 2.12"},
       {:plug, "~> 1.16"},
       {:exqlite, "~> 0.42.0"},
@@ -109,6 +112,14 @@ defmodule Jido.Messaging.MixProject do
     ]
   end
 
+  defp upstream_dependency(app, requirement, repository, ref, opts \\ []) do
+    if Mix.env() in [:dev, :test] or System.get_env("MIX_ENV") in ["dev", "test"] do
+      {app, Keyword.merge([git: "https://github.com/" <> repository <> ".git", ref: ref, override: true], opts)}
+    else
+      {app, requirement, opts}
+    end
+  end
+
   # Local integration uses an explicit dev/test checkout. Production uses the package source.
   defp chat_dependency do
     case {Mix.env(), System.get_env("JIDO_CHAT_PATH")} do
@@ -116,7 +127,7 @@ defmodule Jido.Messaging.MixProject do
         {:jido_chat, path: Path.expand(path), override: true}
 
       _ ->
-        {:jido_chat, "~> 1.2"}
+        {:jido_chat, "~> 2.0"}
     end
   end
 
