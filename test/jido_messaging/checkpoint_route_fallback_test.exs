@@ -96,4 +96,27 @@ defmodule Jido.Messaging.CheckpointRouteFallbackTest do
 
     assert %{pruned: 0, partitions: 1} = SessionManager.prune(Instance)
   end
+
+  test "a stopped partition still in the registry returns errors and uses valid supplied fallbacks", %{pid: pid} do
+    registry = Module.concat(Instance, Registry.Instances)
+    [{_, registry_pid, _, _}] = Supervisor.which_children(registry)
+    :ok = :sys.suspend(registry_pid)
+
+    try do
+      supervisor = Module.concat(Instance, :SessionManagerSupervisor)
+      :ok = Supervisor.terminate_child(supervisor, {:session_manager_partition, 0})
+      refute Process.alive?(pid)
+      assert SessionManager.partition_pid(Instance, 0) == pid
+
+      assert {:error, :partition_unavailable} = SessionManager.set(Instance, key("thread"), route("unused"))
+      assert {:error, :partition_unavailable} = SessionManager.get(Instance, key("thread"))
+      assert {:error, :partition_unavailable} = SessionManager.resolve(Instance, key("thread"), [%{}, nil])
+      assert %{pruned: 0, partitions: 1} = SessionManager.prune(Instance)
+
+      assert {:ok, %{source: :provided_fallback, fallback_reason: :session_unavailable, external_room_id: "provided"}} =
+               SessionManager.resolve(Instance, key("thread"), [%{}, route("provided")])
+    after
+      :ok = :sys.resume(registry_pid)
+    end
+  end
 end

@@ -5,6 +5,9 @@ defmodule Jido.Messaging.SessionManager.Partition do
   Each partition owns an ETS table with TTL and capacity pruning so session
   lookups can resolve exact routes, room-scoped fallbacks, or supplied fallback
   routes without centralizing all traffic in one process.
+
+  Calls return `{:error, :partition_unavailable}` if the partition stops or
+  cannot reply within the call timeout.
   """
   use GenServer
 
@@ -450,6 +453,8 @@ defmodule Jido.Messaging.SessionManager.Partition do
       nil -> {:error, :partition_unavailable}
       pid -> fun.(pid)
     end
+  catch
+    :exit, {_reason, {GenServer, :call, _args}} -> {:error, :partition_unavailable}
   end
 
   defp table_size(state) do
