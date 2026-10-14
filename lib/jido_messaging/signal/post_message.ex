@@ -12,9 +12,20 @@ defmodule Jido.Messaging.Signal.PostMessage do
     dataschema: "urn:jido:messaging:schema:command_post_message:1",
     default_source: "urn:jido:messaging:producer:local",
     schema:
-      Zoi.from_json_schema(
-        Jason.decode!(
-          ~S|{"type":"object","properties":{"request_id":{"type":"string","minLength":1},"room_id":{"type":"string","minLength":1},"sender_id":{"type":"string","minLength":1},"text":{"type":"string"},"role":{"enum":["user","assistant","system","tool"]},"thread_id":{"anyOf":[{"type":"string","minLength":1},{"type":"null"}]}},"required":["request_id","room_id","sender_id","text"],"additionalProperties":false}|
-        )
+      Zoi.map(
+        %{
+          "request_id" => Zoi.string() |> Zoi.min(1),
+          "room_id" => Zoi.string() |> Zoi.min(1),
+          "sender_id" => Zoi.string() |> Zoi.min(1),
+          "text" => Zoi.string(),
+          "role" => Zoi.enum(["user", "assistant", "system", "tool"]) |> Zoi.optional(),
+          "thread_id" =>
+            Zoi.union([
+              Zoi.string() |> Zoi.min(1),
+              Zoi.null()
+            ])
+            |> Zoi.optional()
+        },
+        strict: true
       )
 end

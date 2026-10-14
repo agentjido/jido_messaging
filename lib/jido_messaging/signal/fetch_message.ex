@@ -12,9 +12,16 @@ defmodule Jido.Messaging.Signal.FetchMessage do
     dataschema: "urn:jido:messaging:schema:query_fetch_message:1",
     default_source: "urn:jido:messaging:producer:local",
     schema:
-      Zoi.from_json_schema(
-        Jason.decode!(
-          ~S|{"type":"object","properties":{"request_id":{"type":"string","minLength":1},"room_id":{"type":"string","minLength":1},"message_id":{"type":"string","minLength":1},"thread_id":{"type":"string","minLength":1},"reply_to_id":{"type":"string","minLength":1},"format":{"enum":["plain","markdown","html"]},"bridge_id":{"type":"string","minLength":1}},"required":["request_id","room_id","message_id","bridge_id"],"additionalProperties":false}|
-        )
+      Zoi.map(
+        %{
+          "request_id" => Zoi.string() |> Zoi.min(1),
+          "room_id" => Zoi.string() |> Zoi.min(1),
+          "message_id" => Zoi.string() |> Zoi.min(1),
+          "thread_id" => Zoi.string() |> Zoi.min(1) |> Zoi.optional(),
+          "reply_to_id" => Zoi.string() |> Zoi.min(1) |> Zoi.optional(),
+          "format" => Zoi.enum(["plain", "markdown", "html"]) |> Zoi.optional(),
+          "bridge_id" => Zoi.string() |> Zoi.min(1)
+        },
+        strict: true
       )
 end

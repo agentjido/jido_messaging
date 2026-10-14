@@ -12,9 +12,19 @@ defmodule Jido.Messaging.Signal.SetTyping do
     dataschema: "urn:jido:messaging:schema:command_set_typing:1",
     default_source: "urn:jido:messaging:producer:local",
     schema:
-      Zoi.from_json_schema(
-        Jason.decode!(
-          ~S|{"type":"object","properties":{"request_id":{"type":"string","minLength":1},"room_id":{"type":"string","minLength":1},"participant_id":{"type":"string","minLength":1},"typing":{"type":"boolean"},"thread_id":{"anyOf":[{"type":"string","minLength":1},{"type":"null"}]}},"required":["request_id","room_id","participant_id","typing"],"additionalProperties":false}|
-        )
+      Zoi.map(
+        %{
+          "request_id" => Zoi.string() |> Zoi.min(1),
+          "room_id" => Zoi.string() |> Zoi.min(1),
+          "participant_id" => Zoi.string() |> Zoi.min(1),
+          "typing" => Zoi.boolean(),
+          "thread_id" =>
+            Zoi.union([
+              Zoi.string() |> Zoi.min(1),
+              Zoi.null()
+            ])
+            |> Zoi.optional()
+        },
+        strict: true
       )
 end

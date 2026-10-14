@@ -12,9 +12,13 @@ defmodule Jido.Messaging.Signal.MessageRead do
     dataschema: "urn:jido:messaging:schema:message_read:1",
     default_source: "urn:jido:messaging:instance:aW5zdGFuY2UvYWxwaGE",
     schema:
-      Zoi.from_json_schema(
-        Jason.decode!(
-          ~S|{"type":"object","properties":{"room_id":{"type":"string","minLength":1},"message_id":{"type":"string","minLength":1},"participant_id":{"type":"string","minLength":1},"timestamp":{"type":"string"}},"required":["room_id","message_id","participant_id"],"additionalProperties":false}|
-        )
+      Zoi.map(
+        %{
+          "room_id" => Zoi.string() |> Zoi.min(1),
+          "message_id" => Zoi.string() |> Zoi.min(1),
+          "participant_id" => Zoi.string() |> Zoi.min(1),
+          "timestamp" => Zoi.string() |> Zoi.optional()
+        },
+        strict: true
       )
 end

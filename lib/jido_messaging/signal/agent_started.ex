@@ -12,9 +12,14 @@ defmodule Jido.Messaging.Signal.AgentStarted do
     dataschema: "urn:jido:messaging:schema:agent_started:1",
     default_source: "urn:jido:messaging:instance:aW5zdGFuY2UvYWxwaGE",
     schema:
-      Zoi.from_json_schema(
-        Jason.decode!(
-          ~S|{"type":"object","properties":{"room_id":{"type":"string","minLength":1},"agent_id":{"type":"string","minLength":1},"message_id":{"type":"string","minLength":1},"thread_id":{"type":"string","minLength":1},"code":{"type":"string"}},"required":["room_id","agent_id"],"additionalProperties":false}|
-        )
+      Zoi.map(
+        %{
+          "room_id" => Zoi.string() |> Zoi.min(1),
+          "agent_id" => Zoi.string() |> Zoi.min(1),
+          "message_id" => Zoi.string() |> Zoi.min(1) |> Zoi.optional(),
+          "thread_id" => Zoi.string() |> Zoi.min(1) |> Zoi.optional(),
+          "code" => Zoi.string() |> Zoi.optional()
+        },
+        strict: true
       )
 end

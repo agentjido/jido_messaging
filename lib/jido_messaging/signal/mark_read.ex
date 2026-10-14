@@ -12,9 +12,13 @@ defmodule Jido.Messaging.Signal.MarkRead do
     dataschema: "urn:jido:messaging:schema:command_mark_read:1",
     default_source: "urn:jido:messaging:producer:local",
     schema:
-      Zoi.from_json_schema(
-        Jason.decode!(
-          ~S|{"type":"object","properties":{"request_id":{"type":"string","minLength":1},"room_id":{"type":"string","minLength":1},"message_id":{"type":"string","minLength":1},"participant_id":{"type":"string","minLength":1}},"required":["request_id","room_id","message_id","participant_id"],"additionalProperties":false}|
-        )
+      Zoi.map(
+        %{
+          "request_id" => Zoi.string() |> Zoi.min(1),
+          "room_id" => Zoi.string() |> Zoi.min(1),
+          "message_id" => Zoi.string() |> Zoi.min(1),
+          "participant_id" => Zoi.string() |> Zoi.min(1)
+        },
+        strict: true
       )
 end

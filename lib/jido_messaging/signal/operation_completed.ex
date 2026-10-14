@@ -12,9 +12,3007 @@ defmodule Jido.Messaging.Signal.OperationCompleted do
     dataschema: "urn:jido:messaging:schema:operation_completed:1",
     default_source: "urn:jido:messaging:instance:aW5zdGFuY2UvYWxwaGE",
     schema:
-      Zoi.from_json_schema(
-        Jason.decode!(
-          ~S|{"oneOf":[{"type":"object","properties":{"operation":{"enum":["provider.send_message"]},"request_id":{"type":"string","minLength":1},"bridge_id":{"type":"string","minLength":1},"result":{"oneOf":[{"type":"object","properties":{"id":{"type":"string","minLength":1},"room_id":{"type":"string","minLength":1},"text":{"type":"string"},"sender":{"type":"object","properties":{"id":{"type":"string","minLength":1},"username":{"type":"string"},"display_name":{"type":"string"},"is_bot":{"type":"boolean"},"is_self":{"type":"boolean"}},"required":["id"],"additionalProperties":false},"thread_id":{"anyOf":[{"type":"string","minLength":1},{"type":"null"}]},"reply_to_id":{"anyOf":[{"type":"string","minLength":1},{"type":"null"}]},"media":{"type":"array","items":{"type":"object","properties":{"kind":{"enum":["image","audio","video","file"]},"resource_ref":{"type":"object","properties":{"id":{"type":"string","minLength":1},"scope":{"enum":["call"]},"binding_id":{"type":"string","minLength":1},"kind":{"enum":["file","media","stream","card","modal","result"]}},"required":["id","scope","binding_id","kind"],"additionalProperties":false},"name":{"type":"string"},"media_type":{"type":"string"},"caption":{"type":"string"}},"required":["kind","resource_ref"],"additionalProperties":false}},"timestamp":{"type":"string"},"status":{"enum":["sending","sent","delivered","read","failed","received","pending","updated","deleted"]},"role":{"enum":["user","assistant","system","tool"]}},"required":["id","room_id"],"additionalProperties":false},{"type":"object","properties":{"resource_ref":{"type":"object","properties":{"id":{"type":"string","minLength":1},"scope":{"enum":["call"]},"binding_id":{"type":"string","minLength":1},"kind":{"enum":["file","media","stream","card","modal","result"]}},"required":["id","scope","binding_id","kind"],"additionalProperties":false}},"required":["resource_ref"],"additionalProperties":false}]}},"required":["operation","request_id","bridge_id","result"],"additionalProperties":false},{"type":"object","properties":{"operation":{"enum":["provider.send_file"]},"request_id":{"type":"string","minLength":1},"bridge_id":{"type":"string","minLength":1},"result":{"oneOf":[{"type":"object","properties":{"id":{"type":"string","minLength":1},"room_id":{"type":"string","minLength":1},"text":{"type":"string"},"sender":{"type":"object","properties":{"id":{"type":"string","minLength":1},"username":{"type":"string"},"display_name":{"type":"string"},"is_bot":{"type":"boolean"},"is_self":{"type":"boolean"}},"required":["id"],"additionalProperties":false},"thread_id":{"anyOf":[{"type":"string","minLength":1},{"type":"null"}]},"reply_to_id":{"anyOf":[{"type":"string","minLength":1},{"type":"null"}]},"media":{"type":"array","items":{"type":"object","properties":{"kind":{"enum":["image","audio","video","file"]},"resource_ref":{"type":"object","properties":{"id":{"type":"string","minLength":1},"scope":{"enum":["call"]},"binding_id":{"type":"string","minLength":1},"kind":{"enum":["file","media","stream","card","modal","result"]}},"required":["id","scope","binding_id","kind"],"additionalProperties":false},"name":{"type":"string"},"media_type":{"type":"string"},"caption":{"type":"string"}},"required":["kind","resource_ref"],"additionalProperties":false}},"timestamp":{"type":"string"},"status":{"enum":["sending","sent","delivered","read","failed","received","pending","updated","deleted"]},"role":{"enum":["user","assistant","system","tool"]}},"required":["id","room_id"],"additionalProperties":false},{"type":"object","properties":{"resource_ref":{"type":"object","properties":{"id":{"type":"string","minLength":1},"scope":{"enum":["call"]},"binding_id":{"type":"string","minLength":1},"kind":{"enum":["file","media","stream","card","modal","result"]}},"required":["id","scope","binding_id","kind"],"additionalProperties":false}},"required":["resource_ref"],"additionalProperties":false}]}},"required":["operation","request_id","bridge_id","result"],"additionalProperties":false},{"type":"object","properties":{"operation":{"enum":["provider.post_message"]},"request_id":{"type":"string","minLength":1},"bridge_id":{"type":"string","minLength":1},"result":{"oneOf":[{"type":"object","properties":{"id":{"type":"string","minLength":1},"room_id":{"type":"string","minLength":1},"text":{"type":"string"},"sender":{"type":"object","properties":{"id":{"type":"string","minLength":1},"username":{"type":"string"},"display_name":{"type":"string"},"is_bot":{"type":"boolean"},"is_self":{"type":"boolean"}},"required":["id"],"additionalProperties":false},"thread_id":{"anyOf":[{"type":"string","minLength":1},{"type":"null"}]},"reply_to_id":{"anyOf":[{"type":"string","minLength":1},{"type":"null"}]},"media":{"type":"array","items":{"type":"object","properties":{"kind":{"enum":["image","audio","video","file"]},"resource_ref":{"type":"object","properties":{"id":{"type":"string","minLength":1},"scope":{"enum":["call"]},"binding_id":{"type":"string","minLength":1},"kind":{"enum":["file","media","stream","card","modal","result"]}},"required":["id","scope","binding_id","kind"],"additionalProperties":false},"name":{"type":"string"},"media_type":{"type":"string"},"caption":{"type":"string"}},"required":["kind","resource_ref"],"additionalProperties":false}},"timestamp":{"type":"string"},"status":{"enum":["sending","sent","delivered","read","failed","received","pending","updated","deleted"]},"role":{"enum":["user","assistant","system","tool"]}},"required":["id","room_id"],"additionalProperties":false},{"type":"object","properties":{"resource_ref":{"type":"object","properties":{"id":{"type":"string","minLength":1},"scope":{"enum":["call"]},"binding_id":{"type":"string","minLength":1},"kind":{"enum":["file","media","stream","card","modal","result"]}},"required":["id","scope","binding_id","kind"],"additionalProperties":false}},"required":["resource_ref"],"additionalProperties":false}]}},"required":["operation","request_id","bridge_id","result"],"additionalProperties":false},{"type":"object","properties":{"operation":{"enum":["provider.edit_message"]},"request_id":{"type":"string","minLength":1},"bridge_id":{"type":"string","minLength":1},"result":{"oneOf":[{"type":"object","properties":{"id":{"type":"string","minLength":1},"room_id":{"type":"string","minLength":1},"text":{"type":"string"},"sender":{"type":"object","properties":{"id":{"type":"string","minLength":1},"username":{"type":"string"},"display_name":{"type":"string"},"is_bot":{"type":"boolean"},"is_self":{"type":"boolean"}},"required":["id"],"additionalProperties":false},"thread_id":{"anyOf":[{"type":"string","minLength":1},{"type":"null"}]},"reply_to_id":{"anyOf":[{"type":"string","minLength":1},{"type":"null"}]},"media":{"type":"array","items":{"type":"object","properties":{"kind":{"enum":["image","audio","video","file"]},"resource_ref":{"type":"object","properties":{"id":{"type":"string","minLength":1},"scope":{"enum":["call"]},"binding_id":{"type":"string","minLength":1},"kind":{"enum":["file","media","stream","card","modal","result"]}},"required":["id","scope","binding_id","kind"],"additionalProperties":false},"name":{"type":"string"},"media_type":{"type":"string"},"caption":{"type":"string"}},"required":["kind","resource_ref"],"additionalProperties":false}},"timestamp":{"type":"string"},"status":{"enum":["sending","sent","delivered","read","failed","received","pending","updated","deleted"]},"role":{"enum":["user","assistant","system","tool"]}},"required":["id","room_id"],"additionalProperties":false},{"type":"object","properties":{"resource_ref":{"type":"object","properties":{"id":{"type":"string","minLength":1},"scope":{"enum":["call"]},"binding_id":{"type":"string","minLength":1},"kind":{"enum":["file","media","stream","card","modal","result"]}},"required":["id","scope","binding_id","kind"],"additionalProperties":false}},"required":["resource_ref"],"additionalProperties":false}]}},"required":["operation","request_id","bridge_id","result"],"additionalProperties":false},{"type":"object","properties":{"operation":{"enum":["provider.delete_message"]},"request_id":{"type":"string","minLength":1},"bridge_id":{"type":"string","minLength":1},"result":{"oneOf":[{"type":"object","properties":{"acknowledged":{"type":"boolean"}},"required":["acknowledged"],"additionalProperties":false},{"type":"object","properties":{"resource_ref":{"type":"object","properties":{"id":{"type":"string","minLength":1},"scope":{"enum":["call"]},"binding_id":{"type":"string","minLength":1},"kind":{"enum":["file","media","stream","card","modal","result"]}},"required":["id","scope","binding_id","kind"],"additionalProperties":false}},"required":["resource_ref"],"additionalProperties":false}]}},"required":["operation","request_id","bridge_id","result"],"additionalProperties":false},{"type":"object","properties":{"operation":{"enum":["provider.start_typing"]},"request_id":{"type":"string","minLength":1},"bridge_id":{"type":"string","minLength":1},"result":{"oneOf":[{"type":"object","properties":{"acknowledged":{"type":"boolean"}},"required":["acknowledged"],"additionalProperties":false},{"type":"object","properties":{"resource_ref":{"type":"object","properties":{"id":{"type":"string","minLength":1},"scope":{"enum":["call"]},"binding_id":{"type":"string","minLength":1},"kind":{"enum":["file","media","stream","card","modal","result"]}},"required":["id","scope","binding_id","kind"],"additionalProperties":false}},"required":["resource_ref"],"additionalProperties":false}]}},"required":["operation","request_id","bridge_id","result"],"additionalProperties":false},{"type":"object","properties":{"operation":{"enum":["provider.fetch_metadata"]},"request_id":{"type":"string","minLength":1},"bridge_id":{"type":"string","minLength":1},"result":{"oneOf":[{"type":"object","properties":{"id":{"type":"string","minLength":1},"name":{"type":"string"},"kind":{"enum":["direct","group","channel","thread","unknown"]},"topic":{"type":"string"}},"required":["id"],"additionalProperties":false},{"type":"object","properties":{"resource_ref":{"type":"object","properties":{"id":{"type":"string","minLength":1},"scope":{"enum":["call"]},"binding_id":{"type":"string","minLength":1},"kind":{"enum":["file","media","stream","card","modal","result"]}},"required":["id","scope","binding_id","kind"],"additionalProperties":false}},"required":["resource_ref"],"additionalProperties":false}]}},"required":["operation","request_id","bridge_id","result"],"additionalProperties":false},{"type":"object","properties":{"operation":{"enum":["provider.fetch_thread"]},"request_id":{"type":"string","minLength":1},"bridge_id":{"type":"string","minLength":1},"result":{"oneOf":[{"type":"object","properties":{"id":{"type":"string","minLength":1},"room_id":{"type":"string","minLength":1},"parent_message_id":{"anyOf":[{"type":"string","minLength":1},{"type":"null"}]},"name":{"type":"string"},"delivery_room_ref":{"anyOf":[{"type":"string","minLength":1},{"type":"null"}]}},"required":["id","room_id"],"additionalProperties":false},{"type":"object","properties":{"resource_ref":{"type":"object","properties":{"id":{"type":"string","minLength":1},"scope":{"enum":["call"]},"binding_id":{"type":"string","minLength":1},"kind":{"enum":["file","media","stream","card","modal","result"]}},"required":["id","scope","binding_id","kind"],"additionalProperties":false}},"required":["resource_ref"],"additionalProperties":false}]}},"required":["operation","request_id","bridge_id","result"],"additionalProperties":false},{"type":"object","properties":{"operation":{"enum":["provider.fetch_message"]},"request_id":{"type":"string","minLength":1},"bridge_id":{"type":"string","minLength":1},"result":{"oneOf":[{"type":"object","properties":{"id":{"type":"string","minLength":1},"room_id":{"type":"string","minLength":1},"text":{"type":"string"},"sender":{"type":"object","properties":{"id":{"type":"string","minLength":1},"username":{"type":"string"},"display_name":{"type":"string"},"is_bot":{"type":"boolean"},"is_self":{"type":"boolean"}},"required":["id"],"additionalProperties":false},"thread_id":{"anyOf":[{"type":"string","minLength":1},{"type":"null"}]},"reply_to_id":{"anyOf":[{"type":"string","minLength":1},{"type":"null"}]},"media":{"type":"array","items":{"type":"object","properties":{"kind":{"enum":["image","audio","video","file"]},"resource_ref":{"type":"object","properties":{"id":{"type":"string","minLength":1},"scope":{"enum":["call"]},"binding_id":{"type":"string","minLength":1},"kind":{"enum":["file","media","stream","card","modal","result"]}},"required":["id","scope","binding_id","kind"],"additionalProperties":false},"name":{"type":"string"},"media_type":{"type":"string"},"caption":{"type":"string"}},"required":["kind","resource_ref"],"additionalProperties":false}},"timestamp":{"type":"string"},"status":{"enum":["sending","sent","delivered","read","failed","received","pending","updated","deleted"]},"role":{"enum":["user","assistant","system","tool"]}},"required":["id","room_id"],"additionalProperties":false},{"type":"object","properties":{"resource_ref":{"type":"object","properties":{"id":{"type":"string","minLength":1},"scope":{"enum":["call"]},"binding_id":{"type":"string","minLength":1},"kind":{"enum":["file","media","stream","card","modal","result"]}},"required":["id","scope","binding_id","kind"],"additionalProperties":false}},"required":["resource_ref"],"additionalProperties":false}]}},"required":["operation","request_id","bridge_id","result"],"additionalProperties":false},{"type":"object","properties":{"operation":{"enum":["provider.get_user"]},"request_id":{"type":"string","minLength":1},"bridge_id":{"type":"string","minLength":1},"result":{"oneOf":[{"type":"object","properties":{"id":{"type":"string","minLength":1},"username":{"type":"string"},"display_name":{"type":"string"},"is_bot":{"type":"boolean"},"is_self":{"type":"boolean"}},"required":["id"],"additionalProperties":false},{"type":"object","properties":{"resource_ref":{"type":"object","properties":{"id":{"type":"string","minLength":1},"scope":{"enum":["call"]},"binding_id":{"type":"string","minLength":1},"kind":{"enum":["file","media","stream","card","modal","result"]}},"required":["id","scope","binding_id","kind"],"additionalProperties":false}},"required":["resource_ref"],"additionalProperties":false}]}},"required":["operation","request_id","bridge_id","result"],"additionalProperties":false},{"type":"object","properties":{"operation":{"enum":["provider.fetch_subject"]},"request_id":{"type":"string","minLength":1},"bridge_id":{"type":"string","minLength":1},"result":{"oneOf":[{"type":"object","properties":{"id":{"type":"string","minLength":1},"kind":{"enum":["conversation","thread","message"]},"room_id":{"type":"string","minLength":1},"title":{"type":"string"}},"required":["id","kind","room_id"],"additionalProperties":false},{"type":"object","properties":{"resource_ref":{"type":"object","properties":{"id":{"type":"string","minLength":1},"scope":{"enum":["call"]},"binding_id":{"type":"string","minLength":1},"kind":{"enum":["file","media","stream","card","modal","result"]}},"required":["id","scope","binding_id","kind"],"additionalProperties":false}},"required":["resource_ref"],"additionalProperties":false}]}},"required":["operation","request_id","bridge_id","result"],"additionalProperties":false},{"type":"object","properties":{"operation":{"enum":["provider.get_thread_participants"]},"request_id":{"type":"string","minLength":1},"bridge_id":{"type":"string","minLength":1},"result":{"oneOf":[{"type":"object","properties":{"participants":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string","minLength":1},"username":{"type":"string"},"display_name":{"type":"string"},"is_bot":{"type":"boolean"},"is_self":{"type":"boolean"}},"required":["id"],"additionalProperties":false}},"complete":{"type":"boolean"},"scope":{"enum":["conversation","thread","observed"]},"next_cursor":{"anyOf":[{"type":"string","minLength":1},{"type":"null"}]}},"required":["participants","complete","scope","next_cursor"],"additionalProperties":false},{"type":"object","properties":{"resource_ref":{"type":"object","properties":{"id":{"type":"string","minLength":1},"scope":{"enum":["call"]},"binding_id":{"type":"string","minLength":1},"kind":{"enum":["file","media","stream","card","modal","result"]}},"required":["id","scope","binding_id","kind"],"additionalProperties":false}},"required":["resource_ref"],"additionalProperties":false}]}},"required":["operation","request_id","bridge_id","result"],"additionalProperties":false},{"type":"object","properties":{"operation":{"enum":["provider.mark_as_read"]},"request_id":{"type":"string","minLength":1},"bridge_id":{"type":"string","minLength":1},"result":{"oneOf":[{"type":"object","properties":{"acknowledged":{"type":"boolean"}},"required":["acknowledged"],"additionalProperties":false},{"type":"object","properties":{"resource_ref":{"type":"object","properties":{"id":{"type":"string","minLength":1},"scope":{"enum":["call"]},"binding_id":{"type":"string","minLength":1},"kind":{"enum":["file","media","stream","card","modal","result"]}},"required":["id","scope","binding_id","kind"],"additionalProperties":false}},"required":["resource_ref"],"additionalProperties":false}]}},"required":["operation","request_id","bridge_id","result"],"additionalProperties":false},{"type":"object","properties":{"operation":{"enum":["provider.fetch_media"]},"request_id":{"type":"string","minLength":1},"bridge_id":{"type":"string","minLength":1},"result":{"type":"object","properties":{"resource_ref":{"type":"object","properties":{"id":{"type":"string","minLength":1},"scope":{"enum":["call"]},"binding_id":{"type":"string","minLength":1},"kind":{"enum":["file","media","stream","card","modal","result"]}},"required":["id","scope","binding_id","kind"],"additionalProperties":false}},"required":["resource_ref"],"additionalProperties":false}},"required":["operation","request_id","bridge_id","result"],"additionalProperties":false},{"type":"object","properties":{"operation":{"enum":["provider.add_reaction"]},"request_id":{"type":"string","minLength":1},"bridge_id":{"type":"string","minLength":1},"result":{"oneOf":[{"type":"object","properties":{"acknowledged":{"type":"boolean"}},"required":["acknowledged"],"additionalProperties":false},{"type":"object","properties":{"resource_ref":{"type":"object","properties":{"id":{"type":"string","minLength":1},"scope":{"enum":["call"]},"binding_id":{"type":"string","minLength":1},"kind":{"enum":["file","media","stream","card","modal","result"]}},"required":["id","scope","binding_id","kind"],"additionalProperties":false}},"required":["resource_ref"],"additionalProperties":false}]}},"required":["operation","request_id","bridge_id","result"],"additionalProperties":false},{"type":"object","properties":{"operation":{"enum":["provider.remove_reaction"]},"request_id":{"type":"string","minLength":1},"bridge_id":{"type":"string","minLength":1},"result":{"oneOf":[{"type":"object","properties":{"acknowledged":{"type":"boolean"}},"required":["acknowledged"],"additionalProperties":false},{"type":"object","properties":{"resource_ref":{"type":"object","properties":{"id":{"type":"string","minLength":1},"scope":{"enum":["call"]},"binding_id":{"type":"string","minLength":1},"kind":{"enum":["file","media","stream","card","modal","result"]}},"required":["id","scope","binding_id","kind"],"additionalProperties":false}},"required":["resource_ref"],"additionalProperties":false}]}},"required":["operation","request_id","bridge_id","result"],"additionalProperties":false},{"type":"object","properties":{"operation":{"enum":["provider.post_ephemeral"]},"request_id":{"type":"string","minLength":1},"bridge_id":{"type":"string","minLength":1},"result":{"oneOf":[{"type":"object","properties":{"id":{"type":"string","minLength":1},"room_id":{"type":"string","minLength":1},"text":{"type":"string"},"sender":{"type":"object","properties":{"id":{"type":"string","minLength":1},"username":{"type":"string"},"display_name":{"type":"string"},"is_bot":{"type":"boolean"},"is_self":{"type":"boolean"}},"required":["id"],"additionalProperties":false},"thread_id":{"anyOf":[{"type":"string","minLength":1},{"type":"null"}]},"reply_to_id":{"anyOf":[{"type":"string","minLength":1},{"type":"null"}]},"media":{"type":"array","items":{"type":"object","properties":{"kind":{"enum":["image","audio","video","file"]},"resource_ref":{"type":"object","properties":{"id":{"type":"string","minLength":1},"scope":{"enum":["call"]},"binding_id":{"type":"string","minLength":1},"kind":{"enum":["file","media","stream","card","modal","result"]}},"required":["id","scope","binding_id","kind"],"additionalProperties":false},"name":{"type":"string"},"media_type":{"type":"string"},"caption":{"type":"string"}},"required":["kind","resource_ref"],"additionalProperties":false}},"timestamp":{"type":"string"},"status":{"enum":["sending","sent","delivered","read","failed","received","pending","updated","deleted"]},"role":{"enum":["user","assistant","system","tool"]}},"required":["id","room_id"],"additionalProperties":false},{"type":"object","properties":{"resource_ref":{"type":"object","properties":{"id":{"type":"string","minLength":1},"scope":{"enum":["call"]},"binding_id":{"type":"string","minLength":1},"kind":{"enum":["file","media","stream","card","modal","result"]}},"required":["id","scope","binding_id","kind"],"additionalProperties":false}},"required":["resource_ref"],"additionalProperties":false}]}},"required":["operation","request_id","bridge_id","result"],"additionalProperties":false},{"type":"object","properties":{"operation":{"enum":["provider.post_channel_message"]},"request_id":{"type":"string","minLength":1},"bridge_id":{"type":"string","minLength":1},"result":{"oneOf":[{"type":"object","properties":{"id":{"type":"string","minLength":1},"room_id":{"type":"string","minLength":1},"text":{"type":"string"},"sender":{"type":"object","properties":{"id":{"type":"string","minLength":1},"username":{"type":"string"},"display_name":{"type":"string"},"is_bot":{"type":"boolean"},"is_self":{"type":"boolean"}},"required":["id"],"additionalProperties":false},"thread_id":{"anyOf":[{"type":"string","minLength":1},{"type":"null"}]},"reply_to_id":{"anyOf":[{"type":"string","minLength":1},{"type":"null"}]},"media":{"type":"array","items":{"type":"object","properties":{"kind":{"enum":["image","audio","video","file"]},"resource_ref":{"type":"object","properties":{"id":{"type":"string","minLength":1},"scope":{"enum":["call"]},"binding_id":{"type":"string","minLength":1},"kind":{"enum":["file","media","stream","card","modal","result"]}},"required":["id","scope","binding_id","kind"],"additionalProperties":false},"name":{"type":"string"},"media_type":{"type":"string"},"caption":{"type":"string"}},"required":["kind","resource_ref"],"additionalProperties":false}},"timestamp":{"type":"string"},"status":{"enum":["sending","sent","delivered","read","failed","received","pending","updated","deleted"]},"role":{"enum":["user","assistant","system","tool"]}},"required":["id","room_id"],"additionalProperties":false},{"type":"object","properties":{"resource_ref":{"type":"object","properties":{"id":{"type":"string","minLength":1},"scope":{"enum":["call"]},"binding_id":{"type":"string","minLength":1},"kind":{"enum":["file","media","stream","card","modal","result"]}},"required":["id","scope","binding_id","kind"],"additionalProperties":false}},"required":["resource_ref"],"additionalProperties":false}]}},"required":["operation","request_id","bridge_id","result"],"additionalProperties":false},{"type":"object","properties":{"operation":{"enum":["provider.stream"]},"request_id":{"type":"string","minLength":1},"bridge_id":{"type":"string","minLength":1},"result":{"oneOf":[{"type":"object","properties":{"id":{"type":"string","minLength":1},"room_id":{"type":"string","minLength":1},"text":{"type":"string"},"sender":{"type":"object","properties":{"id":{"type":"string","minLength":1},"username":{"type":"string"},"display_name":{"type":"string"},"is_bot":{"type":"boolean"},"is_self":{"type":"boolean"}},"required":["id"],"additionalProperties":false},"thread_id":{"anyOf":[{"type":"string","minLength":1},{"type":"null"}]},"reply_to_id":{"anyOf":[{"type":"string","minLength":1},{"type":"null"}]},"media":{"type":"array","items":{"type":"object","properties":{"kind":{"enum":["image","audio","video","file"]},"resource_ref":{"type":"object","properties":{"id":{"type":"string","minLength":1},"scope":{"enum":["call"]},"binding_id":{"type":"string","minLength":1},"kind":{"enum":["file","media","stream","card","modal","result"]}},"required":["id","scope","binding_id","kind"],"additionalProperties":false},"name":{"type":"string"},"media_type":{"type":"string"},"caption":{"type":"string"}},"required":["kind","resource_ref"],"additionalProperties":false}},"timestamp":{"type":"string"},"status":{"enum":["sending","sent","delivered","read","failed","received","pending","updated","deleted"]},"role":{"enum":["user","assistant","system","tool"]}},"required":["id","room_id"],"additionalProperties":false},{"type":"object","properties":{"resource_ref":{"type":"object","properties":{"id":{"type":"string","minLength":1},"scope":{"enum":["call"]},"binding_id":{"type":"string","minLength":1},"kind":{"enum":["file","media","stream","card","modal","result"]}},"required":["id","scope","binding_id","kind"],"additionalProperties":false}},"required":["resource_ref"],"additionalProperties":false}]}},"required":["operation","request_id","bridge_id","result"],"additionalProperties":false},{"type":"object","properties":{"operation":{"enum":["provider.open_modal"]},"request_id":{"type":"string","minLength":1},"bridge_id":{"type":"string","minLength":1},"result":{"oneOf":[{"type":"object","properties":{"id":{"type":"string","minLength":1},"opened":{"type":"boolean"}},"required":["opened"],"additionalProperties":false},{"type":"object","properties":{"resource_ref":{"type":"object","properties":{"id":{"type":"string","minLength":1},"scope":{"enum":["call"]},"binding_id":{"type":"string","minLength":1},"kind":{"enum":["file","media","stream","card","modal","result"]}},"required":["id","scope","binding_id","kind"],"additionalProperties":false}},"required":["resource_ref"],"additionalProperties":false}]}},"required":["operation","request_id","bridge_id","result"],"additionalProperties":false},{"type":"object","properties":{"operation":{"enum":["provider.load_options"]},"request_id":{"type":"string","minLength":1},"bridge_id":{"type":"string","minLength":1},"result":{"oneOf":[{"type":"object","properties":{"options":{"type":"array","items":{"type":"object","properties":{"label":{"type":"string"},"value":{"type":"string"},"description":{"type":"string"},"url":{"type":"string"}},"required":["label","value"],"additionalProperties":false}},"option_groups":{"type":"array","items":{"type":"object","properties":{"label":{"type":"string"},"options":{"type":"array","items":{"type":"object","properties":{"label":{"type":"string"},"value":{"type":"string"},"description":{"type":"string"},"url":{"type":"string"}},"required":["label","value"],"additionalProperties":false}}},"required":["label","options"],"additionalProperties":false}},"complete":{"type":"boolean"}},"required":["options","complete"],"additionalProperties":false},{"type":"object","properties":{"resource_ref":{"type":"object","properties":{"id":{"type":"string","minLength":1},"scope":{"enum":["call"]},"binding_id":{"type":"string","minLength":1},"kind":{"enum":["file","media","stream","card","modal","result"]}},"required":["id","scope","binding_id","kind"],"additionalProperties":false}},"required":["resource_ref"],"additionalProperties":false}]}},"required":["operation","request_id","bridge_id","result"],"additionalProperties":false},{"type":"object","properties":{"operation":{"enum":["provider.fetch_messages"]},"request_id":{"type":"string","minLength":1},"bridge_id":{"type":"string","minLength":1},"result":{"oneOf":[{"type":"object","properties":{"messages":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string","minLength":1},"room_id":{"type":"string","minLength":1},"text":{"type":"string"},"sender":{"type":"object","properties":{"id":{"type":"string","minLength":1},"username":{"type":"string"},"display_name":{"type":"string"},"is_bot":{"type":"boolean"},"is_self":{"type":"boolean"}},"required":["id"],"additionalProperties":false},"thread_id":{"anyOf":[{"type":"string","minLength":1},{"type":"null"}]},"reply_to_id":{"anyOf":[{"type":"string","minLength":1},{"type":"null"}]},"media":{"type":"array","items":{"type":"object","properties":{"kind":{"enum":["image","audio","video","file"]},"resource_ref":{"type":"object","properties":{"id":{"type":"string","minLength":1},"scope":{"enum":["call"]},"binding_id":{"type":"string","minLength":1},"kind":{"enum":["file","media","stream","card","modal","result"]}},"required":["id","scope","binding_id","kind"],"additionalProperties":false},"name":{"type":"string"},"media_type":{"type":"string"},"caption":{"type":"string"}},"required":["kind","resource_ref"],"additionalProperties":false}},"timestamp":{"type":"string"},"status":{"enum":["sending","sent","delivered","read","failed","received","pending","updated","deleted"]},"role":{"enum":["user","assistant","system","tool"]}},"required":["id","room_id"],"additionalProperties":false}},"next_cursor":{"anyOf":[{"type":"string","minLength":1},{"type":"null"}]},"complete":{"type":"boolean"}},"required":["messages","next_cursor","complete"],"additionalProperties":false},{"type":"object","properties":{"resource_ref":{"type":"object","properties":{"id":{"type":"string","minLength":1},"scope":{"enum":["call"]},"binding_id":{"type":"string","minLength":1},"kind":{"enum":["file","media","stream","card","modal","result"]}},"required":["id","scope","binding_id","kind"],"additionalProperties":false}},"required":["resource_ref"],"additionalProperties":false}]}},"required":["operation","request_id","bridge_id","result"],"additionalProperties":false},{"type":"object","properties":{"operation":{"enum":["provider.fetch_channel_messages"]},"request_id":{"type":"string","minLength":1},"bridge_id":{"type":"string","minLength":1},"result":{"oneOf":[{"type":"object","properties":{"messages":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string","minLength":1},"room_id":{"type":"string","minLength":1},"text":{"type":"string"},"sender":{"type":"object","properties":{"id":{"type":"string","minLength":1},"username":{"type":"string"},"display_name":{"type":"string"},"is_bot":{"type":"boolean"},"is_self":{"type":"boolean"}},"required":["id"],"additionalProperties":false},"thread_id":{"anyOf":[{"type":"string","minLength":1},{"type":"null"}]},"reply_to_id":{"anyOf":[{"type":"string","minLength":1},{"type":"null"}]},"media":{"type":"array","items":{"type":"object","properties":{"kind":{"enum":["image","audio","video","file"]},"resource_ref":{"type":"object","properties":{"id":{"type":"string","minLength":1},"scope":{"enum":["call"]},"binding_id":{"type":"string","minLength":1},"kind":{"enum":["file","media","stream","card","modal","result"]}},"required":["id","scope","binding_id","kind"],"additionalProperties":false},"name":{"type":"string"},"media_type":{"type":"string"},"caption":{"type":"string"}},"required":["kind","resource_ref"],"additionalProperties":false}},"timestamp":{"type":"string"},"status":{"enum":["sending","sent","delivered","read","failed","received","pending","updated","deleted"]},"role":{"enum":["user","assistant","system","tool"]}},"required":["id","room_id"],"additionalProperties":false}},"next_cursor":{"anyOf":[{"type":"string","minLength":1},{"type":"null"}]},"complete":{"type":"boolean"}},"required":["messages","next_cursor","complete"],"additionalProperties":false},{"type":"object","properties":{"resource_ref":{"type":"object","properties":{"id":{"type":"string","minLength":1},"scope":{"enum":["call"]},"binding_id":{"type":"string","minLength":1},"kind":{"enum":["file","media","stream","card","modal","result"]}},"required":["id","scope","binding_id","kind"],"additionalProperties":false}},"required":["resource_ref"],"additionalProperties":false}]}},"required":["operation","request_id","bridge_id","result"],"additionalProperties":false},{"type":"object","properties":{"operation":{"enum":["provider.list_threads"]},"request_id":{"type":"string","minLength":1},"bridge_id":{"type":"string","minLength":1},"result":{"oneOf":[{"type":"object","properties":{"threads":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string","minLength":1},"room_id":{"type":"string","minLength":1},"parent_message_id":{"anyOf":[{"type":"string","minLength":1},{"type":"null"}]},"name":{"type":"string"},"delivery_room_ref":{"anyOf":[{"type":"string","minLength":1},{"type":"null"}]}},"required":["id","room_id"],"additionalProperties":false}},"next_cursor":{"anyOf":[{"type":"string","minLength":1},{"type":"null"}]},"complete":{"type":"boolean"}},"required":["threads","next_cursor","complete"],"additionalProperties":false},{"type":"object","properties":{"resource_ref":{"type":"object","properties":{"id":{"type":"string","minLength":1},"scope":{"enum":["call"]},"binding_id":{"type":"string","minLength":1},"kind":{"enum":["file","media","stream","card","modal","result"]}},"required":["id","scope","binding_id","kind"],"additionalProperties":false}},"required":["resource_ref"],"additionalProperties":false}]}},"required":["operation","request_id","bridge_id","result"],"additionalProperties":false},{"type":"object","properties":{"operation":{"enum":["provider.open_thread"]},"request_id":{"type":"string","minLength":1},"bridge_id":{"type":"string","minLength":1},"result":{"oneOf":[{"type":"object","properties":{"id":{"type":"string","minLength":1},"room_id":{"type":"string","minLength":1},"parent_message_id":{"anyOf":[{"type":"string","minLength":1},{"type":"null"}]},"name":{"type":"string"},"delivery_room_ref":{"anyOf":[{"type":"string","minLength":1},{"type":"null"}]}},"required":["id","room_id"],"additionalProperties":false},{"type":"object","properties":{"resource_ref":{"type":"object","properties":{"id":{"type":"string","minLength":1},"scope":{"enum":["call"]},"binding_id":{"type":"string","minLength":1},"kind":{"enum":["file","media","stream","card","modal","result"]}},"required":["id","scope","binding_id","kind"],"additionalProperties":false}},"required":["resource_ref"],"additionalProperties":false}]}},"required":["operation","request_id","bridge_id","result"],"additionalProperties":false},{"type":"object","properties":{"operation":{"enum":["provider.open_dm"]},"request_id":{"type":"string","minLength":1},"bridge_id":{"type":"string","minLength":1},"result":{"oneOf":[{"type":"object","properties":{"id":{"type":"string","minLength":1},"name":{"type":"string"},"kind":{"enum":["direct","group","channel","thread","unknown"]},"topic":{"type":"string"}},"required":["id"],"additionalProperties":false},{"type":"object","properties":{"resource_ref":{"type":"object","properties":{"id":{"type":"string","minLength":1},"scope":{"enum":["call"]},"binding_id":{"type":"string","minLength":1},"kind":{"enum":["file","media","stream","card","modal","result"]}},"required":["id","scope","binding_id","kind"],"additionalProperties":false}},"required":["resource_ref"],"additionalProperties":false}]}},"required":["operation","request_id","bridge_id","result"],"additionalProperties":false},{"type":"object","properties":{"operation":{"enum":["post_message"]},"request_id":{"type":"string","minLength":1},"result":{"oneOf":[{"type":"object","properties":{"id":{"type":"string","minLength":1},"room_id":{"type":"string","minLength":1},"text":{"type":"string"},"sender":{"type":"object","properties":{"id":{"type":"string","minLength":1},"username":{"type":"string"},"display_name":{"type":"string"},"is_bot":{"type":"boolean"},"is_self":{"type":"boolean"}},"required":["id"],"additionalProperties":false},"thread_id":{"anyOf":[{"type":"string","minLength":1},{"type":"null"}]},"reply_to_id":{"anyOf":[{"type":"string","minLength":1},{"type":"null"}]},"media":{"type":"array","items":{"type":"object","properties":{"kind":{"enum":["image","audio","video","file"]},"resource_ref":{"type":"object","properties":{"id":{"type":"string","minLength":1},"scope":{"enum":["call"]},"binding_id":{"type":"string","minLength":1},"kind":{"enum":["file","media","stream","card","modal","result"]}},"required":["id","scope","binding_id","kind"],"additionalProperties":false},"name":{"type":"string"},"media_type":{"type":"string"},"caption":{"type":"string"}},"required":["kind","resource_ref"],"additionalProperties":false}},"timestamp":{"type":"string"},"status":{"enum":["sending","sent","delivered","read","failed","received","pending","updated","deleted"]},"role":{"enum":["user","assistant","system","tool"]}},"required":["id","room_id"],"additionalProperties":false},{"type":"object","properties":{"resource_ref":{"type":"object","properties":{"id":{"type":"string","minLength":1},"scope":{"enum":["call"]},"binding_id":{"type":"string","minLength":1},"kind":{"enum":["result"]}},"required":["id","scope","binding_id","kind"],"additionalProperties":false}},"required":["resource_ref"],"additionalProperties":false}]}},"required":["operation","request_id","result"],"additionalProperties":false},{"type":"object","properties":{"operation":{"enum":["create_room"]},"request_id":{"type":"string","minLength":1},"result":{"type":"object","properties":{"id":{"type":"string","minLength":1},"name":{"type":"string"},"kind":{"enum":["direct","group","channel","thread","unknown"]},"topic":{"type":"string"}},"required":["id"],"additionalProperties":false}},"required":["operation","request_id","result"],"additionalProperties":false},{"type":"object","properties":{"operation":{"enum":["participant_joined"]},"request_id":{"type":"string","minLength":1},"result":{"type":"object","properties":{"acknowledged":{"type":"boolean"}},"required":["acknowledged"],"additionalProperties":false}},"required":["operation","request_id","result"],"additionalProperties":false},{"type":"object","properties":{"operation":{"enum":["participant_left"]},"request_id":{"type":"string","minLength":1},"result":{"type":"object","properties":{"acknowledged":{"type":"boolean"}},"required":["acknowledged"],"additionalProperties":false}},"required":["operation","request_id","result"],"additionalProperties":false},{"type":"object","properties":{"operation":{"enum":["set_presence"]},"request_id":{"type":"string","minLength":1},"result":{"type":"object","properties":{"acknowledged":{"type":"boolean"}},"required":["acknowledged"],"additionalProperties":false}},"required":["operation","request_id","result"],"additionalProperties":false},{"type":"object","properties":{"operation":{"enum":["set_typing"]},"request_id":{"type":"string","minLength":1},"result":{"type":"object","properties":{"acknowledged":{"type":"boolean"}},"required":["acknowledged"],"additionalProperties":false}},"required":["operation","request_id","result"],"additionalProperties":false},{"type":"object","properties":{"operation":{"enum":["add_room_reaction"]},"request_id":{"type":"string","minLength":1},"result":{"type":"object","properties":{"acknowledged":{"type":"boolean"}},"required":["acknowledged"],"additionalProperties":false}},"required":["operation","request_id","result"],"additionalProperties":false},{"type":"object","properties":{"operation":{"enum":["remove_room_reaction"]},"request_id":{"type":"string","minLength":1},"result":{"type":"object","properties":{"acknowledged":{"type":"boolean"}},"required":["acknowledged"],"additionalProperties":false}},"required":["operation","request_id","result"],"additionalProperties":false},{"type":"object","properties":{"operation":{"enum":["mark_delivered"]},"request_id":{"type":"string","minLength":1},"result":{"type":"object","properties":{"acknowledged":{"type":"boolean"}},"required":["acknowledged"],"additionalProperties":false}},"required":["operation","request_id","result"],"additionalProperties":false},{"type":"object","properties":{"operation":{"enum":["mark_read"]},"request_id":{"type":"string","minLength":1},"result":{"type":"object","properties":{"acknowledged":{"type":"boolean"}},"required":["acknowledged"],"additionalProperties":false}},"required":["operation","request_id","result"],"additionalProperties":false},{"type":"object","properties":{"operation":{"enum":["route_outbound"]},"request_id":{"type":"string","minLength":1},"result":{"oneOf":[{"type":"object","properties":{"attempted":{"type":"integer","minimum":0},"delivery_mode":{"enum":["best_effort","primary","broadcast"]},"delivered":{"type":"array","items":{"type":"object","properties":{"bridge_id":{"type":"string","minLength":1},"message_id":{"type":"string","minLength":1},"attempts":{"type":"integer","minimum":1}},"required":["bridge_id","message_id","attempts"],"additionalProperties":false}},"failed":{"type":"array","items":{"type":"object","properties":{"bridge_id":{"type":"string","minLength":1},"code":{"enum":["provider_failure","unsupported","authorization_denied","persistence_failed"]},"retryable":{"type":"boolean"},"attempts":{"type":"integer","minimum":1}},"required":["bridge_id","code","retryable","attempts"],"additionalProperties":false}}},"required":["attempted","delivery_mode","delivered","failed"],"additionalProperties":false},{"type":"object","properties":{"resource_ref":{"type":"object","properties":{"id":{"type":"string","minLength":1},"scope":{"enum":["call"]},"binding_id":{"type":"string","minLength":1},"kind":{"enum":["file","media","stream","card","modal","result"]}},"required":["id","scope","binding_id","kind"],"additionalProperties":false}},"required":["resource_ref"],"additionalProperties":false}]}},"required":["operation","request_id","result"],"additionalProperties":false},{"type":"object","properties":{"operation":{"enum":["tool.fetch_message"]},"request_id":{"type":"string","minLength":1},"bridge_id":{"type":"string","minLength":1},"result":{"oneOf":[{"type":"object","properties":{"id":{"type":"string","minLength":1},"room_id":{"type":"string","minLength":1},"text":{"type":"string"},"sender":{"type":"object","properties":{"id":{"type":"string","minLength":1},"username":{"type":"string"},"display_name":{"type":"string"},"is_bot":{"type":"boolean"},"is_self":{"type":"boolean"}},"required":["id"],"additionalProperties":false},"thread_id":{"anyOf":[{"type":"string","minLength":1},{"type":"null"}]},"reply_to_id":{"anyOf":[{"type":"string","minLength":1},{"type":"null"}]},"media":{"type":"array","items":{"type":"object","properties":{"kind":{"enum":["image","audio","video","file"]},"resource_ref":{"type":"object","properties":{"id":{"type":"string","minLength":1},"scope":{"enum":["call"]},"binding_id":{"type":"string","minLength":1},"kind":{"enum":["file","media","stream","card","modal","result"]}},"required":["id","scope","binding_id","kind"],"additionalProperties":false},"name":{"type":"string"},"media_type":{"type":"string"},"caption":{"type":"string"}},"required":["kind","resource_ref"],"additionalProperties":false}},"timestamp":{"type":"string"},"status":{"enum":["sent","received","updated","deleted","pending","failed"]},"role":{"enum":["user","assistant","system","tool"]}},"required":["id","room_id"],"additionalProperties":false},{"type":"object","properties":{"resource_ref":{"type":"object","properties":{"id":{"type":"string","minLength":1},"scope":{"enum":["call"]},"binding_id":{"type":"string","minLength":1},"kind":{"enum":["file","media","stream","card","modal","result"]}},"required":["id","scope","binding_id","kind"],"additionalProperties":false}},"required":["resource_ref"],"additionalProperties":false}]}},"required":["operation","request_id","bridge_id","result"],"additionalProperties":false},{"type":"object","properties":{"operation":{"enum":["tool.fetch_channel_messages"]},"request_id":{"type":"string","minLength":1},"bridge_id":{"type":"string","minLength":1},"result":{"oneOf":[{"type":"object","properties":{"messages":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string","minLength":1},"room_id":{"type":"string","minLength":1},"text":{"type":"string"},"sender":{"type":"object","properties":{"id":{"type":"string","minLength":1},"username":{"type":"string"},"display_name":{"type":"string"},"is_bot":{"type":"boolean"},"is_self":{"type":"boolean"}},"required":["id"],"additionalProperties":false},"thread_id":{"anyOf":[{"type":"string","minLength":1},{"type":"null"}]},"reply_to_id":{"anyOf":[{"type":"string","minLength":1},{"type":"null"}]},"media":{"type":"array","items":{"type":"object","properties":{"kind":{"enum":["image","audio","video","file"]},"resource_ref":{"type":"object","properties":{"id":{"type":"string","minLength":1},"scope":{"enum":["call"]},"binding_id":{"type":"string","minLength":1},"kind":{"enum":["file","media","stream","card","modal","result"]}},"required":["id","scope","binding_id","kind"],"additionalProperties":false},"name":{"type":"string"},"media_type":{"type":"string"},"caption":{"type":"string"}},"required":["kind","resource_ref"],"additionalProperties":false}},"timestamp":{"type":"string"},"status":{"enum":["sent","received","updated","deleted","pending","failed"]},"role":{"enum":["user","assistant","system","tool"]}},"required":["id","room_id"],"additionalProperties":false}},"next_cursor":{"anyOf":[{"type":"string","minLength":1},{"type":"null"}]},"complete":{"type":"boolean"}},"required":["messages","next_cursor","complete"],"additionalProperties":false},{"type":"object","properties":{"resource_ref":{"type":"object","properties":{"id":{"type":"string","minLength":1},"scope":{"enum":["call"]},"binding_id":{"type":"string","minLength":1},"kind":{"enum":["file","media","stream","card","modal","result"]}},"required":["id","scope","binding_id","kind"],"additionalProperties":false}},"required":["resource_ref"],"additionalProperties":false}]}},"required":["operation","request_id","bridge_id","result"],"additionalProperties":false},{"type":"object","properties":{"operation":{"enum":["tool.fetch_thread"]},"request_id":{"type":"string","minLength":1},"bridge_id":{"type":"string","minLength":1},"result":{"oneOf":[{"type":"object","properties":{"id":{"type":"string","minLength":1},"room_id":{"type":"string","minLength":1},"parent_message_id":{"anyOf":[{"type":"string","minLength":1},{"type":"null"}]},"name":{"type":"string"},"delivery_room_ref":{"anyOf":[{"type":"string","minLength":1},{"type":"null"}]}},"required":["id","room_id"],"additionalProperties":false},{"type":"object","properties":{"resource_ref":{"type":"object","properties":{"id":{"type":"string","minLength":1},"scope":{"enum":["call"]},"binding_id":{"type":"string","minLength":1},"kind":{"enum":["file","media","stream","card","modal","result"]}},"required":["id","scope","binding_id","kind"],"additionalProperties":false}},"required":["resource_ref"],"additionalProperties":false}]}},"required":["operation","request_id","bridge_id","result"],"additionalProperties":false},{"type":"object","properties":{"operation":{"enum":["tool.fetch_thread_messages"]},"request_id":{"type":"string","minLength":1},"bridge_id":{"type":"string","minLength":1},"result":{"oneOf":[{"type":"object","properties":{"messages":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string","minLength":1},"room_id":{"type":"string","minLength":1},"text":{"type":"string"},"sender":{"type":"object","properties":{"id":{"type":"string","minLength":1},"username":{"type":"string"},"display_name":{"type":"string"},"is_bot":{"type":"boolean"},"is_self":{"type":"boolean"}},"required":["id"],"additionalProperties":false},"thread_id":{"anyOf":[{"type":"string","minLength":1},{"type":"null"}]},"reply_to_id":{"anyOf":[{"type":"string","minLength":1},{"type":"null"}]},"media":{"type":"array","items":{"type":"object","properties":{"kind":{"enum":["image","audio","video","file"]},"resource_ref":{"type":"object","properties":{"id":{"type":"string","minLength":1},"scope":{"enum":["call"]},"binding_id":{"type":"string","minLength":1},"kind":{"enum":["file","media","stream","card","modal","result"]}},"required":["id","scope","binding_id","kind"],"additionalProperties":false},"name":{"type":"string"},"media_type":{"type":"string"},"caption":{"type":"string"}},"required":["kind","resource_ref"],"additionalProperties":false}},"timestamp":{"type":"string"},"status":{"enum":["sent","received","updated","deleted","pending","failed"]},"role":{"enum":["user","assistant","system","tool"]}},"required":["id","room_id"],"additionalProperties":false}},"next_cursor":{"anyOf":[{"type":"string","minLength":1},{"type":"null"}]},"complete":{"type":"boolean"}},"required":["messages","next_cursor","complete"],"additionalProperties":false},{"type":"object","properties":{"resource_ref":{"type":"object","properties":{"id":{"type":"string","minLength":1},"scope":{"enum":["call"]},"binding_id":{"type":"string","minLength":1},"kind":{"enum":["file","media","stream","card","modal","result"]}},"required":["id","scope","binding_id","kind"],"additionalProperties":false}},"required":["resource_ref"],"additionalProperties":false}]}},"required":["operation","request_id","bridge_id","result"],"additionalProperties":false},{"type":"object","properties":{"operation":{"enum":["tool.list_threads"]},"request_id":{"type":"string","minLength":1},"bridge_id":{"type":"string","minLength":1},"result":{"oneOf":[{"type":"object","properties":{"threads":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string","minLength":1},"room_id":{"type":"string","minLength":1},"parent_message_id":{"anyOf":[{"type":"string","minLength":1},{"type":"null"}]},"name":{"type":"string"},"delivery_room_ref":{"anyOf":[{"type":"string","minLength":1},{"type":"null"}]}},"required":["id","room_id"],"additionalProperties":false}},"next_cursor":{"anyOf":[{"type":"string","minLength":1},{"type":"null"}]},"complete":{"type":"boolean"}},"required":["threads","next_cursor","complete"],"additionalProperties":false},{"type":"object","properties":{"resource_ref":{"type":"object","properties":{"id":{"type":"string","minLength":1},"scope":{"enum":["call"]},"binding_id":{"type":"string","minLength":1},"kind":{"enum":["file","media","stream","card","modal","result"]}},"required":["id","scope","binding_id","kind"],"additionalProperties":false}},"required":["resource_ref"],"additionalProperties":false}]}},"required":["operation","request_id","bridge_id","result"],"additionalProperties":false},{"type":"object","properties":{"operation":{"enum":["tool.lookup_participant"]},"request_id":{"type":"string","minLength":1},"bridge_id":{"type":"string","minLength":1},"result":{"oneOf":[{"type":"object","properties":{"id":{"type":"string","minLength":1},"username":{"type":"string"},"display_name":{"type":"string"},"is_bot":{"type":"boolean"},"is_self":{"type":"boolean"}},"required":["id"],"additionalProperties":false},{"type":"object","properties":{"resource_ref":{"type":"object","properties":{"id":{"type":"string","minLength":1},"scope":{"enum":["call"]},"binding_id":{"type":"string","minLength":1},"kind":{"enum":["file","media","stream","card","modal","result"]}},"required":["id","scope","binding_id","kind"],"additionalProperties":false}},"required":["resource_ref"],"additionalProperties":false}]}},"required":["operation","request_id","bridge_id","result"],"additionalProperties":false},{"type":"object","properties":{"operation":{"enum":["tool.lookup_user"]},"request_id":{"type":"string","minLength":1},"bridge_id":{"type":"string","minLength":1},"result":{"oneOf":[{"type":"object","properties":{"id":{"type":"string","minLength":1},"username":{"type":"string"},"display_name":{"type":"string"},"is_bot":{"type":"boolean"},"is_self":{"type":"boolean"}},"required":["id"],"additionalProperties":false},{"type":"object","properties":{"resource_ref":{"type":"object","properties":{"id":{"type":"string","minLength":1},"scope":{"enum":["call"]},"binding_id":{"type":"string","minLength":1},"kind":{"enum":["file","media","stream","card","modal","result"]}},"required":["id","scope","binding_id","kind"],"additionalProperties":false}},"required":["resource_ref"],"additionalProperties":false}]}},"required":["operation","request_id","bridge_id","result"],"additionalProperties":false},{"type":"object","properties":{"operation":{"enum":["tool.fetch_channel_metadata"]},"request_id":{"type":"string","minLength":1},"bridge_id":{"type":"string","minLength":1},"result":{"oneOf":[{"type":"object","properties":{"id":{"type":"string","minLength":1},"name":{"type":"string"},"kind":{"enum":["direct","group","channel","thread","unknown"]},"topic":{"type":"string"}},"required":["id"],"additionalProperties":false},{"type":"object","properties":{"resource_ref":{"type":"object","properties":{"id":{"type":"string","minLength":1},"scope":{"enum":["call"]},"binding_id":{"type":"string","minLength":1},"kind":{"enum":["file","media","stream","card","modal","result"]}},"required":["id","scope","binding_id","kind"],"additionalProperties":false}},"required":["resource_ref"],"additionalProperties":false}]}},"required":["operation","request_id","bridge_id","result"],"additionalProperties":false},{"type":"object","properties":{"operation":{"enum":["tool.post_message"]},"request_id":{"type":"string","minLength":1},"bridge_id":{"type":"string","minLength":1},"result":{"oneOf":[{"type":"object","properties":{"id":{"type":"string","minLength":1},"room_id":{"type":"string","minLength":1},"text":{"type":"string"},"sender":{"type":"object","properties":{"id":{"type":"string","minLength":1},"username":{"type":"string"},"display_name":{"type":"string"},"is_bot":{"type":"boolean"},"is_self":{"type":"boolean"}},"required":["id"],"additionalProperties":false},"thread_id":{"anyOf":[{"type":"string","minLength":1},{"type":"null"}]},"reply_to_id":{"anyOf":[{"type":"string","minLength":1},{"type":"null"}]},"media":{"type":"array","items":{"type":"object","properties":{"kind":{"enum":["image","audio","video","file"]},"resource_ref":{"type":"object","properties":{"id":{"type":"string","minLength":1},"scope":{"enum":["call"]},"binding_id":{"type":"string","minLength":1},"kind":{"enum":["file","media","stream","card","modal","result"]}},"required":["id","scope","binding_id","kind"],"additionalProperties":false},"name":{"type":"string"},"media_type":{"type":"string"},"caption":{"type":"string"}},"required":["kind","resource_ref"],"additionalProperties":false}},"timestamp":{"type":"string"},"status":{"enum":["sent","received","updated","deleted","pending","failed"]},"role":{"enum":["user","assistant","system","tool"]}},"required":["id","room_id"],"additionalProperties":false},{"type":"object","properties":{"resource_ref":{"type":"object","properties":{"id":{"type":"string","minLength":1},"scope":{"enum":["call"]},"binding_id":{"type":"string","minLength":1},"kind":{"enum":["file","media","stream","card","modal","result"]}},"required":["id","scope","binding_id","kind"],"additionalProperties":false}},"required":["resource_ref"],"additionalProperties":false}]}},"required":["operation","request_id","bridge_id","result"],"additionalProperties":false},{"type":"object","properties":{"operation":{"enum":["tool.post_channel_message"]},"request_id":{"type":"string","minLength":1},"bridge_id":{"type":"string","minLength":1},"result":{"oneOf":[{"type":"object","properties":{"id":{"type":"string","minLength":1},"room_id":{"type":"string","minLength":1},"text":{"type":"string"},"sender":{"type":"object","properties":{"id":{"type":"string","minLength":1},"username":{"type":"string"},"display_name":{"type":"string"},"is_bot":{"type":"boolean"},"is_self":{"type":"boolean"}},"required":["id"],"additionalProperties":false},"thread_id":{"anyOf":[{"type":"string","minLength":1},{"type":"null"}]},"reply_to_id":{"anyOf":[{"type":"string","minLength":1},{"type":"null"}]},"media":{"type":"array","items":{"type":"object","properties":{"kind":{"enum":["image","audio","video","file"]},"resource_ref":{"type":"object","properties":{"id":{"type":"string","minLength":1},"scope":{"enum":["call"]},"binding_id":{"type":"string","minLength":1},"kind":{"enum":["file","media","stream","card","modal","result"]}},"required":["id","scope","binding_id","kind"],"additionalProperties":false},"name":{"type":"string"},"media_type":{"type":"string"},"caption":{"type":"string"}},"required":["kind","resource_ref"],"additionalProperties":false}},"timestamp":{"type":"string"},"status":{"enum":["sent","received","updated","deleted","pending","failed"]},"role":{"enum":["user","assistant","system","tool"]}},"required":["id","room_id"],"additionalProperties":false},{"type":"object","properties":{"resource_ref":{"type":"object","properties":{"id":{"type":"string","minLength":1},"scope":{"enum":["call"]},"binding_id":{"type":"string","minLength":1},"kind":{"enum":["file","media","stream","card","modal","result"]}},"required":["id","scope","binding_id","kind"],"additionalProperties":false}},"required":["resource_ref"],"additionalProperties":false}]}},"required":["operation","request_id","bridge_id","result"],"additionalProperties":false},{"type":"object","properties":{"operation":{"enum":["tool.send_direct_message"]},"request_id":{"type":"string","minLength":1},"bridge_id":{"type":"string","minLength":1},"result":{"oneOf":[{"type":"object","properties":{"id":{"type":"string","minLength":1},"room_id":{"type":"string","minLength":1},"text":{"type":"string"},"sender":{"type":"object","properties":{"id":{"type":"string","minLength":1},"username":{"type":"string"},"display_name":{"type":"string"},"is_bot":{"type":"boolean"},"is_self":{"type":"boolean"}},"required":["id"],"additionalProperties":false},"thread_id":{"anyOf":[{"type":"string","minLength":1},{"type":"null"}]},"reply_to_id":{"anyOf":[{"type":"string","minLength":1},{"type":"null"}]},"media":{"type":"array","items":{"type":"object","properties":{"kind":{"enum":["image","audio","video","file"]},"resource_ref":{"type":"object","properties":{"id":{"type":"string","minLength":1},"scope":{"enum":["call"]},"binding_id":{"type":"string","minLength":1},"kind":{"enum":["file","media","stream","card","modal","result"]}},"required":["id","scope","binding_id","kind"],"additionalProperties":false},"name":{"type":"string"},"media_type":{"type":"string"},"caption":{"type":"string"}},"required":["kind","resource_ref"],"additionalProperties":false}},"timestamp":{"type":"string"},"status":{"enum":["sent","received","updated","deleted","pending","failed"]},"role":{"enum":["user","assistant","system","tool"]}},"required":["id","room_id"],"additionalProperties":false},{"type":"object","properties":{"resource_ref":{"type":"object","properties":{"id":{"type":"string","minLength":1},"scope":{"enum":["call"]},"binding_id":{"type":"string","minLength":1},"kind":{"enum":["file","media","stream","card","modal","result"]}},"required":["id","scope","binding_id","kind"],"additionalProperties":false}},"required":["resource_ref"],"additionalProperties":false}]}},"required":["operation","request_id","bridge_id","result"],"additionalProperties":false},{"type":"object","properties":{"operation":{"enum":["tool.start_typing"]},"request_id":{"type":"string","minLength":1},"bridge_id":{"type":"string","minLength":1},"result":{"oneOf":[{"type":"object","properties":{"acknowledged":{"type":"boolean"}},"required":["acknowledged"],"additionalProperties":false},{"type":"object","properties":{"resource_ref":{"type":"object","properties":{"id":{"type":"string","minLength":1},"scope":{"enum":["call"]},"binding_id":{"type":"string","minLength":1},"kind":{"enum":["file","media","stream","card","modal","result"]}},"required":["id","scope","binding_id","kind"],"additionalProperties":false}},"required":["resource_ref"],"additionalProperties":false}]}},"required":["operation","request_id","bridge_id","result"],"additionalProperties":false},{"type":"object","properties":{"operation":{"enum":["tool.edit_message"]},"request_id":{"type":"string","minLength":1},"bridge_id":{"type":"string","minLength":1},"result":{"oneOf":[{"type":"object","properties":{"id":{"type":"string","minLength":1},"room_id":{"type":"string","minLength":1},"text":{"type":"string"},"sender":{"type":"object","properties":{"id":{"type":"string","minLength":1},"username":{"type":"string"},"display_name":{"type":"string"},"is_bot":{"type":"boolean"},"is_self":{"type":"boolean"}},"required":["id"],"additionalProperties":false},"thread_id":{"anyOf":[{"type":"string","minLength":1},{"type":"null"}]},"reply_to_id":{"anyOf":[{"type":"string","minLength":1},{"type":"null"}]},"media":{"type":"array","items":{"type":"object","properties":{"kind":{"enum":["image","audio","video","file"]},"resource_ref":{"type":"object","properties":{"id":{"type":"string","minLength":1},"scope":{"enum":["call"]},"binding_id":{"type":"string","minLength":1},"kind":{"enum":["file","media","stream","card","modal","result"]}},"required":["id","scope","binding_id","kind"],"additionalProperties":false},"name":{"type":"string"},"media_type":{"type":"string"},"caption":{"type":"string"}},"required":["kind","resource_ref"],"additionalProperties":false}},"timestamp":{"type":"string"},"status":{"enum":["sent","received","updated","deleted","pending","failed"]},"role":{"enum":["user","assistant","system","tool"]}},"required":["id","room_id"],"additionalProperties":false},{"type":"object","properties":{"resource_ref":{"type":"object","properties":{"id":{"type":"string","minLength":1},"scope":{"enum":["call"]},"binding_id":{"type":"string","minLength":1},"kind":{"enum":["file","media","stream","card","modal","result"]}},"required":["id","scope","binding_id","kind"],"additionalProperties":false}},"required":["resource_ref"],"additionalProperties":false}]}},"required":["operation","request_id","bridge_id","result"],"additionalProperties":false},{"type":"object","properties":{"operation":{"enum":["tool.delete_message"]},"request_id":{"type":"string","minLength":1},"bridge_id":{"type":"string","minLength":1},"result":{"oneOf":[{"type":"object","properties":{"acknowledged":{"type":"boolean"}},"required":["acknowledged"],"additionalProperties":false},{"type":"object","properties":{"resource_ref":{"type":"object","properties":{"id":{"type":"string","minLength":1},"scope":{"enum":["call"]},"binding_id":{"type":"string","minLength":1},"kind":{"enum":["file","media","stream","card","modal","result"]}},"required":["id","scope","binding_id","kind"],"additionalProperties":false}},"required":["resource_ref"],"additionalProperties":false}]}},"required":["operation","request_id","bridge_id","result"],"additionalProperties":false},{"type":"object","properties":{"operation":{"enum":["tool.add_reaction"]},"request_id":{"type":"string","minLength":1},"bridge_id":{"type":"string","minLength":1},"result":{"oneOf":[{"type":"object","properties":{"acknowledged":{"type":"boolean"}},"required":["acknowledged"],"additionalProperties":false},{"type":"object","properties":{"resource_ref":{"type":"object","properties":{"id":{"type":"string","minLength":1},"scope":{"enum":["call"]},"binding_id":{"type":"string","minLength":1},"kind":{"enum":["file","media","stream","card","modal","result"]}},"required":["id","scope","binding_id","kind"],"additionalProperties":false}},"required":["resource_ref"],"additionalProperties":false}]}},"required":["operation","request_id","bridge_id","result"],"additionalProperties":false},{"type":"object","properties":{"operation":{"enum":["tool.remove_reaction"]},"request_id":{"type":"string","minLength":1},"bridge_id":{"type":"string","minLength":1},"result":{"oneOf":[{"type":"object","properties":{"acknowledged":{"type":"boolean"}},"required":["acknowledged"],"additionalProperties":false},{"type":"object","properties":{"resource_ref":{"type":"object","properties":{"id":{"type":"string","minLength":1},"scope":{"enum":["call"]},"binding_id":{"type":"string","minLength":1},"kind":{"enum":["file","media","stream","card","modal","result"]}},"required":["id","scope","binding_id","kind"],"additionalProperties":false}},"required":["resource_ref"],"additionalProperties":false}]}},"required":["operation","request_id","bridge_id","result"],"additionalProperties":false},{"type":"object","properties":{"operation":{"enum":["tool.ensure_subscription"]},"request_id":{"type":"string","minLength":1},"bridge_id":{"type":"string","minLength":1},"result":{"oneOf":[{"type":"object","properties":{"id":{"type":"string","minLength":1},"active":{"type":"boolean"},"items":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string","minLength":1},"active":{"type":"boolean"}},"required":["id"],"additionalProperties":false}},"acknowledged":{"type":"boolean"}},"additionalProperties":false},{"type":"object","properties":{"resource_ref":{"type":"object","properties":{"id":{"type":"string","minLength":1},"scope":{"enum":["call"]},"binding_id":{"type":"string","minLength":1},"kind":{"enum":["file","media","stream","card","modal","result"]}},"required":["id","scope","binding_id","kind"],"additionalProperties":false}},"required":["resource_ref"],"additionalProperties":false}]}},"required":["operation","request_id","bridge_id","result"],"additionalProperties":false},{"type":"object","properties":{"operation":{"enum":["tool.list_subscriptions"]},"request_id":{"type":"string","minLength":1},"bridge_id":{"type":"string","minLength":1},"result":{"oneOf":[{"type":"object","properties":{"id":{"type":"string","minLength":1},"active":{"type":"boolean"},"items":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string","minLength":1},"active":{"type":"boolean"}},"required":["id"],"additionalProperties":false}},"acknowledged":{"type":"boolean"}},"additionalProperties":false},{"type":"object","properties":{"resource_ref":{"type":"object","properties":{"id":{"type":"string","minLength":1},"scope":{"enum":["call"]},"binding_id":{"type":"string","minLength":1},"kind":{"enum":["file","media","stream","card","modal","result"]}},"required":["id","scope","binding_id","kind"],"additionalProperties":false}},"required":["resource_ref"],"additionalProperties":false}]}},"required":["operation","request_id","bridge_id","result"],"additionalProperties":false},{"type":"object","properties":{"operation":{"enum":["tool.delete_subscription"]},"request_id":{"type":"string","minLength":1},"bridge_id":{"type":"string","minLength":1},"result":{"oneOf":[{"type":"object","properties":{"id":{"type":"string","minLength":1},"active":{"type":"boolean"},"items":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string","minLength":1},"active":{"type":"boolean"}},"required":["id"],"additionalProperties":false}},"acknowledged":{"type":"boolean"}},"additionalProperties":false},{"type":"object","properties":{"resource_ref":{"type":"object","properties":{"id":{"type":"string","minLength":1},"scope":{"enum":["call"]},"binding_id":{"type":"string","minLength":1},"kind":{"enum":["file","media","stream","card","modal","result"]}},"required":["id","scope","binding_id","kind"],"additionalProperties":false}},"required":["resource_ref"],"additionalProperties":false}]}},"required":["operation","request_id","bridge_id","result"],"additionalProperties":false}]}|
+      Zoi.union([
+        Zoi.map(
+          %{
+            "operation" => Zoi.enum(["provider.send_message"]),
+            "request_id" => Zoi.string() |> Zoi.min(1),
+            "bridge_id" => Zoi.string() |> Zoi.min(1),
+            "result" =>
+              Zoi.union([
+                Zoi.map(
+                  %{
+                    "id" => Zoi.string() |> Zoi.min(1),
+                    "room_id" => Zoi.string() |> Zoi.min(1),
+                    "text" => Zoi.string() |> Zoi.optional(),
+                    "sender" =>
+                      Zoi.map(
+                        %{
+                          "id" => Zoi.string() |> Zoi.min(1),
+                          "username" => Zoi.string() |> Zoi.optional(),
+                          "display_name" => Zoi.string() |> Zoi.optional(),
+                          "is_bot" => Zoi.boolean() |> Zoi.optional(),
+                          "is_self" => Zoi.boolean() |> Zoi.optional()
+                        },
+                        strict: true
+                      )
+                      |> Zoi.optional(),
+                    "thread_id" =>
+                      Zoi.union([
+                        Zoi.string() |> Zoi.min(1),
+                        Zoi.null()
+                      ])
+                      |> Zoi.optional(),
+                    "reply_to_id" =>
+                      Zoi.union([
+                        Zoi.string() |> Zoi.min(1),
+                        Zoi.null()
+                      ])
+                      |> Zoi.optional(),
+                    "media" =>
+                      Zoi.array(
+                        Zoi.map(
+                          %{
+                            "kind" => Zoi.enum(["image", "audio", "video", "file"]),
+                            "resource_ref" =>
+                              Zoi.map(
+                                %{
+                                  "id" => Zoi.string() |> Zoi.min(1),
+                                  "scope" => Zoi.enum(["call"]),
+                                  "binding_id" => Zoi.string() |> Zoi.min(1),
+                                  "kind" => Zoi.enum(["file", "media", "stream", "card", "modal", "result"])
+                                },
+                                strict: true
+                              ),
+                            "name" => Zoi.string() |> Zoi.optional(),
+                            "media_type" => Zoi.string() |> Zoi.optional(),
+                            "caption" => Zoi.string() |> Zoi.optional()
+                          },
+                          strict: true
+                        )
+                      )
+                      |> Zoi.optional(),
+                    "timestamp" => Zoi.string() |> Zoi.optional(),
+                    "status" =>
+                      Zoi.enum([
+                        "sending",
+                        "sent",
+                        "delivered",
+                        "read",
+                        "failed",
+                        "received",
+                        "pending",
+                        "updated",
+                        "deleted"
+                      ])
+                      |> Zoi.optional(),
+                    "role" => Zoi.enum(["user", "assistant", "system", "tool"]) |> Zoi.optional()
+                  },
+                  strict: true
+                ),
+                Zoi.map(
+                  %{
+                    "resource_ref" =>
+                      Zoi.map(
+                        %{
+                          "id" => Zoi.string() |> Zoi.min(1),
+                          "scope" => Zoi.enum(["call"]),
+                          "binding_id" => Zoi.string() |> Zoi.min(1),
+                          "kind" => Zoi.enum(["file", "media", "stream", "card", "modal", "result"])
+                        },
+                        strict: true
+                      )
+                  },
+                  strict: true
+                )
+              ])
+          },
+          strict: true
+        ),
+        Zoi.map(
+          %{
+            "operation" => Zoi.enum(["provider.send_file"]),
+            "request_id" => Zoi.string() |> Zoi.min(1),
+            "bridge_id" => Zoi.string() |> Zoi.min(1),
+            "result" =>
+              Zoi.union([
+                Zoi.map(
+                  %{
+                    "id" => Zoi.string() |> Zoi.min(1),
+                    "room_id" => Zoi.string() |> Zoi.min(1),
+                    "text" => Zoi.string() |> Zoi.optional(),
+                    "sender" =>
+                      Zoi.map(
+                        %{
+                          "id" => Zoi.string() |> Zoi.min(1),
+                          "username" => Zoi.string() |> Zoi.optional(),
+                          "display_name" => Zoi.string() |> Zoi.optional(),
+                          "is_bot" => Zoi.boolean() |> Zoi.optional(),
+                          "is_self" => Zoi.boolean() |> Zoi.optional()
+                        },
+                        strict: true
+                      )
+                      |> Zoi.optional(),
+                    "thread_id" =>
+                      Zoi.union([
+                        Zoi.string() |> Zoi.min(1),
+                        Zoi.null()
+                      ])
+                      |> Zoi.optional(),
+                    "reply_to_id" =>
+                      Zoi.union([
+                        Zoi.string() |> Zoi.min(1),
+                        Zoi.null()
+                      ])
+                      |> Zoi.optional(),
+                    "media" =>
+                      Zoi.array(
+                        Zoi.map(
+                          %{
+                            "kind" => Zoi.enum(["image", "audio", "video", "file"]),
+                            "resource_ref" =>
+                              Zoi.map(
+                                %{
+                                  "id" => Zoi.string() |> Zoi.min(1),
+                                  "scope" => Zoi.enum(["call"]),
+                                  "binding_id" => Zoi.string() |> Zoi.min(1),
+                                  "kind" => Zoi.enum(["file", "media", "stream", "card", "modal", "result"])
+                                },
+                                strict: true
+                              ),
+                            "name" => Zoi.string() |> Zoi.optional(),
+                            "media_type" => Zoi.string() |> Zoi.optional(),
+                            "caption" => Zoi.string() |> Zoi.optional()
+                          },
+                          strict: true
+                        )
+                      )
+                      |> Zoi.optional(),
+                    "timestamp" => Zoi.string() |> Zoi.optional(),
+                    "status" =>
+                      Zoi.enum([
+                        "sending",
+                        "sent",
+                        "delivered",
+                        "read",
+                        "failed",
+                        "received",
+                        "pending",
+                        "updated",
+                        "deleted"
+                      ])
+                      |> Zoi.optional(),
+                    "role" => Zoi.enum(["user", "assistant", "system", "tool"]) |> Zoi.optional()
+                  },
+                  strict: true
+                ),
+                Zoi.map(
+                  %{
+                    "resource_ref" =>
+                      Zoi.map(
+                        %{
+                          "id" => Zoi.string() |> Zoi.min(1),
+                          "scope" => Zoi.enum(["call"]),
+                          "binding_id" => Zoi.string() |> Zoi.min(1),
+                          "kind" => Zoi.enum(["file", "media", "stream", "card", "modal", "result"])
+                        },
+                        strict: true
+                      )
+                  },
+                  strict: true
+                )
+              ])
+          },
+          strict: true
+        ),
+        Zoi.map(
+          %{
+            "operation" => Zoi.enum(["provider.post_message"]),
+            "request_id" => Zoi.string() |> Zoi.min(1),
+            "bridge_id" => Zoi.string() |> Zoi.min(1),
+            "result" =>
+              Zoi.union([
+                Zoi.map(
+                  %{
+                    "id" => Zoi.string() |> Zoi.min(1),
+                    "room_id" => Zoi.string() |> Zoi.min(1),
+                    "text" => Zoi.string() |> Zoi.optional(),
+                    "sender" =>
+                      Zoi.map(
+                        %{
+                          "id" => Zoi.string() |> Zoi.min(1),
+                          "username" => Zoi.string() |> Zoi.optional(),
+                          "display_name" => Zoi.string() |> Zoi.optional(),
+                          "is_bot" => Zoi.boolean() |> Zoi.optional(),
+                          "is_self" => Zoi.boolean() |> Zoi.optional()
+                        },
+                        strict: true
+                      )
+                      |> Zoi.optional(),
+                    "thread_id" =>
+                      Zoi.union([
+                        Zoi.string() |> Zoi.min(1),
+                        Zoi.null()
+                      ])
+                      |> Zoi.optional(),
+                    "reply_to_id" =>
+                      Zoi.union([
+                        Zoi.string() |> Zoi.min(1),
+                        Zoi.null()
+                      ])
+                      |> Zoi.optional(),
+                    "media" =>
+                      Zoi.array(
+                        Zoi.map(
+                          %{
+                            "kind" => Zoi.enum(["image", "audio", "video", "file"]),
+                            "resource_ref" =>
+                              Zoi.map(
+                                %{
+                                  "id" => Zoi.string() |> Zoi.min(1),
+                                  "scope" => Zoi.enum(["call"]),
+                                  "binding_id" => Zoi.string() |> Zoi.min(1),
+                                  "kind" => Zoi.enum(["file", "media", "stream", "card", "modal", "result"])
+                                },
+                                strict: true
+                              ),
+                            "name" => Zoi.string() |> Zoi.optional(),
+                            "media_type" => Zoi.string() |> Zoi.optional(),
+                            "caption" => Zoi.string() |> Zoi.optional()
+                          },
+                          strict: true
+                        )
+                      )
+                      |> Zoi.optional(),
+                    "timestamp" => Zoi.string() |> Zoi.optional(),
+                    "status" =>
+                      Zoi.enum([
+                        "sending",
+                        "sent",
+                        "delivered",
+                        "read",
+                        "failed",
+                        "received",
+                        "pending",
+                        "updated",
+                        "deleted"
+                      ])
+                      |> Zoi.optional(),
+                    "role" => Zoi.enum(["user", "assistant", "system", "tool"]) |> Zoi.optional()
+                  },
+                  strict: true
+                ),
+                Zoi.map(
+                  %{
+                    "resource_ref" =>
+                      Zoi.map(
+                        %{
+                          "id" => Zoi.string() |> Zoi.min(1),
+                          "scope" => Zoi.enum(["call"]),
+                          "binding_id" => Zoi.string() |> Zoi.min(1),
+                          "kind" => Zoi.enum(["file", "media", "stream", "card", "modal", "result"])
+                        },
+                        strict: true
+                      )
+                  },
+                  strict: true
+                )
+              ])
+          },
+          strict: true
+        ),
+        Zoi.map(
+          %{
+            "operation" => Zoi.enum(["provider.edit_message"]),
+            "request_id" => Zoi.string() |> Zoi.min(1),
+            "bridge_id" => Zoi.string() |> Zoi.min(1),
+            "result" =>
+              Zoi.union([
+                Zoi.map(
+                  %{
+                    "id" => Zoi.string() |> Zoi.min(1),
+                    "room_id" => Zoi.string() |> Zoi.min(1),
+                    "text" => Zoi.string() |> Zoi.optional(),
+                    "sender" =>
+                      Zoi.map(
+                        %{
+                          "id" => Zoi.string() |> Zoi.min(1),
+                          "username" => Zoi.string() |> Zoi.optional(),
+                          "display_name" => Zoi.string() |> Zoi.optional(),
+                          "is_bot" => Zoi.boolean() |> Zoi.optional(),
+                          "is_self" => Zoi.boolean() |> Zoi.optional()
+                        },
+                        strict: true
+                      )
+                      |> Zoi.optional(),
+                    "thread_id" =>
+                      Zoi.union([
+                        Zoi.string() |> Zoi.min(1),
+                        Zoi.null()
+                      ])
+                      |> Zoi.optional(),
+                    "reply_to_id" =>
+                      Zoi.union([
+                        Zoi.string() |> Zoi.min(1),
+                        Zoi.null()
+                      ])
+                      |> Zoi.optional(),
+                    "media" =>
+                      Zoi.array(
+                        Zoi.map(
+                          %{
+                            "kind" => Zoi.enum(["image", "audio", "video", "file"]),
+                            "resource_ref" =>
+                              Zoi.map(
+                                %{
+                                  "id" => Zoi.string() |> Zoi.min(1),
+                                  "scope" => Zoi.enum(["call"]),
+                                  "binding_id" => Zoi.string() |> Zoi.min(1),
+                                  "kind" => Zoi.enum(["file", "media", "stream", "card", "modal", "result"])
+                                },
+                                strict: true
+                              ),
+                            "name" => Zoi.string() |> Zoi.optional(),
+                            "media_type" => Zoi.string() |> Zoi.optional(),
+                            "caption" => Zoi.string() |> Zoi.optional()
+                          },
+                          strict: true
+                        )
+                      )
+                      |> Zoi.optional(),
+                    "timestamp" => Zoi.string() |> Zoi.optional(),
+                    "status" =>
+                      Zoi.enum([
+                        "sending",
+                        "sent",
+                        "delivered",
+                        "read",
+                        "failed",
+                        "received",
+                        "pending",
+                        "updated",
+                        "deleted"
+                      ])
+                      |> Zoi.optional(),
+                    "role" => Zoi.enum(["user", "assistant", "system", "tool"]) |> Zoi.optional()
+                  },
+                  strict: true
+                ),
+                Zoi.map(
+                  %{
+                    "resource_ref" =>
+                      Zoi.map(
+                        %{
+                          "id" => Zoi.string() |> Zoi.min(1),
+                          "scope" => Zoi.enum(["call"]),
+                          "binding_id" => Zoi.string() |> Zoi.min(1),
+                          "kind" => Zoi.enum(["file", "media", "stream", "card", "modal", "result"])
+                        },
+                        strict: true
+                      )
+                  },
+                  strict: true
+                )
+              ])
+          },
+          strict: true
+        ),
+        Zoi.map(
+          %{
+            "operation" => Zoi.enum(["provider.delete_message"]),
+            "request_id" => Zoi.string() |> Zoi.min(1),
+            "bridge_id" => Zoi.string() |> Zoi.min(1),
+            "result" =>
+              Zoi.union([
+                Zoi.map(
+                  %{
+                    "acknowledged" => Zoi.boolean()
+                  },
+                  strict: true
+                ),
+                Zoi.map(
+                  %{
+                    "resource_ref" =>
+                      Zoi.map(
+                        %{
+                          "id" => Zoi.string() |> Zoi.min(1),
+                          "scope" => Zoi.enum(["call"]),
+                          "binding_id" => Zoi.string() |> Zoi.min(1),
+                          "kind" => Zoi.enum(["file", "media", "stream", "card", "modal", "result"])
+                        },
+                        strict: true
+                      )
+                  },
+                  strict: true
+                )
+              ])
+          },
+          strict: true
+        ),
+        Zoi.map(
+          %{
+            "operation" => Zoi.enum(["provider.start_typing"]),
+            "request_id" => Zoi.string() |> Zoi.min(1),
+            "bridge_id" => Zoi.string() |> Zoi.min(1),
+            "result" =>
+              Zoi.union([
+                Zoi.map(
+                  %{
+                    "acknowledged" => Zoi.boolean()
+                  },
+                  strict: true
+                ),
+                Zoi.map(
+                  %{
+                    "resource_ref" =>
+                      Zoi.map(
+                        %{
+                          "id" => Zoi.string() |> Zoi.min(1),
+                          "scope" => Zoi.enum(["call"]),
+                          "binding_id" => Zoi.string() |> Zoi.min(1),
+                          "kind" => Zoi.enum(["file", "media", "stream", "card", "modal", "result"])
+                        },
+                        strict: true
+                      )
+                  },
+                  strict: true
+                )
+              ])
+          },
+          strict: true
+        ),
+        Zoi.map(
+          %{
+            "operation" => Zoi.enum(["provider.fetch_metadata"]),
+            "request_id" => Zoi.string() |> Zoi.min(1),
+            "bridge_id" => Zoi.string() |> Zoi.min(1),
+            "result" =>
+              Zoi.union([
+                Zoi.map(
+                  %{
+                    "id" => Zoi.string() |> Zoi.min(1),
+                    "name" => Zoi.string() |> Zoi.optional(),
+                    "kind" => Zoi.enum(["direct", "group", "channel", "thread", "unknown"]) |> Zoi.optional(),
+                    "topic" => Zoi.string() |> Zoi.optional()
+                  },
+                  strict: true
+                ),
+                Zoi.map(
+                  %{
+                    "resource_ref" =>
+                      Zoi.map(
+                        %{
+                          "id" => Zoi.string() |> Zoi.min(1),
+                          "scope" => Zoi.enum(["call"]),
+                          "binding_id" => Zoi.string() |> Zoi.min(1),
+                          "kind" => Zoi.enum(["file", "media", "stream", "card", "modal", "result"])
+                        },
+                        strict: true
+                      )
+                  },
+                  strict: true
+                )
+              ])
+          },
+          strict: true
+        ),
+        Zoi.map(
+          %{
+            "operation" => Zoi.enum(["provider.fetch_thread"]),
+            "request_id" => Zoi.string() |> Zoi.min(1),
+            "bridge_id" => Zoi.string() |> Zoi.min(1),
+            "result" =>
+              Zoi.union([
+                Zoi.map(
+                  %{
+                    "id" => Zoi.string() |> Zoi.min(1),
+                    "room_id" => Zoi.string() |> Zoi.min(1),
+                    "parent_message_id" =>
+                      Zoi.union([
+                        Zoi.string() |> Zoi.min(1),
+                        Zoi.null()
+                      ])
+                      |> Zoi.optional(),
+                    "name" => Zoi.string() |> Zoi.optional(),
+                    "delivery_room_ref" =>
+                      Zoi.union([
+                        Zoi.string() |> Zoi.min(1),
+                        Zoi.null()
+                      ])
+                      |> Zoi.optional()
+                  },
+                  strict: true
+                ),
+                Zoi.map(
+                  %{
+                    "resource_ref" =>
+                      Zoi.map(
+                        %{
+                          "id" => Zoi.string() |> Zoi.min(1),
+                          "scope" => Zoi.enum(["call"]),
+                          "binding_id" => Zoi.string() |> Zoi.min(1),
+                          "kind" => Zoi.enum(["file", "media", "stream", "card", "modal", "result"])
+                        },
+                        strict: true
+                      )
+                  },
+                  strict: true
+                )
+              ])
+          },
+          strict: true
+        ),
+        Zoi.map(
+          %{
+            "operation" => Zoi.enum(["provider.fetch_message"]),
+            "request_id" => Zoi.string() |> Zoi.min(1),
+            "bridge_id" => Zoi.string() |> Zoi.min(1),
+            "result" =>
+              Zoi.union([
+                Zoi.map(
+                  %{
+                    "id" => Zoi.string() |> Zoi.min(1),
+                    "room_id" => Zoi.string() |> Zoi.min(1),
+                    "text" => Zoi.string() |> Zoi.optional(),
+                    "sender" =>
+                      Zoi.map(
+                        %{
+                          "id" => Zoi.string() |> Zoi.min(1),
+                          "username" => Zoi.string() |> Zoi.optional(),
+                          "display_name" => Zoi.string() |> Zoi.optional(),
+                          "is_bot" => Zoi.boolean() |> Zoi.optional(),
+                          "is_self" => Zoi.boolean() |> Zoi.optional()
+                        },
+                        strict: true
+                      )
+                      |> Zoi.optional(),
+                    "thread_id" =>
+                      Zoi.union([
+                        Zoi.string() |> Zoi.min(1),
+                        Zoi.null()
+                      ])
+                      |> Zoi.optional(),
+                    "reply_to_id" =>
+                      Zoi.union([
+                        Zoi.string() |> Zoi.min(1),
+                        Zoi.null()
+                      ])
+                      |> Zoi.optional(),
+                    "media" =>
+                      Zoi.array(
+                        Zoi.map(
+                          %{
+                            "kind" => Zoi.enum(["image", "audio", "video", "file"]),
+                            "resource_ref" =>
+                              Zoi.map(
+                                %{
+                                  "id" => Zoi.string() |> Zoi.min(1),
+                                  "scope" => Zoi.enum(["call"]),
+                                  "binding_id" => Zoi.string() |> Zoi.min(1),
+                                  "kind" => Zoi.enum(["file", "media", "stream", "card", "modal", "result"])
+                                },
+                                strict: true
+                              ),
+                            "name" => Zoi.string() |> Zoi.optional(),
+                            "media_type" => Zoi.string() |> Zoi.optional(),
+                            "caption" => Zoi.string() |> Zoi.optional()
+                          },
+                          strict: true
+                        )
+                      )
+                      |> Zoi.optional(),
+                    "timestamp" => Zoi.string() |> Zoi.optional(),
+                    "status" =>
+                      Zoi.enum([
+                        "sending",
+                        "sent",
+                        "delivered",
+                        "read",
+                        "failed",
+                        "received",
+                        "pending",
+                        "updated",
+                        "deleted"
+                      ])
+                      |> Zoi.optional(),
+                    "role" => Zoi.enum(["user", "assistant", "system", "tool"]) |> Zoi.optional()
+                  },
+                  strict: true
+                ),
+                Zoi.map(
+                  %{
+                    "resource_ref" =>
+                      Zoi.map(
+                        %{
+                          "id" => Zoi.string() |> Zoi.min(1),
+                          "scope" => Zoi.enum(["call"]),
+                          "binding_id" => Zoi.string() |> Zoi.min(1),
+                          "kind" => Zoi.enum(["file", "media", "stream", "card", "modal", "result"])
+                        },
+                        strict: true
+                      )
+                  },
+                  strict: true
+                )
+              ])
+          },
+          strict: true
+        ),
+        Zoi.map(
+          %{
+            "operation" => Zoi.enum(["provider.get_user"]),
+            "request_id" => Zoi.string() |> Zoi.min(1),
+            "bridge_id" => Zoi.string() |> Zoi.min(1),
+            "result" =>
+              Zoi.union([
+                Zoi.map(
+                  %{
+                    "id" => Zoi.string() |> Zoi.min(1),
+                    "username" => Zoi.string() |> Zoi.optional(),
+                    "display_name" => Zoi.string() |> Zoi.optional(),
+                    "is_bot" => Zoi.boolean() |> Zoi.optional(),
+                    "is_self" => Zoi.boolean() |> Zoi.optional()
+                  },
+                  strict: true
+                ),
+                Zoi.map(
+                  %{
+                    "resource_ref" =>
+                      Zoi.map(
+                        %{
+                          "id" => Zoi.string() |> Zoi.min(1),
+                          "scope" => Zoi.enum(["call"]),
+                          "binding_id" => Zoi.string() |> Zoi.min(1),
+                          "kind" => Zoi.enum(["file", "media", "stream", "card", "modal", "result"])
+                        },
+                        strict: true
+                      )
+                  },
+                  strict: true
+                )
+              ])
+          },
+          strict: true
+        ),
+        Zoi.map(
+          %{
+            "operation" => Zoi.enum(["provider.fetch_subject"]),
+            "request_id" => Zoi.string() |> Zoi.min(1),
+            "bridge_id" => Zoi.string() |> Zoi.min(1),
+            "result" =>
+              Zoi.union([
+                Zoi.map(
+                  %{
+                    "id" => Zoi.string() |> Zoi.min(1),
+                    "kind" => Zoi.enum(["conversation", "thread", "message"]),
+                    "room_id" => Zoi.string() |> Zoi.min(1),
+                    "title" => Zoi.string() |> Zoi.optional()
+                  },
+                  strict: true
+                ),
+                Zoi.map(
+                  %{
+                    "resource_ref" =>
+                      Zoi.map(
+                        %{
+                          "id" => Zoi.string() |> Zoi.min(1),
+                          "scope" => Zoi.enum(["call"]),
+                          "binding_id" => Zoi.string() |> Zoi.min(1),
+                          "kind" => Zoi.enum(["file", "media", "stream", "card", "modal", "result"])
+                        },
+                        strict: true
+                      )
+                  },
+                  strict: true
+                )
+              ])
+          },
+          strict: true
+        ),
+        Zoi.map(
+          %{
+            "operation" => Zoi.enum(["provider.get_thread_participants"]),
+            "request_id" => Zoi.string() |> Zoi.min(1),
+            "bridge_id" => Zoi.string() |> Zoi.min(1),
+            "result" =>
+              Zoi.union([
+                Zoi.map(
+                  %{
+                    "participants" =>
+                      Zoi.array(
+                        Zoi.map(
+                          %{
+                            "id" => Zoi.string() |> Zoi.min(1),
+                            "username" => Zoi.string() |> Zoi.optional(),
+                            "display_name" => Zoi.string() |> Zoi.optional(),
+                            "is_bot" => Zoi.boolean() |> Zoi.optional(),
+                            "is_self" => Zoi.boolean() |> Zoi.optional()
+                          },
+                          strict: true
+                        )
+                      ),
+                    "complete" => Zoi.boolean(),
+                    "scope" => Zoi.enum(["conversation", "thread", "observed"]),
+                    "next_cursor" =>
+                      Zoi.union([
+                        Zoi.string() |> Zoi.min(1),
+                        Zoi.null()
+                      ])
+                  },
+                  strict: true
+                ),
+                Zoi.map(
+                  %{
+                    "resource_ref" =>
+                      Zoi.map(
+                        %{
+                          "id" => Zoi.string() |> Zoi.min(1),
+                          "scope" => Zoi.enum(["call"]),
+                          "binding_id" => Zoi.string() |> Zoi.min(1),
+                          "kind" => Zoi.enum(["file", "media", "stream", "card", "modal", "result"])
+                        },
+                        strict: true
+                      )
+                  },
+                  strict: true
+                )
+              ])
+          },
+          strict: true
+        ),
+        Zoi.map(
+          %{
+            "operation" => Zoi.enum(["provider.mark_as_read"]),
+            "request_id" => Zoi.string() |> Zoi.min(1),
+            "bridge_id" => Zoi.string() |> Zoi.min(1),
+            "result" =>
+              Zoi.union([
+                Zoi.map(
+                  %{
+                    "acknowledged" => Zoi.boolean()
+                  },
+                  strict: true
+                ),
+                Zoi.map(
+                  %{
+                    "resource_ref" =>
+                      Zoi.map(
+                        %{
+                          "id" => Zoi.string() |> Zoi.min(1),
+                          "scope" => Zoi.enum(["call"]),
+                          "binding_id" => Zoi.string() |> Zoi.min(1),
+                          "kind" => Zoi.enum(["file", "media", "stream", "card", "modal", "result"])
+                        },
+                        strict: true
+                      )
+                  },
+                  strict: true
+                )
+              ])
+          },
+          strict: true
+        ),
+        Zoi.map(
+          %{
+            "operation" => Zoi.enum(["provider.fetch_media"]),
+            "request_id" => Zoi.string() |> Zoi.min(1),
+            "bridge_id" => Zoi.string() |> Zoi.min(1),
+            "result" =>
+              Zoi.map(
+                %{
+                  "resource_ref" =>
+                    Zoi.map(
+                      %{
+                        "id" => Zoi.string() |> Zoi.min(1),
+                        "scope" => Zoi.enum(["call"]),
+                        "binding_id" => Zoi.string() |> Zoi.min(1),
+                        "kind" => Zoi.enum(["file", "media", "stream", "card", "modal", "result"])
+                      },
+                      strict: true
+                    )
+                },
+                strict: true
+              )
+          },
+          strict: true
+        ),
+        Zoi.map(
+          %{
+            "operation" => Zoi.enum(["provider.add_reaction"]),
+            "request_id" => Zoi.string() |> Zoi.min(1),
+            "bridge_id" => Zoi.string() |> Zoi.min(1),
+            "result" =>
+              Zoi.union([
+                Zoi.map(
+                  %{
+                    "acknowledged" => Zoi.boolean()
+                  },
+                  strict: true
+                ),
+                Zoi.map(
+                  %{
+                    "resource_ref" =>
+                      Zoi.map(
+                        %{
+                          "id" => Zoi.string() |> Zoi.min(1),
+                          "scope" => Zoi.enum(["call"]),
+                          "binding_id" => Zoi.string() |> Zoi.min(1),
+                          "kind" => Zoi.enum(["file", "media", "stream", "card", "modal", "result"])
+                        },
+                        strict: true
+                      )
+                  },
+                  strict: true
+                )
+              ])
+          },
+          strict: true
+        ),
+        Zoi.map(
+          %{
+            "operation" => Zoi.enum(["provider.remove_reaction"]),
+            "request_id" => Zoi.string() |> Zoi.min(1),
+            "bridge_id" => Zoi.string() |> Zoi.min(1),
+            "result" =>
+              Zoi.union([
+                Zoi.map(
+                  %{
+                    "acknowledged" => Zoi.boolean()
+                  },
+                  strict: true
+                ),
+                Zoi.map(
+                  %{
+                    "resource_ref" =>
+                      Zoi.map(
+                        %{
+                          "id" => Zoi.string() |> Zoi.min(1),
+                          "scope" => Zoi.enum(["call"]),
+                          "binding_id" => Zoi.string() |> Zoi.min(1),
+                          "kind" => Zoi.enum(["file", "media", "stream", "card", "modal", "result"])
+                        },
+                        strict: true
+                      )
+                  },
+                  strict: true
+                )
+              ])
+          },
+          strict: true
+        ),
+        Zoi.map(
+          %{
+            "operation" => Zoi.enum(["provider.post_ephemeral"]),
+            "request_id" => Zoi.string() |> Zoi.min(1),
+            "bridge_id" => Zoi.string() |> Zoi.min(1),
+            "result" =>
+              Zoi.union([
+                Zoi.map(
+                  %{
+                    "id" => Zoi.string() |> Zoi.min(1),
+                    "room_id" => Zoi.string() |> Zoi.min(1),
+                    "text" => Zoi.string() |> Zoi.optional(),
+                    "sender" =>
+                      Zoi.map(
+                        %{
+                          "id" => Zoi.string() |> Zoi.min(1),
+                          "username" => Zoi.string() |> Zoi.optional(),
+                          "display_name" => Zoi.string() |> Zoi.optional(),
+                          "is_bot" => Zoi.boolean() |> Zoi.optional(),
+                          "is_self" => Zoi.boolean() |> Zoi.optional()
+                        },
+                        strict: true
+                      )
+                      |> Zoi.optional(),
+                    "thread_id" =>
+                      Zoi.union([
+                        Zoi.string() |> Zoi.min(1),
+                        Zoi.null()
+                      ])
+                      |> Zoi.optional(),
+                    "reply_to_id" =>
+                      Zoi.union([
+                        Zoi.string() |> Zoi.min(1),
+                        Zoi.null()
+                      ])
+                      |> Zoi.optional(),
+                    "media" =>
+                      Zoi.array(
+                        Zoi.map(
+                          %{
+                            "kind" => Zoi.enum(["image", "audio", "video", "file"]),
+                            "resource_ref" =>
+                              Zoi.map(
+                                %{
+                                  "id" => Zoi.string() |> Zoi.min(1),
+                                  "scope" => Zoi.enum(["call"]),
+                                  "binding_id" => Zoi.string() |> Zoi.min(1),
+                                  "kind" => Zoi.enum(["file", "media", "stream", "card", "modal", "result"])
+                                },
+                                strict: true
+                              ),
+                            "name" => Zoi.string() |> Zoi.optional(),
+                            "media_type" => Zoi.string() |> Zoi.optional(),
+                            "caption" => Zoi.string() |> Zoi.optional()
+                          },
+                          strict: true
+                        )
+                      )
+                      |> Zoi.optional(),
+                    "timestamp" => Zoi.string() |> Zoi.optional(),
+                    "status" =>
+                      Zoi.enum([
+                        "sending",
+                        "sent",
+                        "delivered",
+                        "read",
+                        "failed",
+                        "received",
+                        "pending",
+                        "updated",
+                        "deleted"
+                      ])
+                      |> Zoi.optional(),
+                    "role" => Zoi.enum(["user", "assistant", "system", "tool"]) |> Zoi.optional()
+                  },
+                  strict: true
+                ),
+                Zoi.map(
+                  %{
+                    "resource_ref" =>
+                      Zoi.map(
+                        %{
+                          "id" => Zoi.string() |> Zoi.min(1),
+                          "scope" => Zoi.enum(["call"]),
+                          "binding_id" => Zoi.string() |> Zoi.min(1),
+                          "kind" => Zoi.enum(["file", "media", "stream", "card", "modal", "result"])
+                        },
+                        strict: true
+                      )
+                  },
+                  strict: true
+                )
+              ])
+          },
+          strict: true
+        ),
+        Zoi.map(
+          %{
+            "operation" => Zoi.enum(["provider.post_channel_message"]),
+            "request_id" => Zoi.string() |> Zoi.min(1),
+            "bridge_id" => Zoi.string() |> Zoi.min(1),
+            "result" =>
+              Zoi.union([
+                Zoi.map(
+                  %{
+                    "id" => Zoi.string() |> Zoi.min(1),
+                    "room_id" => Zoi.string() |> Zoi.min(1),
+                    "text" => Zoi.string() |> Zoi.optional(),
+                    "sender" =>
+                      Zoi.map(
+                        %{
+                          "id" => Zoi.string() |> Zoi.min(1),
+                          "username" => Zoi.string() |> Zoi.optional(),
+                          "display_name" => Zoi.string() |> Zoi.optional(),
+                          "is_bot" => Zoi.boolean() |> Zoi.optional(),
+                          "is_self" => Zoi.boolean() |> Zoi.optional()
+                        },
+                        strict: true
+                      )
+                      |> Zoi.optional(),
+                    "thread_id" =>
+                      Zoi.union([
+                        Zoi.string() |> Zoi.min(1),
+                        Zoi.null()
+                      ])
+                      |> Zoi.optional(),
+                    "reply_to_id" =>
+                      Zoi.union([
+                        Zoi.string() |> Zoi.min(1),
+                        Zoi.null()
+                      ])
+                      |> Zoi.optional(),
+                    "media" =>
+                      Zoi.array(
+                        Zoi.map(
+                          %{
+                            "kind" => Zoi.enum(["image", "audio", "video", "file"]),
+                            "resource_ref" =>
+                              Zoi.map(
+                                %{
+                                  "id" => Zoi.string() |> Zoi.min(1),
+                                  "scope" => Zoi.enum(["call"]),
+                                  "binding_id" => Zoi.string() |> Zoi.min(1),
+                                  "kind" => Zoi.enum(["file", "media", "stream", "card", "modal", "result"])
+                                },
+                                strict: true
+                              ),
+                            "name" => Zoi.string() |> Zoi.optional(),
+                            "media_type" => Zoi.string() |> Zoi.optional(),
+                            "caption" => Zoi.string() |> Zoi.optional()
+                          },
+                          strict: true
+                        )
+                      )
+                      |> Zoi.optional(),
+                    "timestamp" => Zoi.string() |> Zoi.optional(),
+                    "status" =>
+                      Zoi.enum([
+                        "sending",
+                        "sent",
+                        "delivered",
+                        "read",
+                        "failed",
+                        "received",
+                        "pending",
+                        "updated",
+                        "deleted"
+                      ])
+                      |> Zoi.optional(),
+                    "role" => Zoi.enum(["user", "assistant", "system", "tool"]) |> Zoi.optional()
+                  },
+                  strict: true
+                ),
+                Zoi.map(
+                  %{
+                    "resource_ref" =>
+                      Zoi.map(
+                        %{
+                          "id" => Zoi.string() |> Zoi.min(1),
+                          "scope" => Zoi.enum(["call"]),
+                          "binding_id" => Zoi.string() |> Zoi.min(1),
+                          "kind" => Zoi.enum(["file", "media", "stream", "card", "modal", "result"])
+                        },
+                        strict: true
+                      )
+                  },
+                  strict: true
+                )
+              ])
+          },
+          strict: true
+        ),
+        Zoi.map(
+          %{
+            "operation" => Zoi.enum(["provider.stream"]),
+            "request_id" => Zoi.string() |> Zoi.min(1),
+            "bridge_id" => Zoi.string() |> Zoi.min(1),
+            "result" =>
+              Zoi.union([
+                Zoi.map(
+                  %{
+                    "id" => Zoi.string() |> Zoi.min(1),
+                    "room_id" => Zoi.string() |> Zoi.min(1),
+                    "text" => Zoi.string() |> Zoi.optional(),
+                    "sender" =>
+                      Zoi.map(
+                        %{
+                          "id" => Zoi.string() |> Zoi.min(1),
+                          "username" => Zoi.string() |> Zoi.optional(),
+                          "display_name" => Zoi.string() |> Zoi.optional(),
+                          "is_bot" => Zoi.boolean() |> Zoi.optional(),
+                          "is_self" => Zoi.boolean() |> Zoi.optional()
+                        },
+                        strict: true
+                      )
+                      |> Zoi.optional(),
+                    "thread_id" =>
+                      Zoi.union([
+                        Zoi.string() |> Zoi.min(1),
+                        Zoi.null()
+                      ])
+                      |> Zoi.optional(),
+                    "reply_to_id" =>
+                      Zoi.union([
+                        Zoi.string() |> Zoi.min(1),
+                        Zoi.null()
+                      ])
+                      |> Zoi.optional(),
+                    "media" =>
+                      Zoi.array(
+                        Zoi.map(
+                          %{
+                            "kind" => Zoi.enum(["image", "audio", "video", "file"]),
+                            "resource_ref" =>
+                              Zoi.map(
+                                %{
+                                  "id" => Zoi.string() |> Zoi.min(1),
+                                  "scope" => Zoi.enum(["call"]),
+                                  "binding_id" => Zoi.string() |> Zoi.min(1),
+                                  "kind" => Zoi.enum(["file", "media", "stream", "card", "modal", "result"])
+                                },
+                                strict: true
+                              ),
+                            "name" => Zoi.string() |> Zoi.optional(),
+                            "media_type" => Zoi.string() |> Zoi.optional(),
+                            "caption" => Zoi.string() |> Zoi.optional()
+                          },
+                          strict: true
+                        )
+                      )
+                      |> Zoi.optional(),
+                    "timestamp" => Zoi.string() |> Zoi.optional(),
+                    "status" =>
+                      Zoi.enum([
+                        "sending",
+                        "sent",
+                        "delivered",
+                        "read",
+                        "failed",
+                        "received",
+                        "pending",
+                        "updated",
+                        "deleted"
+                      ])
+                      |> Zoi.optional(),
+                    "role" => Zoi.enum(["user", "assistant", "system", "tool"]) |> Zoi.optional()
+                  },
+                  strict: true
+                ),
+                Zoi.map(
+                  %{
+                    "resource_ref" =>
+                      Zoi.map(
+                        %{
+                          "id" => Zoi.string() |> Zoi.min(1),
+                          "scope" => Zoi.enum(["call"]),
+                          "binding_id" => Zoi.string() |> Zoi.min(1),
+                          "kind" => Zoi.enum(["file", "media", "stream", "card", "modal", "result"])
+                        },
+                        strict: true
+                      )
+                  },
+                  strict: true
+                )
+              ])
+          },
+          strict: true
+        ),
+        Zoi.map(
+          %{
+            "operation" => Zoi.enum(["provider.open_modal"]),
+            "request_id" => Zoi.string() |> Zoi.min(1),
+            "bridge_id" => Zoi.string() |> Zoi.min(1),
+            "result" =>
+              Zoi.union([
+                Zoi.map(
+                  %{
+                    "id" => Zoi.string() |> Zoi.min(1) |> Zoi.optional(),
+                    "opened" => Zoi.boolean()
+                  },
+                  strict: true
+                ),
+                Zoi.map(
+                  %{
+                    "resource_ref" =>
+                      Zoi.map(
+                        %{
+                          "id" => Zoi.string() |> Zoi.min(1),
+                          "scope" => Zoi.enum(["call"]),
+                          "binding_id" => Zoi.string() |> Zoi.min(1),
+                          "kind" => Zoi.enum(["file", "media", "stream", "card", "modal", "result"])
+                        },
+                        strict: true
+                      )
+                  },
+                  strict: true
+                )
+              ])
+          },
+          strict: true
+        ),
+        Zoi.map(
+          %{
+            "operation" => Zoi.enum(["provider.load_options"]),
+            "request_id" => Zoi.string() |> Zoi.min(1),
+            "bridge_id" => Zoi.string() |> Zoi.min(1),
+            "result" =>
+              Zoi.union([
+                Zoi.map(
+                  %{
+                    "options" =>
+                      Zoi.array(
+                        Zoi.map(
+                          %{
+                            "label" => Zoi.string(),
+                            "value" => Zoi.string(),
+                            "description" => Zoi.string() |> Zoi.optional(),
+                            "url" => Zoi.string() |> Zoi.optional()
+                          },
+                          strict: true
+                        )
+                      ),
+                    "option_groups" =>
+                      Zoi.array(
+                        Zoi.map(
+                          %{
+                            "label" => Zoi.string(),
+                            "options" =>
+                              Zoi.array(
+                                Zoi.map(
+                                  %{
+                                    "label" => Zoi.string(),
+                                    "value" => Zoi.string(),
+                                    "description" => Zoi.string() |> Zoi.optional(),
+                                    "url" => Zoi.string() |> Zoi.optional()
+                                  },
+                                  strict: true
+                                )
+                              )
+                          },
+                          strict: true
+                        )
+                      )
+                      |> Zoi.optional(),
+                    "complete" => Zoi.boolean()
+                  },
+                  strict: true
+                ),
+                Zoi.map(
+                  %{
+                    "resource_ref" =>
+                      Zoi.map(
+                        %{
+                          "id" => Zoi.string() |> Zoi.min(1),
+                          "scope" => Zoi.enum(["call"]),
+                          "binding_id" => Zoi.string() |> Zoi.min(1),
+                          "kind" => Zoi.enum(["file", "media", "stream", "card", "modal", "result"])
+                        },
+                        strict: true
+                      )
+                  },
+                  strict: true
+                )
+              ])
+          },
+          strict: true
+        ),
+        Zoi.map(
+          %{
+            "operation" => Zoi.enum(["provider.fetch_messages"]),
+            "request_id" => Zoi.string() |> Zoi.min(1),
+            "bridge_id" => Zoi.string() |> Zoi.min(1),
+            "result" =>
+              Zoi.union([
+                Zoi.map(
+                  %{
+                    "messages" =>
+                      Zoi.array(
+                        Zoi.map(
+                          %{
+                            "id" => Zoi.string() |> Zoi.min(1),
+                            "room_id" => Zoi.string() |> Zoi.min(1),
+                            "text" => Zoi.string() |> Zoi.optional(),
+                            "sender" =>
+                              Zoi.map(
+                                %{
+                                  "id" => Zoi.string() |> Zoi.min(1),
+                                  "username" => Zoi.string() |> Zoi.optional(),
+                                  "display_name" => Zoi.string() |> Zoi.optional(),
+                                  "is_bot" => Zoi.boolean() |> Zoi.optional(),
+                                  "is_self" => Zoi.boolean() |> Zoi.optional()
+                                },
+                                strict: true
+                              )
+                              |> Zoi.optional(),
+                            "thread_id" =>
+                              Zoi.union([
+                                Zoi.string() |> Zoi.min(1),
+                                Zoi.null()
+                              ])
+                              |> Zoi.optional(),
+                            "reply_to_id" =>
+                              Zoi.union([
+                                Zoi.string() |> Zoi.min(1),
+                                Zoi.null()
+                              ])
+                              |> Zoi.optional(),
+                            "media" =>
+                              Zoi.array(
+                                Zoi.map(
+                                  %{
+                                    "kind" => Zoi.enum(["image", "audio", "video", "file"]),
+                                    "resource_ref" =>
+                                      Zoi.map(
+                                        %{
+                                          "id" => Zoi.string() |> Zoi.min(1),
+                                          "scope" => Zoi.enum(["call"]),
+                                          "binding_id" => Zoi.string() |> Zoi.min(1),
+                                          "kind" => Zoi.enum(["file", "media", "stream", "card", "modal", "result"])
+                                        },
+                                        strict: true
+                                      ),
+                                    "name" => Zoi.string() |> Zoi.optional(),
+                                    "media_type" => Zoi.string() |> Zoi.optional(),
+                                    "caption" => Zoi.string() |> Zoi.optional()
+                                  },
+                                  strict: true
+                                )
+                              )
+                              |> Zoi.optional(),
+                            "timestamp" => Zoi.string() |> Zoi.optional(),
+                            "status" =>
+                              Zoi.enum([
+                                "sending",
+                                "sent",
+                                "delivered",
+                                "read",
+                                "failed",
+                                "received",
+                                "pending",
+                                "updated",
+                                "deleted"
+                              ])
+                              |> Zoi.optional(),
+                            "role" => Zoi.enum(["user", "assistant", "system", "tool"]) |> Zoi.optional()
+                          },
+                          strict: true
+                        )
+                      ),
+                    "next_cursor" =>
+                      Zoi.union([
+                        Zoi.string() |> Zoi.min(1),
+                        Zoi.null()
+                      ]),
+                    "complete" => Zoi.boolean()
+                  },
+                  strict: true
+                ),
+                Zoi.map(
+                  %{
+                    "resource_ref" =>
+                      Zoi.map(
+                        %{
+                          "id" => Zoi.string() |> Zoi.min(1),
+                          "scope" => Zoi.enum(["call"]),
+                          "binding_id" => Zoi.string() |> Zoi.min(1),
+                          "kind" => Zoi.enum(["file", "media", "stream", "card", "modal", "result"])
+                        },
+                        strict: true
+                      )
+                  },
+                  strict: true
+                )
+              ])
+          },
+          strict: true
+        ),
+        Zoi.map(
+          %{
+            "operation" => Zoi.enum(["provider.fetch_channel_messages"]),
+            "request_id" => Zoi.string() |> Zoi.min(1),
+            "bridge_id" => Zoi.string() |> Zoi.min(1),
+            "result" =>
+              Zoi.union([
+                Zoi.map(
+                  %{
+                    "messages" =>
+                      Zoi.array(
+                        Zoi.map(
+                          %{
+                            "id" => Zoi.string() |> Zoi.min(1),
+                            "room_id" => Zoi.string() |> Zoi.min(1),
+                            "text" => Zoi.string() |> Zoi.optional(),
+                            "sender" =>
+                              Zoi.map(
+                                %{
+                                  "id" => Zoi.string() |> Zoi.min(1),
+                                  "username" => Zoi.string() |> Zoi.optional(),
+                                  "display_name" => Zoi.string() |> Zoi.optional(),
+                                  "is_bot" => Zoi.boolean() |> Zoi.optional(),
+                                  "is_self" => Zoi.boolean() |> Zoi.optional()
+                                },
+                                strict: true
+                              )
+                              |> Zoi.optional(),
+                            "thread_id" =>
+                              Zoi.union([
+                                Zoi.string() |> Zoi.min(1),
+                                Zoi.null()
+                              ])
+                              |> Zoi.optional(),
+                            "reply_to_id" =>
+                              Zoi.union([
+                                Zoi.string() |> Zoi.min(1),
+                                Zoi.null()
+                              ])
+                              |> Zoi.optional(),
+                            "media" =>
+                              Zoi.array(
+                                Zoi.map(
+                                  %{
+                                    "kind" => Zoi.enum(["image", "audio", "video", "file"]),
+                                    "resource_ref" =>
+                                      Zoi.map(
+                                        %{
+                                          "id" => Zoi.string() |> Zoi.min(1),
+                                          "scope" => Zoi.enum(["call"]),
+                                          "binding_id" => Zoi.string() |> Zoi.min(1),
+                                          "kind" => Zoi.enum(["file", "media", "stream", "card", "modal", "result"])
+                                        },
+                                        strict: true
+                                      ),
+                                    "name" => Zoi.string() |> Zoi.optional(),
+                                    "media_type" => Zoi.string() |> Zoi.optional(),
+                                    "caption" => Zoi.string() |> Zoi.optional()
+                                  },
+                                  strict: true
+                                )
+                              )
+                              |> Zoi.optional(),
+                            "timestamp" => Zoi.string() |> Zoi.optional(),
+                            "status" =>
+                              Zoi.enum([
+                                "sending",
+                                "sent",
+                                "delivered",
+                                "read",
+                                "failed",
+                                "received",
+                                "pending",
+                                "updated",
+                                "deleted"
+                              ])
+                              |> Zoi.optional(),
+                            "role" => Zoi.enum(["user", "assistant", "system", "tool"]) |> Zoi.optional()
+                          },
+                          strict: true
+                        )
+                      ),
+                    "next_cursor" =>
+                      Zoi.union([
+                        Zoi.string() |> Zoi.min(1),
+                        Zoi.null()
+                      ]),
+                    "complete" => Zoi.boolean()
+                  },
+                  strict: true
+                ),
+                Zoi.map(
+                  %{
+                    "resource_ref" =>
+                      Zoi.map(
+                        %{
+                          "id" => Zoi.string() |> Zoi.min(1),
+                          "scope" => Zoi.enum(["call"]),
+                          "binding_id" => Zoi.string() |> Zoi.min(1),
+                          "kind" => Zoi.enum(["file", "media", "stream", "card", "modal", "result"])
+                        },
+                        strict: true
+                      )
+                  },
+                  strict: true
+                )
+              ])
+          },
+          strict: true
+        ),
+        Zoi.map(
+          %{
+            "operation" => Zoi.enum(["provider.list_threads"]),
+            "request_id" => Zoi.string() |> Zoi.min(1),
+            "bridge_id" => Zoi.string() |> Zoi.min(1),
+            "result" =>
+              Zoi.union([
+                Zoi.map(
+                  %{
+                    "threads" =>
+                      Zoi.array(
+                        Zoi.map(
+                          %{
+                            "id" => Zoi.string() |> Zoi.min(1),
+                            "room_id" => Zoi.string() |> Zoi.min(1),
+                            "parent_message_id" =>
+                              Zoi.union([
+                                Zoi.string() |> Zoi.min(1),
+                                Zoi.null()
+                              ])
+                              |> Zoi.optional(),
+                            "name" => Zoi.string() |> Zoi.optional(),
+                            "delivery_room_ref" =>
+                              Zoi.union([
+                                Zoi.string() |> Zoi.min(1),
+                                Zoi.null()
+                              ])
+                              |> Zoi.optional()
+                          },
+                          strict: true
+                        )
+                      ),
+                    "next_cursor" =>
+                      Zoi.union([
+                        Zoi.string() |> Zoi.min(1),
+                        Zoi.null()
+                      ]),
+                    "complete" => Zoi.boolean()
+                  },
+                  strict: true
+                ),
+                Zoi.map(
+                  %{
+                    "resource_ref" =>
+                      Zoi.map(
+                        %{
+                          "id" => Zoi.string() |> Zoi.min(1),
+                          "scope" => Zoi.enum(["call"]),
+                          "binding_id" => Zoi.string() |> Zoi.min(1),
+                          "kind" => Zoi.enum(["file", "media", "stream", "card", "modal", "result"])
+                        },
+                        strict: true
+                      )
+                  },
+                  strict: true
+                )
+              ])
+          },
+          strict: true
+        ),
+        Zoi.map(
+          %{
+            "operation" => Zoi.enum(["provider.open_thread"]),
+            "request_id" => Zoi.string() |> Zoi.min(1),
+            "bridge_id" => Zoi.string() |> Zoi.min(1),
+            "result" =>
+              Zoi.union([
+                Zoi.map(
+                  %{
+                    "id" => Zoi.string() |> Zoi.min(1),
+                    "room_id" => Zoi.string() |> Zoi.min(1),
+                    "parent_message_id" =>
+                      Zoi.union([
+                        Zoi.string() |> Zoi.min(1),
+                        Zoi.null()
+                      ])
+                      |> Zoi.optional(),
+                    "name" => Zoi.string() |> Zoi.optional(),
+                    "delivery_room_ref" =>
+                      Zoi.union([
+                        Zoi.string() |> Zoi.min(1),
+                        Zoi.null()
+                      ])
+                      |> Zoi.optional()
+                  },
+                  strict: true
+                ),
+                Zoi.map(
+                  %{
+                    "resource_ref" =>
+                      Zoi.map(
+                        %{
+                          "id" => Zoi.string() |> Zoi.min(1),
+                          "scope" => Zoi.enum(["call"]),
+                          "binding_id" => Zoi.string() |> Zoi.min(1),
+                          "kind" => Zoi.enum(["file", "media", "stream", "card", "modal", "result"])
+                        },
+                        strict: true
+                      )
+                  },
+                  strict: true
+                )
+              ])
+          },
+          strict: true
+        ),
+        Zoi.map(
+          %{
+            "operation" => Zoi.enum(["provider.open_dm"]),
+            "request_id" => Zoi.string() |> Zoi.min(1),
+            "bridge_id" => Zoi.string() |> Zoi.min(1),
+            "result" =>
+              Zoi.union([
+                Zoi.map(
+                  %{
+                    "id" => Zoi.string() |> Zoi.min(1),
+                    "name" => Zoi.string() |> Zoi.optional(),
+                    "kind" => Zoi.enum(["direct", "group", "channel", "thread", "unknown"]) |> Zoi.optional(),
+                    "topic" => Zoi.string() |> Zoi.optional()
+                  },
+                  strict: true
+                ),
+                Zoi.map(
+                  %{
+                    "resource_ref" =>
+                      Zoi.map(
+                        %{
+                          "id" => Zoi.string() |> Zoi.min(1),
+                          "scope" => Zoi.enum(["call"]),
+                          "binding_id" => Zoi.string() |> Zoi.min(1),
+                          "kind" => Zoi.enum(["file", "media", "stream", "card", "modal", "result"])
+                        },
+                        strict: true
+                      )
+                  },
+                  strict: true
+                )
+              ])
+          },
+          strict: true
+        ),
+        Zoi.map(
+          %{
+            "operation" => Zoi.enum(["post_message"]),
+            "request_id" => Zoi.string() |> Zoi.min(1),
+            "result" =>
+              Zoi.union([
+                Zoi.map(
+                  %{
+                    "id" => Zoi.string() |> Zoi.min(1),
+                    "room_id" => Zoi.string() |> Zoi.min(1),
+                    "text" => Zoi.string() |> Zoi.optional(),
+                    "sender" =>
+                      Zoi.map(
+                        %{
+                          "id" => Zoi.string() |> Zoi.min(1),
+                          "username" => Zoi.string() |> Zoi.optional(),
+                          "display_name" => Zoi.string() |> Zoi.optional(),
+                          "is_bot" => Zoi.boolean() |> Zoi.optional(),
+                          "is_self" => Zoi.boolean() |> Zoi.optional()
+                        },
+                        strict: true
+                      )
+                      |> Zoi.optional(),
+                    "thread_id" =>
+                      Zoi.union([
+                        Zoi.string() |> Zoi.min(1),
+                        Zoi.null()
+                      ])
+                      |> Zoi.optional(),
+                    "reply_to_id" =>
+                      Zoi.union([
+                        Zoi.string() |> Zoi.min(1),
+                        Zoi.null()
+                      ])
+                      |> Zoi.optional(),
+                    "media" =>
+                      Zoi.array(
+                        Zoi.map(
+                          %{
+                            "kind" => Zoi.enum(["image", "audio", "video", "file"]),
+                            "resource_ref" =>
+                              Zoi.map(
+                                %{
+                                  "id" => Zoi.string() |> Zoi.min(1),
+                                  "scope" => Zoi.enum(["call"]),
+                                  "binding_id" => Zoi.string() |> Zoi.min(1),
+                                  "kind" => Zoi.enum(["file", "media", "stream", "card", "modal", "result"])
+                                },
+                                strict: true
+                              ),
+                            "name" => Zoi.string() |> Zoi.optional(),
+                            "media_type" => Zoi.string() |> Zoi.optional(),
+                            "caption" => Zoi.string() |> Zoi.optional()
+                          },
+                          strict: true
+                        )
+                      )
+                      |> Zoi.optional(),
+                    "timestamp" => Zoi.string() |> Zoi.optional(),
+                    "status" =>
+                      Zoi.enum([
+                        "sending",
+                        "sent",
+                        "delivered",
+                        "read",
+                        "failed",
+                        "received",
+                        "pending",
+                        "updated",
+                        "deleted"
+                      ])
+                      |> Zoi.optional(),
+                    "role" => Zoi.enum(["user", "assistant", "system", "tool"]) |> Zoi.optional()
+                  },
+                  strict: true
+                ),
+                Zoi.map(
+                  %{
+                    "resource_ref" =>
+                      Zoi.map(
+                        %{
+                          "id" => Zoi.string() |> Zoi.min(1),
+                          "scope" => Zoi.enum(["call"]),
+                          "binding_id" => Zoi.string() |> Zoi.min(1),
+                          "kind" => Zoi.enum(["result"])
+                        },
+                        strict: true
+                      )
+                  },
+                  strict: true
+                )
+              ])
+          },
+          strict: true
+        ),
+        Zoi.map(
+          %{
+            "operation" => Zoi.enum(["create_room"]),
+            "request_id" => Zoi.string() |> Zoi.min(1),
+            "result" =>
+              Zoi.map(
+                %{
+                  "id" => Zoi.string() |> Zoi.min(1),
+                  "name" => Zoi.string() |> Zoi.optional(),
+                  "kind" => Zoi.enum(["direct", "group", "channel", "thread", "unknown"]) |> Zoi.optional(),
+                  "topic" => Zoi.string() |> Zoi.optional()
+                },
+                strict: true
+              )
+          },
+          strict: true
+        ),
+        Zoi.map(
+          %{
+            "operation" => Zoi.enum(["participant_joined"]),
+            "request_id" => Zoi.string() |> Zoi.min(1),
+            "result" =>
+              Zoi.map(
+                %{
+                  "acknowledged" => Zoi.boolean()
+                },
+                strict: true
+              )
+          },
+          strict: true
+        ),
+        Zoi.map(
+          %{
+            "operation" => Zoi.enum(["participant_left"]),
+            "request_id" => Zoi.string() |> Zoi.min(1),
+            "result" =>
+              Zoi.map(
+                %{
+                  "acknowledged" => Zoi.boolean()
+                },
+                strict: true
+              )
+          },
+          strict: true
+        ),
+        Zoi.map(
+          %{
+            "operation" => Zoi.enum(["set_presence"]),
+            "request_id" => Zoi.string() |> Zoi.min(1),
+            "result" =>
+              Zoi.map(
+                %{
+                  "acknowledged" => Zoi.boolean()
+                },
+                strict: true
+              )
+          },
+          strict: true
+        ),
+        Zoi.map(
+          %{
+            "operation" => Zoi.enum(["set_typing"]),
+            "request_id" => Zoi.string() |> Zoi.min(1),
+            "result" =>
+              Zoi.map(
+                %{
+                  "acknowledged" => Zoi.boolean()
+                },
+                strict: true
+              )
+          },
+          strict: true
+        ),
+        Zoi.map(
+          %{
+            "operation" => Zoi.enum(["add_room_reaction"]),
+            "request_id" => Zoi.string() |> Zoi.min(1),
+            "result" =>
+              Zoi.map(
+                %{
+                  "acknowledged" => Zoi.boolean()
+                },
+                strict: true
+              )
+          },
+          strict: true
+        ),
+        Zoi.map(
+          %{
+            "operation" => Zoi.enum(["remove_room_reaction"]),
+            "request_id" => Zoi.string() |> Zoi.min(1),
+            "result" =>
+              Zoi.map(
+                %{
+                  "acknowledged" => Zoi.boolean()
+                },
+                strict: true
+              )
+          },
+          strict: true
+        ),
+        Zoi.map(
+          %{
+            "operation" => Zoi.enum(["mark_delivered"]),
+            "request_id" => Zoi.string() |> Zoi.min(1),
+            "result" =>
+              Zoi.map(
+                %{
+                  "acknowledged" => Zoi.boolean()
+                },
+                strict: true
+              )
+          },
+          strict: true
+        ),
+        Zoi.map(
+          %{
+            "operation" => Zoi.enum(["mark_read"]),
+            "request_id" => Zoi.string() |> Zoi.min(1),
+            "result" =>
+              Zoi.map(
+                %{
+                  "acknowledged" => Zoi.boolean()
+                },
+                strict: true
+              )
+          },
+          strict: true
+        ),
+        Zoi.map(
+          %{
+            "operation" => Zoi.enum(["route_outbound"]),
+            "request_id" => Zoi.string() |> Zoi.min(1),
+            "result" =>
+              Zoi.union([
+                Zoi.map(
+                  %{
+                    "attempted" => Zoi.integer() |> Zoi.gte(0),
+                    "delivery_mode" => Zoi.enum(["best_effort", "primary", "broadcast"]),
+                    "delivered" =>
+                      Zoi.array(
+                        Zoi.map(
+                          %{
+                            "bridge_id" => Zoi.string() |> Zoi.min(1),
+                            "message_id" => Zoi.string() |> Zoi.min(1),
+                            "attempts" => Zoi.integer() |> Zoi.gte(1)
+                          },
+                          strict: true
+                        )
+                      ),
+                    "failed" =>
+                      Zoi.array(
+                        Zoi.map(
+                          %{
+                            "bridge_id" => Zoi.string() |> Zoi.min(1),
+                            "code" =>
+                              Zoi.enum([
+                                "provider_failure",
+                                "unsupported",
+                                "authorization_denied",
+                                "persistence_failed"
+                              ]),
+                            "retryable" => Zoi.boolean(),
+                            "attempts" => Zoi.integer() |> Zoi.gte(1)
+                          },
+                          strict: true
+                        )
+                      )
+                  },
+                  strict: true
+                ),
+                Zoi.map(
+                  %{
+                    "resource_ref" =>
+                      Zoi.map(
+                        %{
+                          "id" => Zoi.string() |> Zoi.min(1),
+                          "scope" => Zoi.enum(["call"]),
+                          "binding_id" => Zoi.string() |> Zoi.min(1),
+                          "kind" => Zoi.enum(["file", "media", "stream", "card", "modal", "result"])
+                        },
+                        strict: true
+                      )
+                  },
+                  strict: true
+                )
+              ])
+          },
+          strict: true
+        ),
+        Zoi.map(
+          %{
+            "operation" => Zoi.enum(["tool.fetch_message"]),
+            "request_id" => Zoi.string() |> Zoi.min(1),
+            "bridge_id" => Zoi.string() |> Zoi.min(1),
+            "result" =>
+              Zoi.union([
+                Zoi.map(
+                  %{
+                    "id" => Zoi.string() |> Zoi.min(1),
+                    "room_id" => Zoi.string() |> Zoi.min(1),
+                    "text" => Zoi.string() |> Zoi.optional(),
+                    "sender" =>
+                      Zoi.map(
+                        %{
+                          "id" => Zoi.string() |> Zoi.min(1),
+                          "username" => Zoi.string() |> Zoi.optional(),
+                          "display_name" => Zoi.string() |> Zoi.optional(),
+                          "is_bot" => Zoi.boolean() |> Zoi.optional(),
+                          "is_self" => Zoi.boolean() |> Zoi.optional()
+                        },
+                        strict: true
+                      )
+                      |> Zoi.optional(),
+                    "thread_id" =>
+                      Zoi.union([
+                        Zoi.string() |> Zoi.min(1),
+                        Zoi.null()
+                      ])
+                      |> Zoi.optional(),
+                    "reply_to_id" =>
+                      Zoi.union([
+                        Zoi.string() |> Zoi.min(1),
+                        Zoi.null()
+                      ])
+                      |> Zoi.optional(),
+                    "media" =>
+                      Zoi.array(
+                        Zoi.map(
+                          %{
+                            "kind" => Zoi.enum(["image", "audio", "video", "file"]),
+                            "resource_ref" =>
+                              Zoi.map(
+                                %{
+                                  "id" => Zoi.string() |> Zoi.min(1),
+                                  "scope" => Zoi.enum(["call"]),
+                                  "binding_id" => Zoi.string() |> Zoi.min(1),
+                                  "kind" => Zoi.enum(["file", "media", "stream", "card", "modal", "result"])
+                                },
+                                strict: true
+                              ),
+                            "name" => Zoi.string() |> Zoi.optional(),
+                            "media_type" => Zoi.string() |> Zoi.optional(),
+                            "caption" => Zoi.string() |> Zoi.optional()
+                          },
+                          strict: true
+                        )
+                      )
+                      |> Zoi.optional(),
+                    "timestamp" => Zoi.string() |> Zoi.optional(),
+                    "status" =>
+                      Zoi.enum(["sent", "received", "updated", "deleted", "pending", "failed"]) |> Zoi.optional(),
+                    "role" => Zoi.enum(["user", "assistant", "system", "tool"]) |> Zoi.optional()
+                  },
+                  strict: true
+                ),
+                Zoi.map(
+                  %{
+                    "resource_ref" =>
+                      Zoi.map(
+                        %{
+                          "id" => Zoi.string() |> Zoi.min(1),
+                          "scope" => Zoi.enum(["call"]),
+                          "binding_id" => Zoi.string() |> Zoi.min(1),
+                          "kind" => Zoi.enum(["file", "media", "stream", "card", "modal", "result"])
+                        },
+                        strict: true
+                      )
+                  },
+                  strict: true
+                )
+              ])
+          },
+          strict: true
+        ),
+        Zoi.map(
+          %{
+            "operation" => Zoi.enum(["tool.fetch_channel_messages"]),
+            "request_id" => Zoi.string() |> Zoi.min(1),
+            "bridge_id" => Zoi.string() |> Zoi.min(1),
+            "result" =>
+              Zoi.union([
+                Zoi.map(
+                  %{
+                    "messages" =>
+                      Zoi.array(
+                        Zoi.map(
+                          %{
+                            "id" => Zoi.string() |> Zoi.min(1),
+                            "room_id" => Zoi.string() |> Zoi.min(1),
+                            "text" => Zoi.string() |> Zoi.optional(),
+                            "sender" =>
+                              Zoi.map(
+                                %{
+                                  "id" => Zoi.string() |> Zoi.min(1),
+                                  "username" => Zoi.string() |> Zoi.optional(),
+                                  "display_name" => Zoi.string() |> Zoi.optional(),
+                                  "is_bot" => Zoi.boolean() |> Zoi.optional(),
+                                  "is_self" => Zoi.boolean() |> Zoi.optional()
+                                },
+                                strict: true
+                              )
+                              |> Zoi.optional(),
+                            "thread_id" =>
+                              Zoi.union([
+                                Zoi.string() |> Zoi.min(1),
+                                Zoi.null()
+                              ])
+                              |> Zoi.optional(),
+                            "reply_to_id" =>
+                              Zoi.union([
+                                Zoi.string() |> Zoi.min(1),
+                                Zoi.null()
+                              ])
+                              |> Zoi.optional(),
+                            "media" =>
+                              Zoi.array(
+                                Zoi.map(
+                                  %{
+                                    "kind" => Zoi.enum(["image", "audio", "video", "file"]),
+                                    "resource_ref" =>
+                                      Zoi.map(
+                                        %{
+                                          "id" => Zoi.string() |> Zoi.min(1),
+                                          "scope" => Zoi.enum(["call"]),
+                                          "binding_id" => Zoi.string() |> Zoi.min(1),
+                                          "kind" => Zoi.enum(["file", "media", "stream", "card", "modal", "result"])
+                                        },
+                                        strict: true
+                                      ),
+                                    "name" => Zoi.string() |> Zoi.optional(),
+                                    "media_type" => Zoi.string() |> Zoi.optional(),
+                                    "caption" => Zoi.string() |> Zoi.optional()
+                                  },
+                                  strict: true
+                                )
+                              )
+                              |> Zoi.optional(),
+                            "timestamp" => Zoi.string() |> Zoi.optional(),
+                            "status" =>
+                              Zoi.enum(["sent", "received", "updated", "deleted", "pending", "failed"])
+                              |> Zoi.optional(),
+                            "role" => Zoi.enum(["user", "assistant", "system", "tool"]) |> Zoi.optional()
+                          },
+                          strict: true
+                        )
+                      ),
+                    "next_cursor" =>
+                      Zoi.union([
+                        Zoi.string() |> Zoi.min(1),
+                        Zoi.null()
+                      ]),
+                    "complete" => Zoi.boolean()
+                  },
+                  strict: true
+                ),
+                Zoi.map(
+                  %{
+                    "resource_ref" =>
+                      Zoi.map(
+                        %{
+                          "id" => Zoi.string() |> Zoi.min(1),
+                          "scope" => Zoi.enum(["call"]),
+                          "binding_id" => Zoi.string() |> Zoi.min(1),
+                          "kind" => Zoi.enum(["file", "media", "stream", "card", "modal", "result"])
+                        },
+                        strict: true
+                      )
+                  },
+                  strict: true
+                )
+              ])
+          },
+          strict: true
+        ),
+        Zoi.map(
+          %{
+            "operation" => Zoi.enum(["tool.fetch_thread"]),
+            "request_id" => Zoi.string() |> Zoi.min(1),
+            "bridge_id" => Zoi.string() |> Zoi.min(1),
+            "result" =>
+              Zoi.union([
+                Zoi.map(
+                  %{
+                    "id" => Zoi.string() |> Zoi.min(1),
+                    "room_id" => Zoi.string() |> Zoi.min(1),
+                    "parent_message_id" =>
+                      Zoi.union([
+                        Zoi.string() |> Zoi.min(1),
+                        Zoi.null()
+                      ])
+                      |> Zoi.optional(),
+                    "name" => Zoi.string() |> Zoi.optional(),
+                    "delivery_room_ref" =>
+                      Zoi.union([
+                        Zoi.string() |> Zoi.min(1),
+                        Zoi.null()
+                      ])
+                      |> Zoi.optional()
+                  },
+                  strict: true
+                ),
+                Zoi.map(
+                  %{
+                    "resource_ref" =>
+                      Zoi.map(
+                        %{
+                          "id" => Zoi.string() |> Zoi.min(1),
+                          "scope" => Zoi.enum(["call"]),
+                          "binding_id" => Zoi.string() |> Zoi.min(1),
+                          "kind" => Zoi.enum(["file", "media", "stream", "card", "modal", "result"])
+                        },
+                        strict: true
+                      )
+                  },
+                  strict: true
+                )
+              ])
+          },
+          strict: true
+        ),
+        Zoi.map(
+          %{
+            "operation" => Zoi.enum(["tool.fetch_thread_messages"]),
+            "request_id" => Zoi.string() |> Zoi.min(1),
+            "bridge_id" => Zoi.string() |> Zoi.min(1),
+            "result" =>
+              Zoi.union([
+                Zoi.map(
+                  %{
+                    "messages" =>
+                      Zoi.array(
+                        Zoi.map(
+                          %{
+                            "id" => Zoi.string() |> Zoi.min(1),
+                            "room_id" => Zoi.string() |> Zoi.min(1),
+                            "text" => Zoi.string() |> Zoi.optional(),
+                            "sender" =>
+                              Zoi.map(
+                                %{
+                                  "id" => Zoi.string() |> Zoi.min(1),
+                                  "username" => Zoi.string() |> Zoi.optional(),
+                                  "display_name" => Zoi.string() |> Zoi.optional(),
+                                  "is_bot" => Zoi.boolean() |> Zoi.optional(),
+                                  "is_self" => Zoi.boolean() |> Zoi.optional()
+                                },
+                                strict: true
+                              )
+                              |> Zoi.optional(),
+                            "thread_id" =>
+                              Zoi.union([
+                                Zoi.string() |> Zoi.min(1),
+                                Zoi.null()
+                              ])
+                              |> Zoi.optional(),
+                            "reply_to_id" =>
+                              Zoi.union([
+                                Zoi.string() |> Zoi.min(1),
+                                Zoi.null()
+                              ])
+                              |> Zoi.optional(),
+                            "media" =>
+                              Zoi.array(
+                                Zoi.map(
+                                  %{
+                                    "kind" => Zoi.enum(["image", "audio", "video", "file"]),
+                                    "resource_ref" =>
+                                      Zoi.map(
+                                        %{
+                                          "id" => Zoi.string() |> Zoi.min(1),
+                                          "scope" => Zoi.enum(["call"]),
+                                          "binding_id" => Zoi.string() |> Zoi.min(1),
+                                          "kind" => Zoi.enum(["file", "media", "stream", "card", "modal", "result"])
+                                        },
+                                        strict: true
+                                      ),
+                                    "name" => Zoi.string() |> Zoi.optional(),
+                                    "media_type" => Zoi.string() |> Zoi.optional(),
+                                    "caption" => Zoi.string() |> Zoi.optional()
+                                  },
+                                  strict: true
+                                )
+                              )
+                              |> Zoi.optional(),
+                            "timestamp" => Zoi.string() |> Zoi.optional(),
+                            "status" =>
+                              Zoi.enum(["sent", "received", "updated", "deleted", "pending", "failed"])
+                              |> Zoi.optional(),
+                            "role" => Zoi.enum(["user", "assistant", "system", "tool"]) |> Zoi.optional()
+                          },
+                          strict: true
+                        )
+                      ),
+                    "next_cursor" =>
+                      Zoi.union([
+                        Zoi.string() |> Zoi.min(1),
+                        Zoi.null()
+                      ]),
+                    "complete" => Zoi.boolean()
+                  },
+                  strict: true
+                ),
+                Zoi.map(
+                  %{
+                    "resource_ref" =>
+                      Zoi.map(
+                        %{
+                          "id" => Zoi.string() |> Zoi.min(1),
+                          "scope" => Zoi.enum(["call"]),
+                          "binding_id" => Zoi.string() |> Zoi.min(1),
+                          "kind" => Zoi.enum(["file", "media", "stream", "card", "modal", "result"])
+                        },
+                        strict: true
+                      )
+                  },
+                  strict: true
+                )
+              ])
+          },
+          strict: true
+        ),
+        Zoi.map(
+          %{
+            "operation" => Zoi.enum(["tool.list_threads"]),
+            "request_id" => Zoi.string() |> Zoi.min(1),
+            "bridge_id" => Zoi.string() |> Zoi.min(1),
+            "result" =>
+              Zoi.union([
+                Zoi.map(
+                  %{
+                    "threads" =>
+                      Zoi.array(
+                        Zoi.map(
+                          %{
+                            "id" => Zoi.string() |> Zoi.min(1),
+                            "room_id" => Zoi.string() |> Zoi.min(1),
+                            "parent_message_id" =>
+                              Zoi.union([
+                                Zoi.string() |> Zoi.min(1),
+                                Zoi.null()
+                              ])
+                              |> Zoi.optional(),
+                            "name" => Zoi.string() |> Zoi.optional(),
+                            "delivery_room_ref" =>
+                              Zoi.union([
+                                Zoi.string() |> Zoi.min(1),
+                                Zoi.null()
+                              ])
+                              |> Zoi.optional()
+                          },
+                          strict: true
+                        )
+                      ),
+                    "next_cursor" =>
+                      Zoi.union([
+                        Zoi.string() |> Zoi.min(1),
+                        Zoi.null()
+                      ]),
+                    "complete" => Zoi.boolean()
+                  },
+                  strict: true
+                ),
+                Zoi.map(
+                  %{
+                    "resource_ref" =>
+                      Zoi.map(
+                        %{
+                          "id" => Zoi.string() |> Zoi.min(1),
+                          "scope" => Zoi.enum(["call"]),
+                          "binding_id" => Zoi.string() |> Zoi.min(1),
+                          "kind" => Zoi.enum(["file", "media", "stream", "card", "modal", "result"])
+                        },
+                        strict: true
+                      )
+                  },
+                  strict: true
+                )
+              ])
+          },
+          strict: true
+        ),
+        Zoi.map(
+          %{
+            "operation" => Zoi.enum(["tool.lookup_participant"]),
+            "request_id" => Zoi.string() |> Zoi.min(1),
+            "bridge_id" => Zoi.string() |> Zoi.min(1),
+            "result" =>
+              Zoi.union([
+                Zoi.map(
+                  %{
+                    "id" => Zoi.string() |> Zoi.min(1),
+                    "username" => Zoi.string() |> Zoi.optional(),
+                    "display_name" => Zoi.string() |> Zoi.optional(),
+                    "is_bot" => Zoi.boolean() |> Zoi.optional(),
+                    "is_self" => Zoi.boolean() |> Zoi.optional()
+                  },
+                  strict: true
+                ),
+                Zoi.map(
+                  %{
+                    "resource_ref" =>
+                      Zoi.map(
+                        %{
+                          "id" => Zoi.string() |> Zoi.min(1),
+                          "scope" => Zoi.enum(["call"]),
+                          "binding_id" => Zoi.string() |> Zoi.min(1),
+                          "kind" => Zoi.enum(["file", "media", "stream", "card", "modal", "result"])
+                        },
+                        strict: true
+                      )
+                  },
+                  strict: true
+                )
+              ])
+          },
+          strict: true
+        ),
+        Zoi.map(
+          %{
+            "operation" => Zoi.enum(["tool.lookup_user"]),
+            "request_id" => Zoi.string() |> Zoi.min(1),
+            "bridge_id" => Zoi.string() |> Zoi.min(1),
+            "result" =>
+              Zoi.union([
+                Zoi.map(
+                  %{
+                    "id" => Zoi.string() |> Zoi.min(1),
+                    "username" => Zoi.string() |> Zoi.optional(),
+                    "display_name" => Zoi.string() |> Zoi.optional(),
+                    "is_bot" => Zoi.boolean() |> Zoi.optional(),
+                    "is_self" => Zoi.boolean() |> Zoi.optional()
+                  },
+                  strict: true
+                ),
+                Zoi.map(
+                  %{
+                    "resource_ref" =>
+                      Zoi.map(
+                        %{
+                          "id" => Zoi.string() |> Zoi.min(1),
+                          "scope" => Zoi.enum(["call"]),
+                          "binding_id" => Zoi.string() |> Zoi.min(1),
+                          "kind" => Zoi.enum(["file", "media", "stream", "card", "modal", "result"])
+                        },
+                        strict: true
+                      )
+                  },
+                  strict: true
+                )
+              ])
+          },
+          strict: true
+        ),
+        Zoi.map(
+          %{
+            "operation" => Zoi.enum(["tool.fetch_channel_metadata"]),
+            "request_id" => Zoi.string() |> Zoi.min(1),
+            "bridge_id" => Zoi.string() |> Zoi.min(1),
+            "result" =>
+              Zoi.union([
+                Zoi.map(
+                  %{
+                    "id" => Zoi.string() |> Zoi.min(1),
+                    "name" => Zoi.string() |> Zoi.optional(),
+                    "kind" => Zoi.enum(["direct", "group", "channel", "thread", "unknown"]) |> Zoi.optional(),
+                    "topic" => Zoi.string() |> Zoi.optional()
+                  },
+                  strict: true
+                ),
+                Zoi.map(
+                  %{
+                    "resource_ref" =>
+                      Zoi.map(
+                        %{
+                          "id" => Zoi.string() |> Zoi.min(1),
+                          "scope" => Zoi.enum(["call"]),
+                          "binding_id" => Zoi.string() |> Zoi.min(1),
+                          "kind" => Zoi.enum(["file", "media", "stream", "card", "modal", "result"])
+                        },
+                        strict: true
+                      )
+                  },
+                  strict: true
+                )
+              ])
+          },
+          strict: true
+        ),
+        Zoi.map(
+          %{
+            "operation" => Zoi.enum(["tool.post_message"]),
+            "request_id" => Zoi.string() |> Zoi.min(1),
+            "bridge_id" => Zoi.string() |> Zoi.min(1),
+            "result" =>
+              Zoi.union([
+                Zoi.map(
+                  %{
+                    "id" => Zoi.string() |> Zoi.min(1),
+                    "room_id" => Zoi.string() |> Zoi.min(1),
+                    "text" => Zoi.string() |> Zoi.optional(),
+                    "sender" =>
+                      Zoi.map(
+                        %{
+                          "id" => Zoi.string() |> Zoi.min(1),
+                          "username" => Zoi.string() |> Zoi.optional(),
+                          "display_name" => Zoi.string() |> Zoi.optional(),
+                          "is_bot" => Zoi.boolean() |> Zoi.optional(),
+                          "is_self" => Zoi.boolean() |> Zoi.optional()
+                        },
+                        strict: true
+                      )
+                      |> Zoi.optional(),
+                    "thread_id" =>
+                      Zoi.union([
+                        Zoi.string() |> Zoi.min(1),
+                        Zoi.null()
+                      ])
+                      |> Zoi.optional(),
+                    "reply_to_id" =>
+                      Zoi.union([
+                        Zoi.string() |> Zoi.min(1),
+                        Zoi.null()
+                      ])
+                      |> Zoi.optional(),
+                    "media" =>
+                      Zoi.array(
+                        Zoi.map(
+                          %{
+                            "kind" => Zoi.enum(["image", "audio", "video", "file"]),
+                            "resource_ref" =>
+                              Zoi.map(
+                                %{
+                                  "id" => Zoi.string() |> Zoi.min(1),
+                                  "scope" => Zoi.enum(["call"]),
+                                  "binding_id" => Zoi.string() |> Zoi.min(1),
+                                  "kind" => Zoi.enum(["file", "media", "stream", "card", "modal", "result"])
+                                },
+                                strict: true
+                              ),
+                            "name" => Zoi.string() |> Zoi.optional(),
+                            "media_type" => Zoi.string() |> Zoi.optional(),
+                            "caption" => Zoi.string() |> Zoi.optional()
+                          },
+                          strict: true
+                        )
+                      )
+                      |> Zoi.optional(),
+                    "timestamp" => Zoi.string() |> Zoi.optional(),
+                    "status" =>
+                      Zoi.enum(["sent", "received", "updated", "deleted", "pending", "failed"]) |> Zoi.optional(),
+                    "role" => Zoi.enum(["user", "assistant", "system", "tool"]) |> Zoi.optional()
+                  },
+                  strict: true
+                ),
+                Zoi.map(
+                  %{
+                    "resource_ref" =>
+                      Zoi.map(
+                        %{
+                          "id" => Zoi.string() |> Zoi.min(1),
+                          "scope" => Zoi.enum(["call"]),
+                          "binding_id" => Zoi.string() |> Zoi.min(1),
+                          "kind" => Zoi.enum(["file", "media", "stream", "card", "modal", "result"])
+                        },
+                        strict: true
+                      )
+                  },
+                  strict: true
+                )
+              ])
+          },
+          strict: true
+        ),
+        Zoi.map(
+          %{
+            "operation" => Zoi.enum(["tool.post_channel_message"]),
+            "request_id" => Zoi.string() |> Zoi.min(1),
+            "bridge_id" => Zoi.string() |> Zoi.min(1),
+            "result" =>
+              Zoi.union([
+                Zoi.map(
+                  %{
+                    "id" => Zoi.string() |> Zoi.min(1),
+                    "room_id" => Zoi.string() |> Zoi.min(1),
+                    "text" => Zoi.string() |> Zoi.optional(),
+                    "sender" =>
+                      Zoi.map(
+                        %{
+                          "id" => Zoi.string() |> Zoi.min(1),
+                          "username" => Zoi.string() |> Zoi.optional(),
+                          "display_name" => Zoi.string() |> Zoi.optional(),
+                          "is_bot" => Zoi.boolean() |> Zoi.optional(),
+                          "is_self" => Zoi.boolean() |> Zoi.optional()
+                        },
+                        strict: true
+                      )
+                      |> Zoi.optional(),
+                    "thread_id" =>
+                      Zoi.union([
+                        Zoi.string() |> Zoi.min(1),
+                        Zoi.null()
+                      ])
+                      |> Zoi.optional(),
+                    "reply_to_id" =>
+                      Zoi.union([
+                        Zoi.string() |> Zoi.min(1),
+                        Zoi.null()
+                      ])
+                      |> Zoi.optional(),
+                    "media" =>
+                      Zoi.array(
+                        Zoi.map(
+                          %{
+                            "kind" => Zoi.enum(["image", "audio", "video", "file"]),
+                            "resource_ref" =>
+                              Zoi.map(
+                                %{
+                                  "id" => Zoi.string() |> Zoi.min(1),
+                                  "scope" => Zoi.enum(["call"]),
+                                  "binding_id" => Zoi.string() |> Zoi.min(1),
+                                  "kind" => Zoi.enum(["file", "media", "stream", "card", "modal", "result"])
+                                },
+                                strict: true
+                              ),
+                            "name" => Zoi.string() |> Zoi.optional(),
+                            "media_type" => Zoi.string() |> Zoi.optional(),
+                            "caption" => Zoi.string() |> Zoi.optional()
+                          },
+                          strict: true
+                        )
+                      )
+                      |> Zoi.optional(),
+                    "timestamp" => Zoi.string() |> Zoi.optional(),
+                    "status" =>
+                      Zoi.enum(["sent", "received", "updated", "deleted", "pending", "failed"]) |> Zoi.optional(),
+                    "role" => Zoi.enum(["user", "assistant", "system", "tool"]) |> Zoi.optional()
+                  },
+                  strict: true
+                ),
+                Zoi.map(
+                  %{
+                    "resource_ref" =>
+                      Zoi.map(
+                        %{
+                          "id" => Zoi.string() |> Zoi.min(1),
+                          "scope" => Zoi.enum(["call"]),
+                          "binding_id" => Zoi.string() |> Zoi.min(1),
+                          "kind" => Zoi.enum(["file", "media", "stream", "card", "modal", "result"])
+                        },
+                        strict: true
+                      )
+                  },
+                  strict: true
+                )
+              ])
+          },
+          strict: true
+        ),
+        Zoi.map(
+          %{
+            "operation" => Zoi.enum(["tool.send_direct_message"]),
+            "request_id" => Zoi.string() |> Zoi.min(1),
+            "bridge_id" => Zoi.string() |> Zoi.min(1),
+            "result" =>
+              Zoi.union([
+                Zoi.map(
+                  %{
+                    "id" => Zoi.string() |> Zoi.min(1),
+                    "room_id" => Zoi.string() |> Zoi.min(1),
+                    "text" => Zoi.string() |> Zoi.optional(),
+                    "sender" =>
+                      Zoi.map(
+                        %{
+                          "id" => Zoi.string() |> Zoi.min(1),
+                          "username" => Zoi.string() |> Zoi.optional(),
+                          "display_name" => Zoi.string() |> Zoi.optional(),
+                          "is_bot" => Zoi.boolean() |> Zoi.optional(),
+                          "is_self" => Zoi.boolean() |> Zoi.optional()
+                        },
+                        strict: true
+                      )
+                      |> Zoi.optional(),
+                    "thread_id" =>
+                      Zoi.union([
+                        Zoi.string() |> Zoi.min(1),
+                        Zoi.null()
+                      ])
+                      |> Zoi.optional(),
+                    "reply_to_id" =>
+                      Zoi.union([
+                        Zoi.string() |> Zoi.min(1),
+                        Zoi.null()
+                      ])
+                      |> Zoi.optional(),
+                    "media" =>
+                      Zoi.array(
+                        Zoi.map(
+                          %{
+                            "kind" => Zoi.enum(["image", "audio", "video", "file"]),
+                            "resource_ref" =>
+                              Zoi.map(
+                                %{
+                                  "id" => Zoi.string() |> Zoi.min(1),
+                                  "scope" => Zoi.enum(["call"]),
+                                  "binding_id" => Zoi.string() |> Zoi.min(1),
+                                  "kind" => Zoi.enum(["file", "media", "stream", "card", "modal", "result"])
+                                },
+                                strict: true
+                              ),
+                            "name" => Zoi.string() |> Zoi.optional(),
+                            "media_type" => Zoi.string() |> Zoi.optional(),
+                            "caption" => Zoi.string() |> Zoi.optional()
+                          },
+                          strict: true
+                        )
+                      )
+                      |> Zoi.optional(),
+                    "timestamp" => Zoi.string() |> Zoi.optional(),
+                    "status" =>
+                      Zoi.enum(["sent", "received", "updated", "deleted", "pending", "failed"]) |> Zoi.optional(),
+                    "role" => Zoi.enum(["user", "assistant", "system", "tool"]) |> Zoi.optional()
+                  },
+                  strict: true
+                ),
+                Zoi.map(
+                  %{
+                    "resource_ref" =>
+                      Zoi.map(
+                        %{
+                          "id" => Zoi.string() |> Zoi.min(1),
+                          "scope" => Zoi.enum(["call"]),
+                          "binding_id" => Zoi.string() |> Zoi.min(1),
+                          "kind" => Zoi.enum(["file", "media", "stream", "card", "modal", "result"])
+                        },
+                        strict: true
+                      )
+                  },
+                  strict: true
+                )
+              ])
+          },
+          strict: true
+        ),
+        Zoi.map(
+          %{
+            "operation" => Zoi.enum(["tool.start_typing"]),
+            "request_id" => Zoi.string() |> Zoi.min(1),
+            "bridge_id" => Zoi.string() |> Zoi.min(1),
+            "result" =>
+              Zoi.union([
+                Zoi.map(
+                  %{
+                    "acknowledged" => Zoi.boolean()
+                  },
+                  strict: true
+                ),
+                Zoi.map(
+                  %{
+                    "resource_ref" =>
+                      Zoi.map(
+                        %{
+                          "id" => Zoi.string() |> Zoi.min(1),
+                          "scope" => Zoi.enum(["call"]),
+                          "binding_id" => Zoi.string() |> Zoi.min(1),
+                          "kind" => Zoi.enum(["file", "media", "stream", "card", "modal", "result"])
+                        },
+                        strict: true
+                      )
+                  },
+                  strict: true
+                )
+              ])
+          },
+          strict: true
+        ),
+        Zoi.map(
+          %{
+            "operation" => Zoi.enum(["tool.edit_message"]),
+            "request_id" => Zoi.string() |> Zoi.min(1),
+            "bridge_id" => Zoi.string() |> Zoi.min(1),
+            "result" =>
+              Zoi.union([
+                Zoi.map(
+                  %{
+                    "id" => Zoi.string() |> Zoi.min(1),
+                    "room_id" => Zoi.string() |> Zoi.min(1),
+                    "text" => Zoi.string() |> Zoi.optional(),
+                    "sender" =>
+                      Zoi.map(
+                        %{
+                          "id" => Zoi.string() |> Zoi.min(1),
+                          "username" => Zoi.string() |> Zoi.optional(),
+                          "display_name" => Zoi.string() |> Zoi.optional(),
+                          "is_bot" => Zoi.boolean() |> Zoi.optional(),
+                          "is_self" => Zoi.boolean() |> Zoi.optional()
+                        },
+                        strict: true
+                      )
+                      |> Zoi.optional(),
+                    "thread_id" =>
+                      Zoi.union([
+                        Zoi.string() |> Zoi.min(1),
+                        Zoi.null()
+                      ])
+                      |> Zoi.optional(),
+                    "reply_to_id" =>
+                      Zoi.union([
+                        Zoi.string() |> Zoi.min(1),
+                        Zoi.null()
+                      ])
+                      |> Zoi.optional(),
+                    "media" =>
+                      Zoi.array(
+                        Zoi.map(
+                          %{
+                            "kind" => Zoi.enum(["image", "audio", "video", "file"]),
+                            "resource_ref" =>
+                              Zoi.map(
+                                %{
+                                  "id" => Zoi.string() |> Zoi.min(1),
+                                  "scope" => Zoi.enum(["call"]),
+                                  "binding_id" => Zoi.string() |> Zoi.min(1),
+                                  "kind" => Zoi.enum(["file", "media", "stream", "card", "modal", "result"])
+                                },
+                                strict: true
+                              ),
+                            "name" => Zoi.string() |> Zoi.optional(),
+                            "media_type" => Zoi.string() |> Zoi.optional(),
+                            "caption" => Zoi.string() |> Zoi.optional()
+                          },
+                          strict: true
+                        )
+                      )
+                      |> Zoi.optional(),
+                    "timestamp" => Zoi.string() |> Zoi.optional(),
+                    "status" =>
+                      Zoi.enum(["sent", "received", "updated", "deleted", "pending", "failed"]) |> Zoi.optional(),
+                    "role" => Zoi.enum(["user", "assistant", "system", "tool"]) |> Zoi.optional()
+                  },
+                  strict: true
+                ),
+                Zoi.map(
+                  %{
+                    "resource_ref" =>
+                      Zoi.map(
+                        %{
+                          "id" => Zoi.string() |> Zoi.min(1),
+                          "scope" => Zoi.enum(["call"]),
+                          "binding_id" => Zoi.string() |> Zoi.min(1),
+                          "kind" => Zoi.enum(["file", "media", "stream", "card", "modal", "result"])
+                        },
+                        strict: true
+                      )
+                  },
+                  strict: true
+                )
+              ])
+          },
+          strict: true
+        ),
+        Zoi.map(
+          %{
+            "operation" => Zoi.enum(["tool.delete_message"]),
+            "request_id" => Zoi.string() |> Zoi.min(1),
+            "bridge_id" => Zoi.string() |> Zoi.min(1),
+            "result" =>
+              Zoi.union([
+                Zoi.map(
+                  %{
+                    "acknowledged" => Zoi.boolean()
+                  },
+                  strict: true
+                ),
+                Zoi.map(
+                  %{
+                    "resource_ref" =>
+                      Zoi.map(
+                        %{
+                          "id" => Zoi.string() |> Zoi.min(1),
+                          "scope" => Zoi.enum(["call"]),
+                          "binding_id" => Zoi.string() |> Zoi.min(1),
+                          "kind" => Zoi.enum(["file", "media", "stream", "card", "modal", "result"])
+                        },
+                        strict: true
+                      )
+                  },
+                  strict: true
+                )
+              ])
+          },
+          strict: true
+        ),
+        Zoi.map(
+          %{
+            "operation" => Zoi.enum(["tool.add_reaction"]),
+            "request_id" => Zoi.string() |> Zoi.min(1),
+            "bridge_id" => Zoi.string() |> Zoi.min(1),
+            "result" =>
+              Zoi.union([
+                Zoi.map(
+                  %{
+                    "acknowledged" => Zoi.boolean()
+                  },
+                  strict: true
+                ),
+                Zoi.map(
+                  %{
+                    "resource_ref" =>
+                      Zoi.map(
+                        %{
+                          "id" => Zoi.string() |> Zoi.min(1),
+                          "scope" => Zoi.enum(["call"]),
+                          "binding_id" => Zoi.string() |> Zoi.min(1),
+                          "kind" => Zoi.enum(["file", "media", "stream", "card", "modal", "result"])
+                        },
+                        strict: true
+                      )
+                  },
+                  strict: true
+                )
+              ])
+          },
+          strict: true
+        ),
+        Zoi.map(
+          %{
+            "operation" => Zoi.enum(["tool.remove_reaction"]),
+            "request_id" => Zoi.string() |> Zoi.min(1),
+            "bridge_id" => Zoi.string() |> Zoi.min(1),
+            "result" =>
+              Zoi.union([
+                Zoi.map(
+                  %{
+                    "acknowledged" => Zoi.boolean()
+                  },
+                  strict: true
+                ),
+                Zoi.map(
+                  %{
+                    "resource_ref" =>
+                      Zoi.map(
+                        %{
+                          "id" => Zoi.string() |> Zoi.min(1),
+                          "scope" => Zoi.enum(["call"]),
+                          "binding_id" => Zoi.string() |> Zoi.min(1),
+                          "kind" => Zoi.enum(["file", "media", "stream", "card", "modal", "result"])
+                        },
+                        strict: true
+                      )
+                  },
+                  strict: true
+                )
+              ])
+          },
+          strict: true
+        ),
+        Zoi.map(
+          %{
+            "operation" => Zoi.enum(["tool.ensure_subscription"]),
+            "request_id" => Zoi.string() |> Zoi.min(1),
+            "bridge_id" => Zoi.string() |> Zoi.min(1),
+            "result" =>
+              Zoi.union([
+                Zoi.map(
+                  %{
+                    "id" => Zoi.string() |> Zoi.min(1) |> Zoi.optional(),
+                    "active" => Zoi.boolean() |> Zoi.optional(),
+                    "items" =>
+                      Zoi.array(
+                        Zoi.map(
+                          %{
+                            "id" => Zoi.string() |> Zoi.min(1),
+                            "active" => Zoi.boolean() |> Zoi.optional()
+                          },
+                          strict: true
+                        )
+                      )
+                      |> Zoi.optional(),
+                    "acknowledged" => Zoi.boolean() |> Zoi.optional()
+                  },
+                  strict: true
+                ),
+                Zoi.map(
+                  %{
+                    "resource_ref" =>
+                      Zoi.map(
+                        %{
+                          "id" => Zoi.string() |> Zoi.min(1),
+                          "scope" => Zoi.enum(["call"]),
+                          "binding_id" => Zoi.string() |> Zoi.min(1),
+                          "kind" => Zoi.enum(["file", "media", "stream", "card", "modal", "result"])
+                        },
+                        strict: true
+                      )
+                  },
+                  strict: true
+                )
+              ])
+          },
+          strict: true
+        ),
+        Zoi.map(
+          %{
+            "operation" => Zoi.enum(["tool.list_subscriptions"]),
+            "request_id" => Zoi.string() |> Zoi.min(1),
+            "bridge_id" => Zoi.string() |> Zoi.min(1),
+            "result" =>
+              Zoi.union([
+                Zoi.map(
+                  %{
+                    "id" => Zoi.string() |> Zoi.min(1) |> Zoi.optional(),
+                    "active" => Zoi.boolean() |> Zoi.optional(),
+                    "items" =>
+                      Zoi.array(
+                        Zoi.map(
+                          %{
+                            "id" => Zoi.string() |> Zoi.min(1),
+                            "active" => Zoi.boolean() |> Zoi.optional()
+                          },
+                          strict: true
+                        )
+                      )
+                      |> Zoi.optional(),
+                    "acknowledged" => Zoi.boolean() |> Zoi.optional()
+                  },
+                  strict: true
+                ),
+                Zoi.map(
+                  %{
+                    "resource_ref" =>
+                      Zoi.map(
+                        %{
+                          "id" => Zoi.string() |> Zoi.min(1),
+                          "scope" => Zoi.enum(["call"]),
+                          "binding_id" => Zoi.string() |> Zoi.min(1),
+                          "kind" => Zoi.enum(["file", "media", "stream", "card", "modal", "result"])
+                        },
+                        strict: true
+                      )
+                  },
+                  strict: true
+                )
+              ])
+          },
+          strict: true
+        ),
+        Zoi.map(
+          %{
+            "operation" => Zoi.enum(["tool.delete_subscription"]),
+            "request_id" => Zoi.string() |> Zoi.min(1),
+            "bridge_id" => Zoi.string() |> Zoi.min(1),
+            "result" =>
+              Zoi.union([
+                Zoi.map(
+                  %{
+                    "id" => Zoi.string() |> Zoi.min(1) |> Zoi.optional(),
+                    "active" => Zoi.boolean() |> Zoi.optional(),
+                    "items" =>
+                      Zoi.array(
+                        Zoi.map(
+                          %{
+                            "id" => Zoi.string() |> Zoi.min(1),
+                            "active" => Zoi.boolean() |> Zoi.optional()
+                          },
+                          strict: true
+                        )
+                      )
+                      |> Zoi.optional(),
+                    "acknowledged" => Zoi.boolean() |> Zoi.optional()
+                  },
+                  strict: true
+                ),
+                Zoi.map(
+                  %{
+                    "resource_ref" =>
+                      Zoi.map(
+                        %{
+                          "id" => Zoi.string() |> Zoi.min(1),
+                          "scope" => Zoi.enum(["call"]),
+                          "binding_id" => Zoi.string() |> Zoi.min(1),
+                          "kind" => Zoi.enum(["file", "media", "stream", "card", "modal", "result"])
+                        },
+                        strict: true
+                      )
+                  },
+                  strict: true
+                )
+              ])
+          },
+          strict: true
         )
-      )
+      ])
 end

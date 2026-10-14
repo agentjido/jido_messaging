@@ -12,9 +12,25 @@ defmodule Jido.Messaging.Signal.MessageFailed do
     dataschema: "urn:jido:messaging:schema:message_failed:1",
     default_source: "urn:jido:messaging:instance:aW5zdGFuY2UvYWxwaGE",
     schema:
-      Zoi.from_json_schema(
-        Jason.decode!(
-          ~S|{"type":"object","properties":{"room_id":{"type":"string","minLength":1},"message_id":{"anyOf":[{"type":"string","minLength":1},{"type":"null"}]},"bridge_id":{"type":"string","minLength":1},"code":{"enum":["provider_failure","persistence_failed","authorization_denied","delivery_failed","observation_failed"]}},"required":["room_id","code"],"additionalProperties":false}|
-        )
+      Zoi.map(
+        %{
+          "room_id" => Zoi.string() |> Zoi.min(1),
+          "message_id" =>
+            Zoi.union([
+              Zoi.string() |> Zoi.min(1),
+              Zoi.null()
+            ])
+            |> Zoi.optional(),
+          "bridge_id" => Zoi.string() |> Zoi.min(1) |> Zoi.optional(),
+          "code" =>
+            Zoi.enum([
+              "provider_failure",
+              "persistence_failed",
+              "authorization_denied",
+              "delivery_failed",
+              "observation_failed"
+            ])
+        },
+        strict: true
       )
 end

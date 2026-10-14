@@ -12,9 +12,13 @@ defmodule Jido.Messaging.Signal.ParticipantJoinedRequest do
     dataschema: "urn:jido:messaging:schema:command_participant_joined:1",
     default_source: "urn:jido:messaging:producer:local",
     schema:
-      Zoi.from_json_schema(
-        Jason.decode!(
-          ~S|{"type":"object","properties":{"request_id":{"type":"string","minLength":1},"room_id":{"type":"string","minLength":1},"participant_id":{"type":"string","minLength":1},"reason":{"type":"string"}},"required":["request_id","room_id","participant_id"],"additionalProperties":false}|
-        )
+      Zoi.map(
+        %{
+          "request_id" => Zoi.string() |> Zoi.min(1),
+          "room_id" => Zoi.string() |> Zoi.min(1),
+          "participant_id" => Zoi.string() |> Zoi.min(1),
+          "reason" => Zoi.string() |> Zoi.optional()
+        },
+        strict: true
       )
 end

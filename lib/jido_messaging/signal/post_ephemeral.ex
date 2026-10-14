@@ -12,9 +12,18 @@ defmodule Jido.Messaging.Signal.PostEphemeral do
     dataschema: "urn:jido:messaging:schema:command_post_ephemeral:1",
     default_source: "urn:jido:messaging:producer:local",
     schema:
-      Zoi.from_json_schema(
-        Jason.decode!(
-          ~S|{"type":"object","properties":{"request_id":{"type":"string","minLength":1},"room_id":{"type":"string","minLength":1},"user_id":{"type":"string","minLength":1},"text":{"type":"string"},"thread_id":{"type":"string","minLength":1},"reply_to_id":{"type":"string","minLength":1},"format":{"enum":["plain","markdown","html"]},"fallback_to_dm":{"type":"boolean"},"bridge_id":{"type":"string","minLength":1}},"required":["request_id","room_id","user_id","text","bridge_id"],"additionalProperties":false}|
-        )
+      Zoi.map(
+        %{
+          "request_id" => Zoi.string() |> Zoi.min(1),
+          "room_id" => Zoi.string() |> Zoi.min(1),
+          "user_id" => Zoi.string() |> Zoi.min(1),
+          "text" => Zoi.string(),
+          "thread_id" => Zoi.string() |> Zoi.min(1) |> Zoi.optional(),
+          "reply_to_id" => Zoi.string() |> Zoi.min(1) |> Zoi.optional(),
+          "format" => Zoi.enum(["plain", "markdown", "html"]) |> Zoi.optional(),
+          "fallback_to_dm" => Zoi.boolean() |> Zoi.optional(),
+          "bridge_id" => Zoi.string() |> Zoi.min(1)
+        },
+        strict: true
       )
 end

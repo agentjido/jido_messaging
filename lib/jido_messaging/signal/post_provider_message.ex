@@ -12,9 +12,43 @@ defmodule Jido.Messaging.Signal.PostProviderMessage do
     dataschema: "urn:jido:messaging:schema:command_post_provider_message:1",
     default_source: "urn:jido:messaging:producer:local",
     schema:
-      Zoi.from_json_schema(
-        Jason.decode!(
-          ~S|{"type":"object","properties":{"request_id":{"type":"string","minLength":1},"room_id":{"type":"string","minLength":1},"content":{"oneOf":[{"type":"object","properties":{"kind":{"enum":["text","markdown"]},"text":{"type":"string"}},"required":["kind","text"],"additionalProperties":false},{"type":"object","properties":{"kind":{"enum":["card","stream","media"]},"resource_ref":{"type":"object","properties":{"id":{"type":"string","minLength":1},"scope":{"enum":["call"]},"binding_id":{"type":"string","minLength":1},"kind":{"enum":["file","media","stream","card","modal","result"]}},"required":["id","scope","binding_id","kind"],"additionalProperties":false},"fallback_text":{"type":"string"},"caption":{"type":"string"}},"required":["kind","resource_ref"],"additionalProperties":false}]},"thread_id":{"type":"string","minLength":1},"reply_to_id":{"type":"string","minLength":1},"format":{"enum":["plain","markdown","html"]},"bridge_id":{"type":"string","minLength":1}},"required":["request_id","room_id","content","bridge_id"],"additionalProperties":false}|
-        )
+      Zoi.map(
+        %{
+          "request_id" => Zoi.string() |> Zoi.min(1),
+          "room_id" => Zoi.string() |> Zoi.min(1),
+          "content" =>
+            Zoi.union([
+              Zoi.map(
+                %{
+                  "kind" => Zoi.enum(["text", "markdown"]),
+                  "text" => Zoi.string()
+                },
+                strict: true
+              ),
+              Zoi.map(
+                %{
+                  "kind" => Zoi.enum(["card", "stream", "media"]),
+                  "resource_ref" =>
+                    Zoi.map(
+                      %{
+                        "id" => Zoi.string() |> Zoi.min(1),
+                        "scope" => Zoi.enum(["call"]),
+                        "binding_id" => Zoi.string() |> Zoi.min(1),
+                        "kind" => Zoi.enum(["file", "media", "stream", "card", "modal", "result"])
+                      },
+                      strict: true
+                    ),
+                  "fallback_text" => Zoi.string() |> Zoi.optional(),
+                  "caption" => Zoi.string() |> Zoi.optional()
+                },
+                strict: true
+              )
+            ]),
+          "thread_id" => Zoi.string() |> Zoi.min(1) |> Zoi.optional(),
+          "reply_to_id" => Zoi.string() |> Zoi.min(1) |> Zoi.optional(),
+          "format" => Zoi.enum(["plain", "markdown", "html"]) |> Zoi.optional(),
+          "bridge_id" => Zoi.string() |> Zoi.min(1)
+        },
+        strict: true
       )
 end

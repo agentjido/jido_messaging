@@ -12,9 +12,13 @@ defmodule Jido.Messaging.Signal.CreateRoom do
     dataschema: "urn:jido:messaging:schema:command_create_room:1",
     default_source: "urn:jido:messaging:producer:local",
     schema:
-      Zoi.from_json_schema(
-        Jason.decode!(
-          ~S|{"type":"object","properties":{"request_id":{"type":"string","minLength":1},"room_id":{"type":"string","minLength":1},"name":{"type":"string"},"kind":{"enum":["direct","group","channel","thread"]}},"required":["request_id","name","kind"],"additionalProperties":false}|
-        )
+      Zoi.map(
+        %{
+          "request_id" => Zoi.string() |> Zoi.min(1),
+          "room_id" => Zoi.string() |> Zoi.min(1) |> Zoi.optional(),
+          "name" => Zoi.string(),
+          "kind" => Zoi.enum(["direct", "group", "channel", "thread"])
+        },
+        strict: true
       )
 end

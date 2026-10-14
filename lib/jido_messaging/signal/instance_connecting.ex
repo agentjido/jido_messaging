@@ -12,9 +12,12 @@ defmodule Jido.Messaging.Signal.InstanceConnecting do
     dataschema: "urn:jido:messaging:schema:instance_connecting:1",
     default_source: "urn:jido:messaging:instance:aW5zdGFuY2UvYWxwaGE",
     schema:
-      Zoi.from_json_schema(
-        Jason.decode!(
-          ~S|{"type":"object","properties":{"instance_id":{"type":"string","minLength":1},"bridge_id":{"type":"string","minLength":1},"code":{"type":"string"}},"required":["instance_id"],"additionalProperties":false}|
-        )
+      Zoi.map(
+        %{
+          "instance_id" => Zoi.string() |> Zoi.min(1),
+          "bridge_id" => Zoi.string() |> Zoi.min(1) |> Zoi.optional(),
+          "code" => Zoi.string() |> Zoi.optional()
+        },
+        strict: true
       )
 end

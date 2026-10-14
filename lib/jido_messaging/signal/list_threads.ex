@@ -12,9 +12,23 @@ defmodule Jido.Messaging.Signal.ListThreads do
     dataschema: "urn:jido:messaging:schema:query_list_threads:1",
     default_source: "urn:jido:messaging:producer:local",
     schema:
-      Zoi.from_json_schema(
-        Jason.decode!(
-          ~S|{"type":"object","properties":{"request_id":{"type":"string","minLength":1},"room_id":{"type":"string","minLength":1},"thread_id":{"type":"string","minLength":1},"reply_to_id":{"type":"string","minLength":1},"format":{"enum":["plain","markdown","html"]},"cursor":{"anyOf":[{"type":"string","minLength":1},{"type":"null"}]},"limit":{"type":"integer","minimum":1},"bridge_id":{"type":"string","minLength":1},"direction":{"enum":["forward","backward"]}},"required":["request_id","room_id","bridge_id"],"additionalProperties":false}|
-        )
+      Zoi.map(
+        %{
+          "request_id" => Zoi.string() |> Zoi.min(1),
+          "room_id" => Zoi.string() |> Zoi.min(1),
+          "thread_id" => Zoi.string() |> Zoi.min(1) |> Zoi.optional(),
+          "reply_to_id" => Zoi.string() |> Zoi.min(1) |> Zoi.optional(),
+          "format" => Zoi.enum(["plain", "markdown", "html"]) |> Zoi.optional(),
+          "cursor" =>
+            Zoi.union([
+              Zoi.string() |> Zoi.min(1),
+              Zoi.null()
+            ])
+            |> Zoi.optional(),
+          "limit" => Zoi.integer() |> Zoi.gte(1) |> Zoi.optional(),
+          "bridge_id" => Zoi.string() |> Zoi.min(1),
+          "direction" => Zoi.enum(["forward", "backward"]) |> Zoi.optional()
+        },
+        strict: true
       )
 end

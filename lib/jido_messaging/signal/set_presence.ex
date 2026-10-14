@@ -12,9 +12,13 @@ defmodule Jido.Messaging.Signal.SetPresence do
     dataschema: "urn:jido:messaging:schema:command_set_presence:1",
     default_source: "urn:jido:messaging:producer:local",
     schema:
-      Zoi.from_json_schema(
-        Jason.decode!(
-          ~S|{"type":"object","properties":{"request_id":{"type":"string","minLength":1},"room_id":{"type":"string","minLength":1},"participant_id":{"type":"string","minLength":1},"presence":{"enum":["online","away","busy","offline"]}},"required":["request_id","room_id","participant_id","presence"],"additionalProperties":false}|
-        )
+      Zoi.map(
+        %{
+          "request_id" => Zoi.string() |> Zoi.min(1),
+          "room_id" => Zoi.string() |> Zoi.min(1),
+          "participant_id" => Zoi.string() |> Zoi.min(1),
+          "presence" => Zoi.enum(["online", "away", "busy", "offline"])
+        },
+        strict: true
       )
 end

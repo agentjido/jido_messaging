@@ -12,9 +12,115 @@ defmodule Jido.Messaging.Signal.RoomMessageAdded do
     dataschema: "urn:jido:messaging:schema:room_message_added:1",
     default_source: "urn:jido:messaging:instance:aW5zdGFuY2UvYWxwaGE",
     schema:
-      Zoi.from_json_schema(
-        Jason.decode!(
-          ~S|{"type":"object","properties":{"message":{"type":"object","properties":{"id":{"type":"string","minLength":1},"room_id":{"type":"string","minLength":1},"text":{"type":"string"},"sender":{"type":"object","properties":{"id":{"type":"string","minLength":1},"username":{"type":"string"},"display_name":{"type":"string"},"is_bot":{"type":"boolean"},"is_self":{"type":"boolean"}},"required":["id"],"additionalProperties":false},"thread_id":{"anyOf":[{"type":"string","minLength":1},{"type":"null"}]},"reply_to_id":{"anyOf":[{"type":"string","minLength":1},{"type":"null"}]},"media":{"type":"array","items":{"type":"object","properties":{"kind":{"enum":["image","audio","video","file"]},"resource_ref":{"type":"object","properties":{"id":{"type":"string","minLength":1},"scope":{"enum":["call"]},"binding_id":{"type":"string","minLength":1},"kind":{"enum":["file","media","stream","card","modal","result"]}},"required":["id","scope","binding_id","kind"],"additionalProperties":false},"name":{"type":"string"},"media_type":{"type":"string"},"caption":{"type":"string"}},"required":["kind","resource_ref"],"additionalProperties":false}},"timestamp":{"type":"string"},"status":{"enum":["sending","sent","delivered","read","failed","received","pending","updated","deleted"]},"role":{"enum":["user","assistant","system","tool"]}},"required":["id","room_id"],"additionalProperties":false},"message_id":{"type":"string","minLength":1},"room_id":{"type":"string","minLength":1},"thread_id":{"anyOf":[{"type":"string","minLength":1},{"type":"null"}]},"reply_to_id":{"anyOf":[{"type":"string","minLength":1},{"type":"null"}]},"sender_id":{"type":"string","minLength":1},"text":{"type":"string"},"role":{"enum":["user","assistant","system","tool"]},"status":{"enum":["sending","sent","delivered","read","failed","received","pending","updated","deleted"]},"external_room_id":{"type":"string","minLength":1},"external_message_id":{"type":"string","minLength":1},"bridge_id":{"type":"string","minLength":1},"resource_ref":{"type":"object","properties":{"id":{"type":"string","minLength":1},"scope":{"enum":["call"]},"binding_id":{"type":"string","minLength":1},"kind":{"enum":["result"]}},"required":["id","scope","binding_id","kind"],"additionalProperties":false}},"required":["message_id","room_id","sender_id"],"additionalProperties":false}|
-        )
+      Zoi.map(
+        %{
+          "message" =>
+            Zoi.map(
+              %{
+                "id" => Zoi.string() |> Zoi.min(1),
+                "room_id" => Zoi.string() |> Zoi.min(1),
+                "text" => Zoi.string() |> Zoi.optional(),
+                "sender" =>
+                  Zoi.map(
+                    %{
+                      "id" => Zoi.string() |> Zoi.min(1),
+                      "username" => Zoi.string() |> Zoi.optional(),
+                      "display_name" => Zoi.string() |> Zoi.optional(),
+                      "is_bot" => Zoi.boolean() |> Zoi.optional(),
+                      "is_self" => Zoi.boolean() |> Zoi.optional()
+                    },
+                    strict: true
+                  )
+                  |> Zoi.optional(),
+                "thread_id" =>
+                  Zoi.union([
+                    Zoi.string() |> Zoi.min(1),
+                    Zoi.null()
+                  ])
+                  |> Zoi.optional(),
+                "reply_to_id" =>
+                  Zoi.union([
+                    Zoi.string() |> Zoi.min(1),
+                    Zoi.null()
+                  ])
+                  |> Zoi.optional(),
+                "media" =>
+                  Zoi.array(
+                    Zoi.map(
+                      %{
+                        "kind" => Zoi.enum(["image", "audio", "video", "file"]),
+                        "resource_ref" =>
+                          Zoi.map(
+                            %{
+                              "id" => Zoi.string() |> Zoi.min(1),
+                              "scope" => Zoi.enum(["call"]),
+                              "binding_id" => Zoi.string() |> Zoi.min(1),
+                              "kind" => Zoi.enum(["file", "media", "stream", "card", "modal", "result"])
+                            },
+                            strict: true
+                          ),
+                        "name" => Zoi.string() |> Zoi.optional(),
+                        "media_type" => Zoi.string() |> Zoi.optional(),
+                        "caption" => Zoi.string() |> Zoi.optional()
+                      },
+                      strict: true
+                    )
+                  )
+                  |> Zoi.optional(),
+                "timestamp" => Zoi.string() |> Zoi.optional(),
+                "status" =>
+                  Zoi.enum([
+                    "sending",
+                    "sent",
+                    "delivered",
+                    "read",
+                    "failed",
+                    "received",
+                    "pending",
+                    "updated",
+                    "deleted"
+                  ])
+                  |> Zoi.optional(),
+                "role" => Zoi.enum(["user", "assistant", "system", "tool"]) |> Zoi.optional()
+              },
+              strict: true
+            )
+            |> Zoi.optional(),
+          "message_id" => Zoi.string() |> Zoi.min(1),
+          "room_id" => Zoi.string() |> Zoi.min(1),
+          "thread_id" =>
+            Zoi.union([
+              Zoi.string() |> Zoi.min(1),
+              Zoi.null()
+            ])
+            |> Zoi.optional(),
+          "reply_to_id" =>
+            Zoi.union([
+              Zoi.string() |> Zoi.min(1),
+              Zoi.null()
+            ])
+            |> Zoi.optional(),
+          "sender_id" => Zoi.string() |> Zoi.min(1),
+          "text" => Zoi.string() |> Zoi.optional(),
+          "role" => Zoi.enum(["user", "assistant", "system", "tool"]) |> Zoi.optional(),
+          "status" =>
+            Zoi.enum(["sending", "sent", "delivered", "read", "failed", "received", "pending", "updated", "deleted"])
+            |> Zoi.optional(),
+          "external_room_id" => Zoi.string() |> Zoi.min(1) |> Zoi.optional(),
+          "external_message_id" => Zoi.string() |> Zoi.min(1) |> Zoi.optional(),
+          "bridge_id" => Zoi.string() |> Zoi.min(1) |> Zoi.optional(),
+          "resource_ref" =>
+            Zoi.map(
+              %{
+                "id" => Zoi.string() |> Zoi.min(1),
+                "scope" => Zoi.enum(["call"]),
+                "binding_id" => Zoi.string() |> Zoi.min(1),
+                "kind" => Zoi.enum(["result"])
+              },
+              strict: true
+            )
+            |> Zoi.optional()
+        },
+        strict: true
       )
 end

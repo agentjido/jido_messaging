@@ -12,9 +12,13 @@ defmodule Jido.Messaging.Signal.ThreadCreated do
     dataschema: "urn:jido:messaging:schema:thread_created:1",
     default_source: "urn:jido:messaging:instance:aW5zdGFuY2UvYWxwaGE",
     schema:
-      Zoi.from_json_schema(
-        Jason.decode!(
-          ~S|{"type":"object","properties":{"room_id":{"type":"string","minLength":1},"thread_id":{"type":"string","minLength":1},"message_id":{"type":"string","minLength":1},"participant_id":{"type":"string","minLength":1}},"required":["room_id","thread_id"],"additionalProperties":false}|
-        )
+      Zoi.map(
+        %{
+          "room_id" => Zoi.string() |> Zoi.min(1),
+          "thread_id" => Zoi.string() |> Zoi.min(1),
+          "message_id" => Zoi.string() |> Zoi.min(1) |> Zoi.optional(),
+          "participant_id" => Zoi.string() |> Zoi.min(1) |> Zoi.optional()
+        },
+        strict: true
       )
 end

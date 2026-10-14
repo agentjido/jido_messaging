@@ -12,9 +12,12 @@ defmodule Jido.Messaging.Signal.ParticipantLeft do
     dataschema: "urn:jido:messaging:schema:room_participant_left:1",
     default_source: "urn:jido:messaging:instance:aW5zdGFuY2UvYWxwaGE",
     schema:
-      Zoi.from_json_schema(
-        Jason.decode!(
-          ~S|{"type":"object","properties":{"room_id":{"type":"string","minLength":1},"participant_id":{"type":"string","minLength":1},"reason":{"type":"string"}},"required":["room_id","participant_id","reason"],"additionalProperties":false}|
-        )
+      Zoi.map(
+        %{
+          "room_id" => Zoi.string() |> Zoi.min(1),
+          "participant_id" => Zoi.string() |> Zoi.min(1),
+          "reason" => Zoi.string()
+        },
+        strict: true
       )
 end

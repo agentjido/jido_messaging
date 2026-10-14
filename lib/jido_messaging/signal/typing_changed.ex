@@ -12,9 +12,18 @@ defmodule Jido.Messaging.Signal.TypingChanged do
     dataschema: "urn:jido:messaging:schema:participant_typing:1",
     default_source: "urn:jido:messaging:instance:aW5zdGFuY2UvYWxwaGE",
     schema:
-      Zoi.from_json_schema(
-        Jason.decode!(
-          ~S|{"type":"object","properties":{"room_id":{"type":"string","minLength":1},"participant_id":{"type":"string","minLength":1},"typing":{"type":"boolean"},"thread_id":{"anyOf":[{"type":"string","minLength":1},{"type":"null"}]}},"required":["room_id","participant_id","typing"],"additionalProperties":false}|
-        )
+      Zoi.map(
+        %{
+          "room_id" => Zoi.string() |> Zoi.min(1),
+          "participant_id" => Zoi.string() |> Zoi.min(1),
+          "typing" => Zoi.boolean(),
+          "thread_id" =>
+            Zoi.union([
+              Zoi.string() |> Zoi.min(1),
+              Zoi.null()
+            ])
+            |> Zoi.optional()
+        },
+        strict: true
       )
 end

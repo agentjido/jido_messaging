@@ -12,9 +12,13 @@ defmodule Jido.Messaging.Signal.ReactionAdded do
     dataschema: "urn:jido:messaging:schema:message_reaction_added:1",
     default_source: "urn:jido:messaging:instance:aW5zdGFuY2UvYWxwaGE",
     schema:
-      Zoi.from_json_schema(
-        Jason.decode!(
-          ~S|{"type":"object","properties":{"room_id":{"type":"string","minLength":1},"message_id":{"type":"string","minLength":1},"participant_id":{"type":"string","minLength":1},"reaction":{"type":"string","minLength":1}},"required":["room_id","message_id","participant_id","reaction"],"additionalProperties":false}|
-        )
+      Zoi.map(
+        %{
+          "room_id" => Zoi.string() |> Zoi.min(1),
+          "message_id" => Zoi.string() |> Zoi.min(1),
+          "participant_id" => Zoi.string() |> Zoi.min(1),
+          "reaction" => Zoi.string() |> Zoi.min(1)
+        },
+        strict: true
       )
 end
