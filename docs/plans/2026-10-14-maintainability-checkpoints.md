@@ -8,8 +8,8 @@ record formats stable. Do not combine all review changes in one checkpoint.
 | Checkpoint | Review items | Work | Status |
 | --- | --- | --- | --- |
 | C1 | R1, R2 | Add PostgreSQL principal and authorization storage. Run all PostgreSQL tests in CI. Test a typed command with a real database. | Complete; local tests and CI passed |
-| C2 | R3 | Reuse native Zoi schemas and operation metadata. Prove payload compatibility. | Implemented; local tests passed |
-| C3 | R4, R5 | Extract entry-module workflows and ingest stages. Keep public forwarding functions and commit rules. | Pending |
+| C2 | R3 | Reuse native Zoi schemas and operation metadata. Prove payload compatibility. | Complete; local tests and CI passed |
+| C3 | R4, R5 | Extract entry-module workflows and ingest stages. Keep public forwarding functions and commit rules. | Implemented; local tests passed |
 | C4 | R6 | Separate storage feature contracts and shared pure rules. Define stored-record compatibility. | Pending |
 | C5 | R7, R8 | Define process ownership, provider-call boundaries, and request retention. Measure queue behavior before concurrency changes. | Pending |
 
@@ -92,4 +92,48 @@ operation mappings, and nested validation rules. Production-source coverage is
 Format, compilation with warnings treated as errors, and 16 Credo checks passed.
 
 The saved C2 checkpoint report contains the final commit and CI results.
-C3–C5 remain pending.
+Commit `1770bc3` passed 22 CI checks; one experimental compile check was skipped.
+
+## C3 scope and checks
+
+Move assignment and recovery, room setup, and transcript workflows into
+internal modules. Keep public functions as forwarding functions with their
+existing guards and default arguments. Keep the instance macro unchanged.
+Document the application, record, and operator entry paths.
+
+Extract ingest policy and thread workflows. Use plain preparation, policy,
+commit, and publication stages with typed transient data. Keep the original
+write, read-back, duplicate-claim, rollback, and observation rules.
+
+Compare moved function bodies with the baseline. Compare compiled public
+function and macro exports. Run stage-order tests on both the original code
+and the extracted code. Check policy denial, failures after writes, uncertain
+store outcomes, automatic thread work, assignment recovery, room setup, and
+history scope. Run the complete Messaging suite, PostgreSQL tests, coverage,
+format, compilation, static checks, and CI.
+
+See [Workflow boundaries](../workflow-boundaries.md) for ownership and commit
+rules. Stop after C3 and report its results. C4 and C5 remain pending.
+
+## C3 local result
+
+Fourteen public functions now forward to assignment, room setup, and transcript
+owners. The entry module is 2,308 lines, down from 3,281. Ingest is 821 lines,
+down from 1,470. Policy and thread work are separate internal modules. The
+coordinator has explicit preparation, policy, commit, and publication stages.
+
+All 193 copied function clauses match the baseline after internal export and
+name changes. The 14 forwarding function heads, guards, and defaults match.
+The instance macro, canonical commit function, observation handler, and
+duplicate-claim finalization functions match. Compiled public function and
+macro exports are unchanged. Stored record and public Signal schemas are
+unchanged.
+
+The stage-order tests passed before and after extraction. All 237 focused tests
+and all 2,220 Messaging tests passed. The full suite includes local integration,
+story, and PostgreSQL tests. Production-source coverage is 90.0% (11,512 of
+12,781 lines). Format, compilation with warnings treated as errors, and 16
+Credo checks passed.
+
+The saved C3 report contains the final commit and CI results. C4 and C5 remain
+pending.

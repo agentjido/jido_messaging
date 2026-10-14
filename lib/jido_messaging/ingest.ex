@@ -22,6 +22,7 @@ defmodule Jido.Messaging.Ingest do
   require Logger
 
   alias Jido.Chat.Content.Text
+  alias Jido.Messaging.Ingest.{Policy, Prepared, ThreadScope}
 
   alias Jido.Messaging.{
     Authorship,
@@ -31,14 +32,12 @@ defmodule Jido.Messaging.Ingest do
     MediaPolicy,
     MsgContext,
     MsgContext.Normalizer,
-    MsgContext.CommandParser,
     RoomServer,
     RoomSupervisor,
     Security,
     SessionKey,
     SessionManager,
-    Signal,
-    Thread
+    Signal
   }
 
   @type incoming :: map()
@@ -49,9 +48,6 @@ defmodule Jido.Messaging.Ingest do
   @type ingest_opts :: keyword()
 
   @type context :: Context.t()
-
-  @default_policy_timeout_ms 50
-  @default_timeout_fallback :deny
 
   @doc false
   @spec accept_fact(module(), Jido.Chat.Binding.t(), Jido.Signal.t()) ::
@@ -328,6 +324,23 @@ defmodule Jido.Messaging.Ingest do
          incoming,
          opts
        ) do
+    with {:ok, prepared} <-
+           prepare_incoming(messaging_module, channel_module, channel_type, bridge_id, external_room_id, incoming, opts),
+         {:ok, message} <- Policy.evaluate(prepared.message, prepared.msg_context, prepared.opts),
+         {:ok, persisted_message} <- commit_message(prepared.instance, message) do
+      publish_accepted(prepared, persisted_message)
+    end
+  end
+
+  defp prepare_incoming(
+         messaging_module,
+         channel_module,
+         channel_type,
+         bridge_id,
+         external_room_id,
+         incoming,
+         opts
+       ) do
     incoming = Map.put(incoming, :external_user_id, external_user_id(incoming))
     raw_payload = incoming_raw_payload(incoming)
 
@@ -348,7 +361,7 @@ defmodule Jido.Messaging.Ingest do
            ),
          msg_context <- build_msg_context(channel_module, bridge_id, incoming, room, participant, opts),
          {:ok, thread} <-
-           resolve_thread_scope(
+           ThreadScope.resolve(
              messaging_module,
              room_server,
              room,
@@ -367,75 +380,110 @@ defmodule Jido.Messaging.Ingest do
              opts
            ),
          message <- Identity.put_authorship(message, authorship),
-         message <- put_verify_metadata(message, verify_result),
-         {:ok, policy_message} <- apply_policy_pipeline(message, msg_context, opts),
-         {:ok, persisted_message} <- persist_message(messaging_module, policy_message) do
-      {persisted_message, thread} =
-        complete_thread_scope(
-          messaging_module,
-          channel_module,
-          room_server,
-          room,
-          incoming,
-          msg_context,
-          thread,
-          persisted_message,
-          opts
-        )
-
-      resolved_msg_context = MsgContext.with_resolved(msg_context, room, participant, persisted_message)
-      resolved_msg_context = put_thread_context(resolved_msg_context, thread, persisted_message, external_room_id)
-
-      context =
-        Context.new(%{
-          room: room,
-          participant: participant,
-          thread: thread,
-          channel: channel_module,
-          bridge_id: bridge_id,
-          channel_type: channel_type,
-          external_room_id: to_string(external_room_id),
-          external_thread_id: resolved_msg_context.external_thread_id,
-          delivery_external_room_id: resolved_msg_context.delivery_external_room_id || to_string(external_room_id),
-          room_id: room.id,
-          thread_id: resolved_msg_context.thread_id,
-          participant_id: participant.id,
-          instance_module: messaging_module,
-          parent_signal: opts[:parent_signal],
-          msg_context: resolved_msg_context
-        })
-
-      after_accept(persisted_message, context, fn ->
-        persist_session_route(
-          messaging_module,
-          resolved_msg_context,
-          room,
-          channel_type,
-          bridge_id,
-          external_room_id
-        )
-      end)
-
-      after_accept(persisted_message, context, fn ->
-        ensure_thread_runner(messaging_module, room, room_server, thread)
-      end)
-
-      after_accept(persisted_message, context, fn ->
-        add_to_room_server(messaging_module, room, persisted_message, participant, context)
-      end)
-
-      Logger.debug("[Jido.Messaging.Ingest] Message #{persisted_message.id} ingested in room #{room.id}")
-
-      if Keyword.get(opts, :emit_received, true),
-        do: after_accept(persisted_message, context, fn -> Signal.emit_received(persisted_message, context) end)
-
-      {:ok, persisted_message, context}
+         message <- put_verify_metadata(message, verify_result) do
+      {:ok,
+       %Prepared{
+         instance: messaging_module,
+         adapter: channel_module,
+         channel_type: channel_type,
+         bridge_id: bridge_id,
+         external_room_id: external_room_id,
+         incoming: incoming,
+         opts: opts,
+         room: room,
+         room_server: room_server,
+         participant: participant,
+         msg_context: msg_context,
+         thread: thread,
+         message: message
+       }}
     end
+  end
+
+  # Only committed messages enter this stage. Observation failures cannot
+  # release their dedupe claim or change their successful acceptance result.
+  defp publish_accepted(
+         %Prepared{
+           instance: messaging_module,
+           adapter: channel_module,
+           channel_type: channel_type,
+           bridge_id: bridge_id,
+           external_room_id: external_room_id,
+           incoming: incoming,
+           opts: opts,
+           room: room,
+           room_server: room_server,
+           participant: participant,
+           msg_context: msg_context,
+           thread: thread
+         },
+         persisted_message
+       ) do
+    {persisted_message, thread} =
+      ThreadScope.complete(
+        messaging_module,
+        channel_module,
+        room_server,
+        room,
+        incoming,
+        msg_context,
+        thread,
+        persisted_message,
+        opts
+      )
+
+    resolved_msg_context = MsgContext.with_resolved(msg_context, room, participant, persisted_message)
+    resolved_msg_context = ThreadScope.put_context(resolved_msg_context, thread, persisted_message, external_room_id)
+
+    context =
+      Context.new(%{
+        room: room,
+        participant: participant,
+        thread: thread,
+        channel: channel_module,
+        bridge_id: bridge_id,
+        channel_type: channel_type,
+        external_room_id: to_string(external_room_id),
+        external_thread_id: resolved_msg_context.external_thread_id,
+        delivery_external_room_id: resolved_msg_context.delivery_external_room_id || to_string(external_room_id),
+        room_id: room.id,
+        thread_id: resolved_msg_context.thread_id,
+        participant_id: participant.id,
+        instance_module: messaging_module,
+        parent_signal: opts[:parent_signal],
+        msg_context: resolved_msg_context
+      })
+
+    after_accept(persisted_message, context, fn ->
+      persist_session_route(
+        messaging_module,
+        resolved_msg_context,
+        room,
+        channel_type,
+        bridge_id,
+        external_room_id
+      )
+    end)
+
+    after_accept(persisted_message, context, fn ->
+      ThreadScope.ensure_runner(messaging_module, room, room_server, thread)
+    end)
+
+    after_accept(persisted_message, context, fn ->
+      add_to_room_server(messaging_module, room, persisted_message, participant, context)
+    end)
+
+    Logger.debug("[Jido.Messaging.Ingest] Message #{persisted_message.id} ingested in room #{room.id}")
+
+    if Keyword.get(opts, :emit_received, true),
+      do: after_accept(persisted_message, context, fn -> Signal.emit_received(persisted_message, context) end)
+
+    {:ok, persisted_message, context}
   end
 
   # A store may fail after its write. Read the same prepared ID before deciding
   # whether acceptance failed; never build and write a second message here.
-  defp persist_message(instance, %Message{id: id} = message) do
+  defp commit_message(instance, %Message{id: id} = message) do
     case safely(fn -> instance.save_message_struct(message) end) do
       {:ok, %Message{id: ^id} = saved} ->
         {:ok, saved}
@@ -661,292 +709,6 @@ defmodule Jido.Messaging.Ingest do
     end)
   end
 
-  defp resolve_thread_scope(
-         messaging_module,
-         room_server,
-         room,
-         incoming,
-         %MsgContext{} = msg_context
-       ) do
-    case Map.get(incoming, :external_thread_id) do
-      external_thread_id when is_binary(external_thread_id) ->
-        get_or_create_thread(
-          messaging_module,
-          room.id,
-          %{
-            external_thread_id: external_thread_id,
-            delivery_external_room_id:
-              stringify_if_present(
-                Map.get(incoming, :delivery_external_room_id) || Map.get(incoming, :external_room_id)
-              ),
-            root_external_message_id: stringify_if_present(Map.get(incoming, :external_reply_to_id)),
-            metadata: %{source: :incoming_thread}
-          }
-        )
-        |> maybe_assign_thread(messaging_module, room_server, room.id, msg_context)
-
-      _ ->
-        {:ok, nil}
-    end
-  end
-
-  # The canonical message is accepted before automatic provider work starts.
-  # Later thread-link failure cannot release that accepted message for replay.
-  defp complete_thread_scope(instance, adapter, server, room, incoming, context, thread, message, opts) do
-    thread_result =
-      if thread,
-        do: {:ok, thread},
-        else: maybe_open_thread_for_assignment(instance, adapter, server, room, incoming, context, opts)
-
-    with {:ok, thread} <- thread_result,
-         thread <- maybe_backfill_thread_root(instance, thread, message),
-         {:ok, saved} <- persist_thread_link(instance, message, thread) do
-      {saved, thread}
-    else
-      {:error, _} -> thread_scope_failed(instance, message, context, opts)
-    end
-  rescue
-    _ -> thread_scope_failed(instance, message, context, opts)
-  catch
-    _, _ -> thread_scope_failed(instance, message, context, opts)
-  end
-
-  defp persist_thread_link(_instance, message, nil), do: {:ok, message}
-  defp persist_thread_link(_instance, %{thread_id: id} = message, %{id: id}), do: {:ok, message}
-
-  defp persist_thread_link(instance, message, thread) do
-    instance.save_message_struct(%{
-      message
-      | thread_id: thread.id,
-        external_thread_id: thread.external_thread_id,
-        delivery_external_room_id: thread.delivery_external_room_id
-    })
-  end
-
-  defp thread_scope_failed(instance, message, context, opts) do
-    Signal.emit_failed(message.room_id, :persistence_failed, %{
-      instance_module: instance,
-      message_id: message.id,
-      bridge_id: context.bridge_id,
-      parent_signal: opts[:parent_signal]
-    })
-
-    Logger.warning("[Jido.Messaging.Ingest] Accepted message thread link failed")
-    {message, nil}
-  end
-
-  defp maybe_open_thread_for_assignment(
-         messaging_module,
-         channel_module,
-         room_server,
-         room,
-         incoming,
-         %MsgContext{} = msg_context,
-         opts
-       ) do
-    case resolve_target_agent(room_server, msg_context.agent_mentions) do
-      {:ok, agent_id} ->
-        if Map.get(incoming, :external_message_id) do
-          with {:ok, result} <-
-                 open_thread(
-                   channel_module,
-                   incoming.external_room_id,
-                   incoming.external_message_id,
-                   open_thread_opts(msg_context, incoming)
-                   |> Keyword.put(:instance_module, messaging_module)
-                   |> Keyword.put(:bridge_id, msg_context.bridge_id)
-                   |> Keyword.put(:parent_signal, opts[:parent_signal])
-                 ),
-               {:ok, thread} <-
-                 get_or_create_thread(messaging_module, room.id, %{
-                   external_thread_id: stringify_if_present(result_value(result, :external_thread_id)),
-                   delivery_external_room_id:
-                     stringify_if_present(
-                       result_value(result, :delivery_external_room_id) || Map.get(incoming, :external_room_id)
-                     ),
-                   root_external_message_id: stringify_if_present(Map.get(incoming, :external_message_id)),
-                   metadata: %{source: :opened_from_root}
-                 }),
-               {:ok, assigned_thread} <-
-                 assign_resolved_thread(messaging_module, room_server, room.id, thread, agent_id) do
-            {:ok, assigned_thread}
-          else
-            {:error, :unsupported} -> {:ok, nil}
-            {:error, _reason} -> {:ok, nil}
-          end
-        else
-          {:ok, nil}
-        end
-
-      _ ->
-        {:ok, nil}
-    end
-  end
-
-  defp open_thread(channel_module, external_room_id, external_message_id, opts) do
-    Jido.Messaging.AdapterBridge.operation(
-      channel_module,
-      :open_thread,
-      %{"room_id" => to_string(external_room_id), "message_id" => to_string(external_message_id)},
-      opts
-    )
-  end
-
-  defp get_or_create_thread(messaging_module, room_id, attrs) do
-    external_thread_id = attrs[:external_thread_id]
-
-    if is_binary(external_thread_id) do
-      case messaging_module.get_thread_by_external_id(room_id, external_thread_id) do
-        {:ok, thread} ->
-          {:ok, merge_thread_fields(messaging_module, thread, attrs)}
-
-        {:error, :not_found} ->
-          messaging_module.save_thread(Map.put(attrs, :room_id, room_id))
-      end
-    else
-      {:ok, nil}
-    end
-  end
-
-  defp merge_thread_fields(messaging_module, %Thread{} = thread, attrs) do
-    updated_thread =
-      thread
-      |> Map.merge(%{
-        delivery_external_room_id: attrs[:delivery_external_room_id] || thread.delivery_external_room_id,
-        root_external_message_id: attrs[:root_external_message_id] || thread.root_external_message_id,
-        metadata: Map.merge(thread.metadata || %{}, attrs[:metadata] || %{}),
-        updated_at: DateTime.utc_now()
-      })
-
-    {:ok, persisted_thread} = messaging_module.save_thread_struct(updated_thread)
-    persisted_thread
-  end
-
-  defp maybe_assign_thread({:ok, nil}, _messaging_module, _room_server, _room_id, _msg_context), do: {:ok, nil}
-
-  defp maybe_assign_thread({:ok, %Thread{} = thread}, messaging_module, room_server, room_id, msg_context) do
-    case resolve_target_agent(room_server, msg_context.agent_mentions) do
-      {:ok, agent_id} -> assign_resolved_thread(messaging_module, room_server, room_id, thread, agent_id)
-      _ -> {:ok, thread}
-    end
-  end
-
-  defp maybe_assign_thread({:error, _reason} = error, _messaging_module, _room_server, _room_id, _msg_context),
-    do: error
-
-  defp assign_resolved_thread(
-         _messaging_module,
-         _room_server,
-         _room_id,
-         %Thread{assigned_agent_id: agent_id} = thread,
-         agent_id
-       ),
-       do: {:ok, thread}
-
-  defp assign_resolved_thread(messaging_module, _room_server, room_id, %Thread{} = thread, agent_id) do
-    case Jido.Messaging.assign_thread(messaging_module, room_id, thread.id, agent_id) do
-      {:ok, assigned_thread} -> {:ok, assigned_thread}
-      {:error, _reason} -> {:ok, thread}
-    end
-  end
-
-  defp resolve_target_agent(_room_server, []), do: {:error, :no_agent_mentions}
-
-  defp resolve_target_agent(room_server, [mention]) do
-    normalized = String.downcase(mention)
-
-    room_server
-    |> RoomServer.list_agents()
-    |> Enum.find(fn agent_spec ->
-      normalized in Map.get(agent_spec, :mention_handles, [])
-    end)
-    |> case do
-      nil -> {:error, :unknown_agent}
-      agent_spec -> {:ok, agent_spec.agent_id}
-    end
-  end
-
-  defp resolve_target_agent(_room_server, _mentions), do: {:error, :ambiguous_agent_mentions}
-
-  defp open_thread_opts(msg_context, incoming) do
-    [
-      topic_name: build_topic_name(msg_context, incoming),
-      agent_mentions: msg_context.agent_mentions,
-      external_thread_id: Map.get(incoming, :external_thread_id)
-    ]
-  end
-
-  defp build_topic_name(%MsgContext{body: body, agent_mentions: [agent | _]}, _incoming)
-       when is_binary(body) do
-    trimmed = body |> String.trim() |> String.slice(0, 40)
-    "@" <> agent <> if(trimmed == "", do: "", else: " " <> trimmed)
-  end
-
-  defp build_topic_name(_msg_context, incoming) do
-    "thread-" <> stringify_if_present(Map.get(incoming, :external_message_id) || Jido.Chat.ID.generate!())
-  end
-
-  defp result_value(result, key) when is_struct(result) do
-    Map.get(result, key) ||
-      case Map.get(result, :metadata) do
-        metadata when is_map(metadata) -> Map.get(metadata, key)
-        _ -> nil
-      end
-  end
-
-  defp result_value(result, key) when is_map(result), do: Map.get(result, key) || Map.get(result, Atom.to_string(key))
-
-  defp maybe_backfill_thread_root(_messaging_module, nil, _message), do: nil
-
-  defp maybe_backfill_thread_root(messaging_module, %Thread{root_message_id: nil} = thread, message) do
-    updated_thread = %{
-      thread
-      | root_message_id: message.id,
-        root_external_message_id: thread.root_external_message_id || message.external_id,
-        updated_at: DateTime.utc_now()
-    }
-
-    {:ok, persisted_thread} = messaging_module.save_thread_struct(updated_thread)
-    persisted_thread
-  end
-
-  defp maybe_backfill_thread_root(_messaging_module, %Thread{} = thread, _message), do: thread
-
-  defp put_thread_context(%MsgContext{} = msg_context, nil, message, external_room_id) do
-    %{
-      msg_context
-      | thread_id: message.thread_id,
-        external_thread_id: message.external_thread_id,
-        delivery_external_room_id: message.delivery_external_room_id || stringify_if_present(external_room_id)
-    }
-  end
-
-  defp put_thread_context(%MsgContext{} = msg_context, %Thread{} = thread, _message, external_room_id) do
-    %{
-      msg_context
-      | thread_id: thread.id,
-        external_thread_id: thread.external_thread_id,
-        delivery_external_room_id: thread.delivery_external_room_id || stringify_if_present(external_room_id)
-    }
-  end
-
-  defp ensure_thread_runner(_messaging_module, _room, _room_server, nil), do: :ok
-
-  defp ensure_thread_runner(messaging_module, room, room_server, %Thread{assigned_agent_id: agent_id, id: thread_id})
-       when is_binary(agent_id) and is_binary(thread_id) do
-    case RoomServer.get_agent(room_server, agent_id) do
-      {:ok, agent_spec} ->
-        _ = Jido.Messaging.assign_thread(messaging_module, room.id, thread_id, agent_id)
-        _ = agent_spec
-        :ok
-
-      _ ->
-        :ok
-    end
-  end
-
-  defp ensure_thread_runner(_messaging_module, _room, _room_server, _thread), do: :ok
-
   defp resolve_reply_to_id(messaging_module, channel_type, bridge_id, room_id, incoming) do
     external_reply_to_id = Map.get(incoming, :external_reply_to_id)
 
@@ -1041,417 +803,6 @@ defmodule Jido.Messaging.Ingest do
   defp map_chat_type(:supergroup), do: :group
   defp map_chat_type(:channel), do: :channel
   defp map_chat_type(_), do: :direct
-
-  defp apply_policy_pipeline(message, %MsgContext{} = msg_context, opts) do
-    initial_state = %{decisions: [], flags: [], modified: false}
-
-    with {:ok, context_policy_state} <- run_context_policy_controls(msg_context, opts, initial_state),
-         {:ok, gating_state} <- run_gating(msg_context, opts, context_policy_state),
-         {:ok, moderated_message, policy_state} <- run_moderation(message, opts, gating_state) do
-      {:ok, put_policy_metadata(moderated_message, policy_state)}
-    end
-  end
-
-  defp run_context_policy_controls(%MsgContext{} = msg_context, opts, state) do
-    with {:ok, state} <- enforce_require_mention(msg_context, opts, state),
-         {:ok, state} <- enforce_allowed_prefixes(msg_context, opts, state) do
-      {:ok, state}
-    end
-  end
-
-  defp enforce_require_mention(%MsgContext{} = msg_context, opts, state) do
-    if Keyword.get(opts, :require_mention, false) and not msg_context.was_mentioned do
-      description = "Message must mention a configured target"
-      decision = build_decision(:gating, :ingest_context_policy, :deny, 0, :mention_required, description)
-      emit_policy_telemetry(decision)
-      {:error, {:policy_denied, :gating, :mention_required, description}}
-    else
-      {:ok, state}
-    end
-  end
-
-  defp enforce_allowed_prefixes(%MsgContext{} = msg_context, opts, state) do
-    allowed_prefixes = normalize_prefixes(Keyword.get(opts, :allowed_prefixes))
-
-    case {allowed_prefixes, msg_context.command} do
-      {[], _} ->
-        {:ok, state}
-
-      {_, %{status: :ok, prefix: prefix}} when is_binary(prefix) ->
-        if prefix in allowed_prefixes do
-          {:ok, state}
-        else
-          description = "Command prefix is not allowed by ingest policy"
-
-          decision =
-            build_decision(
-              :gating,
-              :ingest_context_policy,
-              :deny,
-              0,
-              :command_prefix_not_allowed,
-              description
-            )
-
-          emit_policy_telemetry(decision)
-          {:error, {:policy_denied, :gating, :command_prefix_not_allowed, description}}
-        end
-
-      _ ->
-        {:ok, state}
-    end
-  end
-
-  defp run_gating(msg_context, opts, state) do
-    gaters = Keyword.get(opts, :gaters, [])
-    gater_opts = Keyword.get(opts, :gating_opts, [])
-    timeout_ms = timeout_ms(opts, :gating_timeout_ms)
-
-    case Enum.reduce_while(gaters, {:ok, state}, fn gater, {:ok, current_state} ->
-           case run_policy_module(:gating, gater, fn -> gater.check(msg_context, gater_opts) end, timeout_ms) do
-             {:ok, :allow, elapsed_ms} ->
-               decision = build_decision(:gating, gater, :allow, elapsed_ms)
-               emit_policy_telemetry(decision)
-               {:cont, {:ok, append_decision(current_state, decision)}}
-
-             {:ok, {:deny, reason, description}, elapsed_ms} ->
-               decision = build_decision(:gating, gater, :deny, elapsed_ms, reason, description)
-               emit_policy_telemetry(decision)
-
-               {:halt,
-                {:deny, {:policy_denied, :gating, reason, description}, append_decision(current_state, decision)}}
-
-             {:ok, other, elapsed_ms} ->
-               handle_policy_error(
-                 :gating,
-                 gater,
-                 {:invalid_return, other},
-                 elapsed_ms,
-                 opts,
-                 current_state
-               )
-
-             {:timeout, elapsed_ms} ->
-               handle_policy_timeout(:gating, gater, elapsed_ms, opts, current_state)
-
-             {:error, reason, elapsed_ms} ->
-               handle_policy_error(:gating, gater, reason, elapsed_ms, opts, current_state)
-           end
-         end) do
-      {:ok, final_state} ->
-        {:ok, final_state}
-
-      {:deny, denial, _state} ->
-        {:error, denial}
-    end
-  end
-
-  defp run_moderation(message, opts, state) do
-    moderators = Keyword.get(opts, :moderators, [])
-    moderator_opts = Keyword.get(opts, :moderation_opts, [])
-    timeout_ms = timeout_ms(opts, :moderation_timeout_ms)
-
-    case Enum.reduce_while(moderators, {:ok, message, state}, fn moderator, {:ok, current_message, current_state} ->
-           case run_policy_module(
-                  :moderation,
-                  moderator,
-                  fn -> moderator.moderate(current_message, moderator_opts) end,
-                  timeout_ms
-                ) do
-             {:ok, :allow, elapsed_ms} ->
-               decision = build_decision(:moderation, moderator, :allow, elapsed_ms)
-               emit_policy_telemetry(decision)
-               {:cont, {:ok, current_message, append_decision(current_state, decision)}}
-
-             {:ok, {:flag, reason, description}, elapsed_ms} ->
-               decision = build_decision(:moderation, moderator, :flag, elapsed_ms, reason, description)
-               emit_policy_telemetry(decision)
-               flag = build_flag(:moderation, moderator, reason, description, :moderation)
-
-               {:cont,
-                {:ok, current_message,
-                 current_state
-                 |> append_decision(decision)
-                 |> append_flag(flag)}}
-
-             {:ok, {:modify, %Message{} = modified_message}, elapsed_ms} ->
-               decision = build_decision(:moderation, moderator, :modify, elapsed_ms)
-               emit_policy_telemetry(decision)
-               merged_message = merge_modified_message(current_message, modified_message)
-
-               {:cont,
-                {:ok, merged_message,
-                 current_state
-                 |> append_decision(decision)
-                 |> mark_modified()}}
-
-             {:ok, {:reject, reason, description}, elapsed_ms} ->
-               decision = build_decision(:moderation, moderator, :reject, elapsed_ms, reason, description)
-               emit_policy_telemetry(decision)
-
-               {:halt,
-                {:deny, {:policy_denied, :moderation, reason, description}, current_state |> append_decision(decision)}}
-
-             {:ok, other, elapsed_ms} ->
-               handle_moderation_error(
-                 :moderation,
-                 moderator,
-                 {:invalid_return, other},
-                 elapsed_ms,
-                 opts,
-                 current_message,
-                 current_state
-               )
-
-             {:timeout, elapsed_ms} ->
-               handle_moderation_timeout(
-                 :moderation,
-                 moderator,
-                 elapsed_ms,
-                 opts,
-                 current_message,
-                 current_state
-               )
-
-             {:error, reason, elapsed_ms} ->
-               handle_moderation_error(
-                 :moderation,
-                 moderator,
-                 reason,
-                 elapsed_ms,
-                 opts,
-                 current_message,
-                 current_state
-               )
-           end
-         end) do
-      {:ok, final_message, final_state} ->
-        {:ok, final_message, final_state}
-
-      {:deny, denial, _state} ->
-        {:error, denial}
-    end
-  end
-
-  defp run_policy_module(_stage, _policy_module, fun, timeout_ms) do
-    started_at = System.monotonic_time(:millisecond)
-
-    case Jido.Messaging.BoundedCall.run(fn -> invoke_policy_module(fun) end, timeout_ms) do
-      {:ok, {:ok, result}} -> {:ok, result, elapsed_ms(started_at)}
-      {:ok, {:error, reason}} -> {:error, reason, elapsed_ms(started_at)}
-      {:exit, reason} -> {:error, reason, elapsed_ms(started_at)}
-      :timeout -> {:timeout, elapsed_ms(started_at)}
-    end
-  end
-
-  defp invoke_policy_module(fun) do
-    {:ok, fun.()}
-  rescue
-    exception -> {:error, {:exception, exception}}
-  catch
-    kind, reason -> {:error, {kind, reason}}
-  end
-
-  defp handle_policy_timeout(stage, policy_module, elapsed_ms, opts, state) do
-    fallback = timeout_fallback(opts)
-
-    decision =
-      build_decision(
-        stage,
-        policy_module,
-        :timeout,
-        elapsed_ms,
-        :policy_timeout,
-        "Policy module timed out",
-        fallback
-      )
-
-    emit_policy_telemetry(decision)
-    next_state = append_decision(state, decision)
-
-    case fallback do
-      :allow_with_flag ->
-        flag =
-          build_flag(
-            stage,
-            policy_module,
-            :policy_timeout,
-            "Policy module timed out",
-            :timeout_fallback
-          )
-
-        {:cont, {:ok, append_flag(next_state, flag)}}
-
-      :deny ->
-        {:halt, {:deny, {:policy_denied, stage, :policy_timeout, "Policy module timed out"}, next_state}}
-    end
-  end
-
-  defp handle_moderation_timeout(stage, policy_module, elapsed_ms, opts, message, state) do
-    case handle_policy_timeout(stage, policy_module, elapsed_ms, opts, state) do
-      {:cont, {:ok, next_state}} -> {:cont, {:ok, message, next_state}}
-      {:halt, {:deny, denial, next_state}} -> {:halt, {:deny, denial, next_state}}
-    end
-  end
-
-  defp handle_policy_error(stage, policy_module, reason, elapsed_ms, opts, state) do
-    fallback = error_fallback(opts)
-    description = "Policy module failed: #{inspect(reason)}"
-
-    decision =
-      build_decision(
-        stage,
-        policy_module,
-        :error,
-        elapsed_ms,
-        :policy_error,
-        description,
-        fallback
-      )
-
-    emit_policy_telemetry(decision)
-    next_state = append_decision(state, decision)
-
-    case fallback do
-      :allow_with_flag ->
-        flag = build_flag(stage, policy_module, :policy_error, description, :error_fallback)
-        {:cont, {:ok, append_flag(next_state, flag)}}
-
-      :deny ->
-        {:halt, {:deny, {:policy_denied, stage, :policy_error, description}, next_state}}
-    end
-  end
-
-  defp handle_moderation_error(stage, policy_module, reason, elapsed_ms, opts, message, state) do
-    case handle_policy_error(stage, policy_module, reason, elapsed_ms, opts, state) do
-      {:cont, {:ok, next_state}} -> {:cont, {:ok, message, next_state}}
-      {:halt, {:deny, denial, next_state}} -> {:halt, {:deny, denial, next_state}}
-    end
-  end
-
-  defp merge_modified_message(%Message{} = original, %Message{} = modified) do
-    merged_metadata =
-      Map.merge(original.metadata || %{}, modified.metadata || %{})
-
-    %{
-      modified
-      | id: original.id,
-        room_id: original.room_id,
-        sender_id: original.sender_id,
-        role: original.role,
-        reply_to_id: original.reply_to_id,
-        external_id: original.external_id,
-        external_reply_to_id: original.external_reply_to_id,
-        thread_id: original.thread_id,
-        external_thread_id: original.external_thread_id,
-        delivery_external_room_id: original.delivery_external_room_id,
-        status: original.status,
-        inserted_at: original.inserted_at,
-        metadata: merged_metadata
-    }
-  end
-
-  defp append_decision(state, decision) do
-    %{state | decisions: [decision | state.decisions]}
-  end
-
-  defp append_flag(state, flag) do
-    %{state | flags: [flag | state.flags]}
-  end
-
-  defp mark_modified(state) do
-    %{state | modified: true}
-  end
-
-  defp put_policy_metadata(message, %{decisions: decisions, flags: flags, modified: modified}) do
-    if decisions == [] and flags == [] and not modified do
-      message
-    else
-      existing_policy = Map.get(message.metadata, :policy, %{})
-
-      policy_metadata =
-        Map.merge(
-          existing_policy,
-          %{
-            decisions: Enum.reverse(decisions),
-            flags: Enum.reverse(flags),
-            modified: modified,
-            flagged: flags != []
-          },
-          fn
-            :decisions, left, right when is_list(left) -> left ++ right
-            :flags, left, right when is_list(left) -> left ++ right
-            _, _, right -> right
-          end
-        )
-
-      %{message | metadata: Map.put(message.metadata, :policy, policy_metadata)}
-    end
-  end
-
-  defp build_decision(stage, policy_module, outcome, elapsed_ms, reason \\ nil, description \\ nil, fallback \\ nil) do
-    %{
-      stage: stage,
-      policy_module: policy_module,
-      outcome: outcome,
-      elapsed_ms: elapsed_ms,
-      reason: reason,
-      description: description,
-      fallback: fallback
-    }
-    |> Enum.reject(fn {_k, v} -> is_nil(v) end)
-    |> Map.new()
-  end
-
-  defp build_flag(stage, policy_module, reason, description, source) do
-    %{
-      stage: stage,
-      policy_module: policy_module,
-      reason: reason,
-      description: description,
-      source: source
-    }
-  end
-
-  defp emit_policy_telemetry(decision) do
-    measurements = %{elapsed_ms: Map.get(decision, :elapsed_ms, 0)}
-
-    metadata =
-      decision
-      |> Map.take([:stage, :policy_module, :outcome, :reason, :fallback])
-      |> Enum.reject(fn {_k, v} -> is_nil(v) end)
-      |> Map.new()
-
-    :telemetry.execute([:jido_messaging, :ingest, :policy, :decision], measurements, metadata)
-  end
-
-  defp timeout_ms(opts, key) do
-    case Keyword.get(opts, key, @default_policy_timeout_ms) do
-      value when is_integer(value) and value > 0 -> value
-      _ -> @default_policy_timeout_ms
-    end
-  end
-
-  defp timeout_fallback(opts) do
-    normalize_fallback(Keyword.get(opts, :policy_timeout_fallback, @default_timeout_fallback))
-  end
-
-  defp error_fallback(opts) do
-    default = timeout_fallback(opts)
-    normalize_fallback(Keyword.get(opts, :policy_error_fallback, default))
-  end
-
-  defp normalize_fallback(:allow_with_flag), do: :allow_with_flag
-  defp normalize_fallback(:deny), do: :deny
-  defp normalize_fallback(_), do: @default_timeout_fallback
-
-  defp elapsed_ms(started_at) do
-    System.monotonic_time(:millisecond) - started_at
-  end
-
-  defp normalize_prefixes(nil), do: []
-  defp normalize_prefixes(prefixes) when is_list(prefixes), do: CommandParser.normalize_prefixes(prefixes)
-  defp normalize_prefixes(_), do: []
 
   defp add_to_room_server(messaging_module, room, message, participant, context) do
     case RoomSupervisor.get_or_start_room(messaging_module, room) do

@@ -17,3 +17,8 @@ Keep these fixtures fixed during refactors. Change them only when a separate
 public contract change is approved. The contract test also checks nested field
 rejection, required nullable cursors, operation-specific resource kinds, and
 the different status and failure-code sets.
+
+`entry_api_contracts_v1.json` records function and macro exports for the public
+entry module, Ingest, and a generated instance at commit
+`1770bc3ee070925d3a0c706239de35ac6684a4cb`, before C3. The instance uses PostgreSQL
+and the core profile. Keep default-argument arities as part of this contract.
