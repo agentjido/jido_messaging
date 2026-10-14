@@ -20,6 +20,6 @@ defmodule Jido.Messaging.Signal.ThreadChanged do
           "participant_id" => Zoi.string() |> Zoi.min(1) |> Zoi.optional(),
           "change" => Zoi.enum(["updated", "reopened", "closed"])
         },
-        strict: true
+        unrecognized_keys: :error
       )
 end

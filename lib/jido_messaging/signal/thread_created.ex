@@ -19,6 +19,6 @@ defmodule Jido.Messaging.Signal.ThreadCreated do
           "message_id" => Zoi.string() |> Zoi.min(1) |> Zoi.optional(),
           "participant_id" => Zoi.string() |> Zoi.min(1) |> Zoi.optional()
         },
-        strict: true
+        unrecognized_keys: :error
       )
 end

@@ -70,7 +70,7 @@ defmodule Jido.Messaging.Signal.OperationFailed do
               ]),
             "retryable" => Zoi.boolean()
           },
-          strict: true
+          unrecognized_keys: :error
         ),
         Zoi.map(
           %{
@@ -104,7 +104,7 @@ defmodule Jido.Messaging.Signal.OperationFailed do
                             "message_id" => Zoi.string() |> Zoi.min(1),
                             "attempts" => Zoi.integer() |> Zoi.gte(1)
                           },
-                          strict: true
+                          unrecognized_keys: :error
                         )
                       ),
                     "failed" =>
@@ -122,11 +122,11 @@ defmodule Jido.Messaging.Signal.OperationFailed do
                             "retryable" => Zoi.boolean(),
                             "attempts" => Zoi.integer() |> Zoi.gte(1)
                           },
-                          strict: true
+                          unrecognized_keys: :error
                         )
                       )
                   },
-                  strict: true
+                  unrecognized_keys: :error
                 ),
                 Zoi.map(
                   %{
@@ -138,15 +138,15 @@ defmodule Jido.Messaging.Signal.OperationFailed do
                           "binding_id" => Zoi.string() |> Zoi.min(1),
                           "kind" => Zoi.enum(["file", "media", "stream", "card", "modal", "result"])
                         },
-                        strict: true
+                        unrecognized_keys: :error
                       )
                   },
-                  strict: true
+                  unrecognized_keys: :error
                 )
               ])
               |> Zoi.optional()
           },
-          strict: true
+          unrecognized_keys: :error
         ),
         Zoi.map(
           %{
@@ -202,7 +202,7 @@ defmodule Jido.Messaging.Signal.OperationFailed do
               ]),
             "retryable" => Zoi.boolean()
           },
-          strict: true
+          unrecognized_keys: :error
         )
       ])
 end

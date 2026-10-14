@@ -71,11 +71,11 @@ defmodule Jido.Messaging.Signal.MembershipObserved do
                         "can_edit_tag" => Zoi.boolean() |> Zoi.optional(),
                         "until_date" => Zoi.integer() |> Zoi.gte(0) |> Zoi.optional()
                       },
-                      strict: true
+                      unrecognized_keys: :error
                     )
                     |> Zoi.optional()
                 },
-                strict: true
+                unrecognized_keys: :error
               ),
               Zoi.null()
             ]),
@@ -116,13 +116,13 @@ defmodule Jido.Messaging.Signal.MembershipObserved do
                       "can_edit_tag" => Zoi.boolean() |> Zoi.optional(),
                       "until_date" => Zoi.integer() |> Zoi.gte(0) |> Zoi.optional()
                     },
-                    strict: true
+                    unrecognized_keys: :error
                   )
                   |> Zoi.optional()
               },
-              strict: true
+              unrecognized_keys: :error
             )
         },
-        strict: true
+        unrecognized_keys: :error
       )
 end

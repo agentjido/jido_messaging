@@ -26,6 +26,6 @@ defmodule Jido.Messaging.Signal.PostMessage do
             ])
             |> Zoi.optional()
         },
-        strict: true
+        unrecognized_keys: :error
       )
 end

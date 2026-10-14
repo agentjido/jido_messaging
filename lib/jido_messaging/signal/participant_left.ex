@@ -18,6 +18,6 @@ defmodule Jido.Messaging.Signal.ParticipantLeft do
           "participant_id" => Zoi.string() |> Zoi.min(1),
           "reason" => Zoi.string()
         },
-        strict: true
+        unrecognized_keys: :error
       )
 end

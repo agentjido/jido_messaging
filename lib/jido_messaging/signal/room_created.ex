@@ -18,6 +18,6 @@ defmodule Jido.Messaging.Signal.RoomCreated do
           "name" => Zoi.string() |> Zoi.optional(),
           "kind" => Zoi.enum(["direct", "group", "channel", "thread", "unknown"]) |> Zoi.optional()
         },
-        strict: true
+        unrecognized_keys: :error
       )
 end

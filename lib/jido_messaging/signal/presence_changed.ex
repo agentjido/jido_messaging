@@ -18,6 +18,6 @@ defmodule Jido.Messaging.Signal.PresenceChanged do
           "participant_id" => Zoi.string() |> Zoi.min(1),
           "presence" => Zoi.enum(["online", "away", "busy", "offline"])
         },
-        strict: true
+        unrecognized_keys: :error
       )
 end

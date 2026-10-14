@@ -24,13 +24,13 @@ defmodule Jido.Messaging.Signal.OpenModal do
                 "binding_id" => Zoi.string() |> Zoi.min(1),
                 "kind" => Zoi.enum(["file", "media", "stream", "card", "modal", "result"])
               },
-              strict: true
+              unrecognized_keys: :error
             ),
           "thread_id" => Zoi.string() |> Zoi.min(1) |> Zoi.optional(),
           "reply_to_id" => Zoi.string() |> Zoi.min(1) |> Zoi.optional(),
           "format" => Zoi.enum(["plain", "markdown", "html"]) |> Zoi.optional(),
           "bridge_id" => Zoi.string() |> Zoi.min(1)
         },
-        strict: true
+        unrecognized_keys: :error
       )
 end

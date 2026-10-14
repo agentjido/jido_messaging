@@ -29,6 +29,6 @@ defmodule Jido.Messaging.Signal.FetchChannelMessages do
           "bridge_id" => Zoi.string() |> Zoi.min(1),
           "direction" => Zoi.enum(["forward", "backward"]) |> Zoi.optional()
         },
-        strict: true
+        unrecognized_keys: :error
       )
 end

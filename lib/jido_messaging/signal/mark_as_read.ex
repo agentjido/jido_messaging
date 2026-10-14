@@ -23,6 +23,6 @@ defmodule Jido.Messaging.Signal.MarkAsRead do
           "bridge_id" => Zoi.string() |> Zoi.min(1),
           "read_at" => Zoi.string() |> Zoi.optional()
         },
-        strict: true
+        unrecognized_keys: :error
       )
 end

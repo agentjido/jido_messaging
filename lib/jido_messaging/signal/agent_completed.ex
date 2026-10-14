@@ -20,6 +20,6 @@ defmodule Jido.Messaging.Signal.AgentCompleted do
           "thread_id" => Zoi.string() |> Zoi.min(1) |> Zoi.optional(),
           "code" => Zoi.string() |> Zoi.optional()
         },
-        strict: true
+        unrecognized_keys: :error
       )
 end

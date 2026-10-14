@@ -31,6 +31,6 @@ defmodule Jido.Messaging.Signal.MessageFailed do
               "observation_failed"
             ])
         },
-        strict: true
+        unrecognized_keys: :error
       )
 end

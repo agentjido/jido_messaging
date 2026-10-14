@@ -23,7 +23,7 @@ defmodule Jido.Messaging.Signal.PostProviderMessage do
                   "kind" => Zoi.enum(["text", "markdown"]),
                   "text" => Zoi.string()
                 },
-                strict: true
+                unrecognized_keys: :error
               ),
               Zoi.map(
                 %{
@@ -36,12 +36,12 @@ defmodule Jido.Messaging.Signal.PostProviderMessage do
                         "binding_id" => Zoi.string() |> Zoi.min(1),
                         "kind" => Zoi.enum(["file", "media", "stream", "card", "modal", "result"])
                       },
-                      strict: true
+                      unrecognized_keys: :error
                     ),
                   "fallback_text" => Zoi.string() |> Zoi.optional(),
                   "caption" => Zoi.string() |> Zoi.optional()
                 },
-                strict: true
+                unrecognized_keys: :error
               )
             ]),
           "thread_id" => Zoi.string() |> Zoi.min(1) |> Zoi.optional(),
@@ -49,6 +49,6 @@ defmodule Jido.Messaging.Signal.PostProviderMessage do
           "format" => Zoi.enum(["plain", "markdown", "html"]) |> Zoi.optional(),
           "bridge_id" => Zoi.string() |> Zoi.min(1)
         },
-        strict: true
+        unrecognized_keys: :error
       )
 end

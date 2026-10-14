@@ -19,6 +19,6 @@ defmodule Jido.Messaging.Signal.CreateRoom do
           "name" => Zoi.string(),
           "kind" => Zoi.enum(["direct", "group", "channel", "thread"])
         },
-        strict: true
+        unrecognized_keys: :error
       )
 end

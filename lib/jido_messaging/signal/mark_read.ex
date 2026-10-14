@@ -19,6 +19,6 @@ defmodule Jido.Messaging.Signal.MarkRead do
           "message_id" => Zoi.string() |> Zoi.min(1),
           "participant_id" => Zoi.string() |> Zoi.min(1)
         },
-        strict: true
+        unrecognized_keys: :error
       )
 end

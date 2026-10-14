@@ -25,6 +25,6 @@ defmodule Jido.Messaging.Signal.SetTyping do
             ])
             |> Zoi.optional()
         },
-        strict: true
+        unrecognized_keys: :error
       )
 end

@@ -19,6 +19,6 @@ defmodule Jido.Messaging.Signal.ParticipantJoinedRequest do
           "participant_id" => Zoi.string() |> Zoi.min(1),
           "reason" => Zoi.string() |> Zoi.optional()
         },
-        strict: true
+        unrecognized_keys: :error
       )
 end

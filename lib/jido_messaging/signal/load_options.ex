@@ -27,6 +27,6 @@ defmodule Jido.Messaging.Signal.LoadOptions do
           "limit" => Zoi.integer() |> Zoi.gte(1) |> Zoi.optional(),
           "bridge_id" => Zoi.string() |> Zoi.min(1)
         },
-        strict: true
+        unrecognized_keys: :error
       )
 end

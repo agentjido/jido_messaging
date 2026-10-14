@@ -23,6 +23,6 @@ defmodule Jido.Messaging.Signal.OpenThread do
           "bridge_id" => Zoi.string() |> Zoi.min(1),
           "topic_name" => Zoi.string() |> Zoi.optional()
         },
-        strict: true
+        unrecognized_keys: :error
       )
 end

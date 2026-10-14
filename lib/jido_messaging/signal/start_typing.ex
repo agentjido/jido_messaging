@@ -21,6 +21,6 @@ defmodule Jido.Messaging.Signal.StartTyping do
           "format" => Zoi.enum(["plain", "markdown", "html"]) |> Zoi.optional(),
           "bridge_id" => Zoi.string() |> Zoi.min(1)
         },
-        strict: true
+        unrecognized_keys: :error
       )
 end

@@ -19,6 +19,6 @@ defmodule Jido.Messaging.Signal.MessageDelivered do
           "participant_id" => Zoi.string() |> Zoi.min(1),
           "timestamp" => Zoi.string() |> Zoi.optional()
         },
-        strict: true
+        unrecognized_keys: :error
       )
 end

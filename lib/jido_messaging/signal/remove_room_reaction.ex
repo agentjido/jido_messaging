@@ -20,6 +20,6 @@ defmodule Jido.Messaging.Signal.RemoveRoomReaction do
           "participant_id" => Zoi.string() |> Zoi.min(1),
           "reaction" => Zoi.string() |> Zoi.min(1)
         },
-        strict: true
+        unrecognized_keys: :error
       )
 end

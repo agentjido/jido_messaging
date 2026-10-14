@@ -24,6 +24,6 @@ defmodule Jido.Messaging.Signal.PostEphemeral do
           "fallback_to_dm" => Zoi.boolean() |> Zoi.optional(),
           "bridge_id" => Zoi.string() |> Zoi.min(1)
         },
-        strict: true
+        unrecognized_keys: :error
       )
 end
