@@ -202,7 +202,7 @@ defmodule Jido.Messaging.Demo.TopologyTest do
       "bridge_configs" => [
         %{
           "id" => "telegram-main",
-          "adapter_module" => "Elixir.MyApp.FakeTelegramAdapter",
+          "adapter_module" => "Elixir.Jido.Chat.AdapterTestKit.MockAdapter",
           "enabled" => true
         }
       ],
@@ -281,7 +281,7 @@ defmodule Jido.Messaging.Demo.TopologyTest do
           "bridge_configs" => [
             %{
               "id" => "bridge-room-tg",
-              "adapter_module" => "Elixir.MyApp.FakeTelegramAdapter",
+              "adapter_module" => "Elixir.Jido.Chat.AdapterTestKit.MockAdapter",
               "enabled" => true
             }
           ],

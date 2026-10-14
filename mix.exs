@@ -87,7 +87,7 @@ defmodule Jido.Messaging.MixProject do
         "agentjido/jido_signal",
         "d6611eca1c95eb507843baceb55991e4801d8421"
       ),
-      upstream_dependency(:jido_ai, "~> 2.3", "agentjido/jido_ai", "1f19ff262081bc13eb30da7bff8bfe42685d63c8",
+      upstream_dependency(:jido_ai, "~> 3.0", "agentjido/jido_ai", "1f19ff262081bc13eb30da7bff8bfe42685d63c8",
         optional: true
       ),
       {:yaml_elixir, "~> 2.12"},
@@ -125,6 +125,12 @@ defmodule Jido.Messaging.MixProject do
     case {Mix.env(), System.get_env("JIDO_CHAT_PATH")} do
       {env, path} when env in [:dev, :test] and is_binary(path) and path != "" ->
         {:jido_chat, path: Path.expand(path), override: true}
+
+      {env, _} when env in [:dev, :test] ->
+        {:jido_chat,
+         git: "https://github.com/agentjido/jido_chat.git",
+         ref: "2a9c21a860cb8c5f1069a865a981a8be035f56c0",
+         override: true}
 
       _ ->
         {:jido_chat, "~> 2.0"}
