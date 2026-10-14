@@ -274,7 +274,7 @@ defmodule Jido.Messaging.MediaPolicy do
     normalized = %{
       kind: kind,
       url: fetch_string(entry, [:url, :uri, :file_url]),
-      data: fetch_string(entry, [:data, :base64]),
+      data: fetch_data(entry),
       media_type: fetch_string(entry, [:media_type, :mime_type, :mimetype]),
       filename: fetch_string(entry, [:filename, :name]),
       size_bytes: fetch_integer(entry, [:size_bytes, :size, :file_size, :filesize]),
@@ -301,7 +301,7 @@ defmodule Jido.Messaging.MediaPolicy do
     normalized = %{
       kind: kind,
       url: fetch_string(entry, [:url, :uri, :file_url]),
-      data: fetch_string(entry, [:data, :base64]),
+      data: fetch_data(entry),
       media_type: fetch_string(entry, [:media_type, :mime_type, :mimetype]),
       filename: fetch_string(entry, [:filename, :name]),
       size_bytes: fetch_integer(entry, [:size_bytes, :size, :file_size, :filesize]),
@@ -380,16 +380,9 @@ defmodule Jido.Messaging.MediaPolicy do
   end
 
   defp payload_size_bytes(media) do
-    cond do
-      is_integer(media.size_bytes) and media.size_bytes >= 0 ->
-        media.size_bytes
-
-      is_binary(media.data) ->
-        byte_size(media.data)
-
-      true ->
-        0
-    end
+    declared = if is_integer(media.size_bytes), do: media.size_bytes, else: 0
+    known = if is_binary(media.data), do: byte_size(media.data), else: 0
+    max(declared, known)
   end
 
   defp invalid_media_type?(_kind, nil), do: false
@@ -436,6 +429,15 @@ defmodule Jido.Messaging.MediaPolicy do
     keys
     |> Enum.find_value(fn key -> Map.get(map, key) || Map.get(map, to_string(key)) end)
     |> normalize_string()
+  end
+
+  defp fetch_data(map) do
+    case Enum.find_value([:data, :base64], fn key ->
+           Map.get(map, key) || Map.get(map, to_string(key))
+         end) do
+      data when is_binary(data) and byte_size(data) > 0 -> data
+      _ -> nil
+    end
   end
 
   defp fetch_integer(map, keys) do

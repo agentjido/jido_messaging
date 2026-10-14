@@ -54,6 +54,33 @@ defmodule Jido.Messaging.VerifierStoreOutcomeTest do
     end
   end
 
+  defmodule BlockingProvider do
+    def verify(_, _, _, opts) do
+      send(opts[:notify], {:provider_worker, self()})
+      receive do: (:release -> {:ok, %{assurance: :verified}})
+    end
+  end
+
+  test "identity provider stops when the verification caller dies", context do
+    notify = self()
+
+    caller =
+      spawn(fn ->
+        Instance.verify_identity_credential(context.credential.id, context.proof, context.scope,
+          provider: BlockingProvider,
+          notify: notify,
+          timeout: 5_000
+        )
+      end)
+
+    assert_receive {:provider_worker, worker}
+    monitor = Process.monitor(worker)
+    on_exit(fn -> if Process.alive?(worker), do: Process.exit(worker, :kill) end)
+    Process.exit(caller, :kill)
+    assert_receive {:DOWN, ^monitor, :process, ^worker, _}, 500
+    assert :ets.info(context.state.identity_assertions, :size) == 0
+  end
+
   setup do
     start_supervised!(%{id: Store.Control, start: {Agent, :start_link, [fn -> %{} end, [name: Store.Control]]}})
     start_supervised!(Instance)

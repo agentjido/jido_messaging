@@ -1,4 +1,4 @@
-defmodule Jido.Chat.MessagingTargetTest do
+defmodule Jido.Messaging.MessagingTargetTest do
   use ExUnit.Case, async: true
 
   alias Jido.Chat.MessagingTarget

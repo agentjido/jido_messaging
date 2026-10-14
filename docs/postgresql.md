@@ -53,6 +53,11 @@ in the package migration table. Runtime initialization fails with
 not current. Set `migrate: true` only for a demo or a host that explicitly lets
 the runtime own schema changes.
 
+Migration 2 converts stored message order keys to UTC with six decimal places.
+This gives the same order for equal instants with different offsets or precision.
+The migration keeps record payloads and message IDs. Existing message ID cursors
+remain valid.
+
 This release does not move SQLite data into PostgreSQL. Plan an application
 export and import when you change adapters. Keep the same `instance_id` if the
 import must preserve the instance namespace.

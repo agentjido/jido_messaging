@@ -7,6 +7,10 @@ defmodule Jido.Messaging.AgentRunner do
   - Filters down to one room/thread assignment
   - Invokes the configured handler
   - Delivers replies through `Jido.Messaging.Deliver`
+
+  The Registry record of a supervisor-owned runner keeps its fixed config and
+  owner PID. RoomServer can use that record to restore its state while the
+  handler is busy. The record has the same lifetime as the runner.
   """
 
   use GenServer
@@ -63,11 +67,15 @@ defmodule Jido.Messaging.AgentRunner do
     thread_id = Keyword.fetch!(opts, :thread_id)
     agent_id = Keyword.fetch!(opts, :agent_id)
     instance_module = Keyword.fetch!(opts, :instance_module)
+    agent_config = Keyword.fetch!(opts, :agent_config)
+    {:via, Registry, {registry, key}} = via_tuple(instance_module, room_id, thread_id, agent_id)
+    supervisor = Module.concat(instance_module, :AgentSupervisor)
+    metadata = if self() == Process.whereis(supervisor), do: {:agent_runner, self(), agent_config}
 
     GenServer.start_link(
       __MODULE__,
       opts,
-      name: via_tuple(instance_module, room_id, thread_id, agent_id)
+      name: {:via, Registry, {registry, key, metadata}}
     )
   end
 

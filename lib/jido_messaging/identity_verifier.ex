@@ -170,28 +170,13 @@ defmodule Jido.Messaging.IdentityVerifier do
         :verified_at
       ])
 
-    caller = self()
-    result_ref = make_ref()
-
-    {pid, monitor_ref} =
-      spawn_monitor(fn ->
-        result = safe_provider_call(provider, credential, proof, context, provider_opts)
-        send(caller, {result_ref, result})
-      end)
-
-    receive do
-      {^result_ref, result} ->
-        Process.demonitor(monitor_ref, [:flush])
-        normalize_provider_result(result)
-
-      {:DOWN, ^monitor_ref, :process, ^pid, reason} ->
-        {:error, {:identity_provider_failed, failure_class(reason)}}
-    after
-      timeout ->
-        Process.exit(pid, :kill)
-        await_down(monitor_ref, pid)
-        flush_result(result_ref)
-        {:error, :identity_provider_timeout}
+    case Jido.Messaging.BoundedCall.run(
+           fn -> safe_provider_call(provider, credential, proof, context, provider_opts) end,
+           timeout
+         ) do
+      {:ok, result} -> normalize_provider_result(result)
+      {:exit, reason} -> {:error, {:identity_provider_failed, failure_class(reason)}}
+      :timeout -> {:error, :identity_provider_timeout}
     end
   end
 
@@ -268,22 +253,6 @@ defmodule Jido.Messaging.IdentityVerifier do
 
   defp earlier_datetime(%DateTime{} = first, %DateTime{} = second) do
     if DateTime.compare(first, second) == :gt, do: second, else: first
-  end
-
-  defp await_down(monitor_ref, pid) do
-    receive do
-      {:DOWN, ^monitor_ref, :process, ^pid, _reason} -> :ok
-    after
-      100 -> Process.demonitor(monitor_ref, [:flush])
-    end
-  end
-
-  defp flush_result(result_ref) do
-    receive do
-      {^result_ref, _result} -> :ok
-    after
-      0 -> :ok
-    end
   end
 
   defp failure_class(:normal), do: :normal_exit

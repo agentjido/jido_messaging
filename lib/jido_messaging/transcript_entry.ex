@@ -79,6 +79,7 @@ defmodule Jido.Messaging.TranscriptEntry do
     do: binding.external_id
 
   defp provider_participant_id(_participant, _channel, :ambiguous), do: nil
+  defp provider_participant_id(_participant, _channel, :unavailable), do: nil
 
   defp provider_participant_id(_participant, nil, _binding), do: nil
 

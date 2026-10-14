@@ -236,7 +236,7 @@ defmodule Jido.Messaging.Identity do
   end
 
   @spec binding_for_message(module(), term(), Message.t(), Authorship.t()) ::
-          ExternalIdentityBinding.t() | :ambiguous | nil
+          ExternalIdentityBinding.t() | :ambiguous | :unavailable | nil
   @doc false
   def binding_for_message(persistence, state, %Message{} = message, %Authorship{} = authorship) do
     case authorship.external_identity_binding_id do
@@ -345,6 +345,8 @@ defmodule Jido.Messaging.Identity do
         _multiple -> :ambiguous
       end
     else
+      {:error, :unsupported} -> nil
+      {:error, _reason} -> :unavailable
       _other -> nil
     end
   end

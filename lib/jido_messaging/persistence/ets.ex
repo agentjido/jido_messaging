@@ -201,7 +201,7 @@ defmodule Jido.Messaging.Persistence.ETS do
     delete_continuity_links(state, &(&1.room_id == room_id))
 
     message_ids = :ets.lookup(state.room_messages, room_id) |> Enum.map(&elem(&1, 1))
-    Enum.each(message_ids, &delete_message(state, &1))
+    Enum.each(message_ids, &delete_room_message(state, room_id, &1))
 
     {:ok, bindings} = list_room_bindings(state, room_id)
     Enum.each(bindings, &delete_room_binding(state, &1.id))
@@ -332,6 +332,15 @@ defmodule Jido.Messaging.Persistence.ETS do
 
   @impl true
   def save_message(state, %Message{} = message) do
+    message_lock(state, message.id, fn -> store_message(state, message) end)
+  end
+
+  defp store_message(state, message) do
+    case get_message(state, message.id) do
+      {:ok, previous} -> delete_message_indexes(state, previous)
+      {:error, :not_found} -> :ok
+    end
+
     true = :ets.insert(state.messages, {message.id, message})
     true = :ets.insert(state.room_messages, {message.room_id, message.id})
     maybe_index_thread_message(state, message)
@@ -392,17 +401,40 @@ defmodule Jido.Messaging.Persistence.ETS do
 
   @impl true
   def delete_message(state, message_id) do
+    message_lock(state, message_id, fn -> delete_message_record(state, message_id) end)
+  end
+
+  defp delete_room_message(state, room_id, message_id) do
+    message_lock(state, message_id, fn ->
+      case get_message(state, message_id) do
+        {:ok, %Message{room_id: ^room_id}} -> delete_message_record(state, message_id)
+        _ -> :ets.delete_object(state.room_messages, {room_id, message_id})
+      end
+    end)
+  end
+
+  defp delete_message_record(state, message_id) do
     case :ets.lookup(state.messages, message_id) do
       [{^message_id, message}] ->
-        delete_external_id_index(state, message)
+        delete_message_indexes(state, message)
         true = :ets.delete(state.messages, message_id)
-        # Remove from room_messages index (bag table - need to delete specific object)
-        true = :ets.delete_object(state.room_messages, {message.room_id, message_id})
-        maybe_delete_thread_message(state, message)
         :ok
 
       [] ->
         :ok
+    end
+  end
+
+  defp delete_message_indexes(state, message) do
+    delete_external_id_index(state, message)
+    true = :ets.delete_object(state.room_messages, {message.room_id, message.id})
+    maybe_delete_thread_message(state, message)
+  end
+
+  defp message_lock(state, message_id, fun) do
+    case :global.trans({{__MODULE__, state.messages, message_id}, self()}, fun) do
+      :aborted -> {:error, :message_lock_aborted}
+      result -> result
     end
   end
 
@@ -506,10 +538,7 @@ defmodule Jido.Messaging.Persistence.ETS do
 
   @impl true
   def mark_message_read(state, message_id, participant_id, receipt) do
-    # Global lock IDs are {resource, requester}; the shared resource serializes callers.
-    lock_id = {{__MODULE__, state.messages, message_id}, self()}
-
-    :global.trans(lock_id, fn ->
+    message_lock(state, message_id, fn ->
       update_message_receipt(state.messages, message_id, participant_id, receipt)
     end)
   end
@@ -1032,18 +1061,11 @@ defmodule Jido.Messaging.Persistence.ETS do
 
   @impl true
   def update_message_external_id(state, message_id, external_id) do
-    case get_message(state, message_id) do
-      {:ok, message} ->
-        delete_external_id_index(state, message)
-        updated_message = %{message | external_id: external_id}
-        true = :ets.insert(state.messages, {message_id, updated_message})
-        index_external_id(state, updated_message)
-
-        {:ok, updated_message}
-
-      {:error, :not_found} = error ->
-        error
-    end
+    message_lock(state, message_id, fn ->
+      with {:ok, message} <- get_message(state, message_id) do
+        store_message(state, %{message | external_id: external_id})
+      end
+    end)
   end
 
   # Room binding operations
@@ -1060,6 +1082,28 @@ defmodule Jido.Messaging.Persistence.ETS do
 
   @impl true
   def create_room_binding(state, room_id, channel, bridge_id, external_id, attrs) do
+    key = binding_key(channel, bridge_id, external_id)
+
+    case :global.trans({{__MODULE__, state.room_bindings, key}, self()}, fn ->
+           case :ets.lookup(state.room_bindings, key) do
+             [{^key, owner}] when owner != room_id ->
+               {:error, {:room_binding_conflict, owner}}
+
+             _ ->
+               {:ok, bindings} = list_room_bindings(state, room_id)
+
+               case Enum.find(bindings, &(binding_key(&1.channel, &1.bridge_id, &1.external_room_id) == key)) do
+                 nil -> store_room_binding(state, room_id, channel, bridge_id, external_id, attrs)
+                 binding -> {:ok, binding}
+               end
+           end
+         end) do
+      :aborted -> {:error, :room_binding_lock_aborted}
+      result -> result
+    end
+  end
+
+  defp store_room_binding(state, room_id, channel, bridge_id, external_id, attrs) do
     binding =
       RoomBinding.new(
         Map.merge(attrs, %{
@@ -1071,11 +1115,23 @@ defmodule Jido.Messaging.Persistence.ETS do
       )
 
     key = binding_key(channel, binding.bridge_id, external_id)
-    true = :ets.insert(state.room_bindings, {key, room_id})
 
+    case :ets.insert_new(state.room_bindings, {key, room_id}) do
+      true ->
+        persist_room_binding(state, binding)
+
+      false ->
+        case :ets.lookup(state.room_bindings, key) do
+          [{^key, ^room_id}] -> persist_room_binding(state, binding)
+          [{^key, owner}] -> {:error, {:room_binding_conflict, owner}}
+          [] -> store_room_binding(state, room_id, channel, bridge_id, external_id, attrs)
+        end
+    end
+  end
+
+  defp persist_room_binding(state, binding) do
     true = :ets.insert(state.room_bindings_by_id, {binding.id, binding})
-    true = :ets.insert(state.room_bindings_by_room, {room_id, binding.id})
-
+    true = :ets.insert(state.room_bindings_by_room, {binding.room_id, binding.id})
     {:ok, binding}
   end
 

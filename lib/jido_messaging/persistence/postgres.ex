@@ -350,9 +350,28 @@ defmodule Jido.Messaging.Persistence.Postgres do
 
   @impl true
   def get_thread_by_root_message(state, room_id, root_message_id) do
-    state
-    |> list_threads(room_id, limit: 500)
-    |> find_record(&(&1.root_message_id == root_message_id))
+    find_thread_by_root_page(state, room_id, root_message_id, nil)
+  end
+
+  defp find_thread_by_root_page(state, room_id, root_message_id, cursor) do
+    {where, params} =
+      case cursor do
+        nil -> {"kind = $1 AND room_id = $2", ["thread", room_id]}
+        id -> {"kind = $1 AND room_id = $2 AND id > $3", ["thread", room_id, id]}
+      end
+
+    with {:ok, threads} <- query_records(state, where, params, order: "id ASC", limit: 500) do
+      case Enum.find(threads, &(&1.root_message_id == root_message_id)) do
+        nil when length(threads) == 500 ->
+          find_thread_by_root_page(state, room_id, root_message_id, List.last(threads).id)
+
+        nil ->
+          {:error, :not_found}
+
+        thread ->
+          {:ok, thread}
+      end
+    end
   end
 
   @impl true
@@ -461,6 +480,19 @@ defmodule Jido.Messaging.Persistence.Postgres do
 
   @impl true
   def create_room_binding(state, room_id, channel, bridge_id, external_id, attrs) do
+    case find_room_binding(state, channel, bridge_id, external_id) do
+      {:ok, binding} ->
+        room_binding_owner_result(binding, room_id)
+
+      {:error, :not_found} ->
+        store_room_binding(state, room_id, channel, bridge_id, external_id, attrs)
+
+      {:error, _reason} = error ->
+        error
+    end
+  end
+
+  defp store_room_binding(state, room_id, channel, bridge_id, external_id, attrs) do
     binding =
       RoomBinding.new(
         Map.merge(attrs, %{
@@ -471,14 +503,37 @@ defmodule Jido.Messaging.Persistence.Postgres do
         })
       )
 
-    persist(state, "room_binding", binding.id, binding,
-      room_id: room_id,
-      channel: channel,
-      bridge_id: binding.bridge_id,
-      external_id: binding.external_room_id,
-      inserted_at: binding.inserted_at
-    )
+    # A binding-key collision must not abort the caller's transaction. Read
+    # the retained owner after the claim, including a concurrent same-room retry.
+    with :ok <-
+           run(
+             state,
+             """
+             INSERT INTO #{@table}
+               (instance_id, kind, id, room_id, channel, bridge_id, external_id, inserted_at, payload)
+             VALUES ($1, 'room_binding', $2, $3, $4, $5, $6, $7, $8)
+             ON CONFLICT (instance_id, channel, bridge_id, external_id)
+               WHERE kind = 'room_binding' DO NOTHING
+             """,
+             [
+               state.instance_id,
+               binding.id,
+               room_id,
+               normalize_term(channel),
+               binding.bridge_id,
+               binding.external_room_id,
+               format_datetime(binding.inserted_at),
+               :erlang.term_to_binary(binding)
+             ],
+             :create_room_binding
+           ),
+         {:ok, stored} <- find_room_binding(state, channel, bridge_id, external_id) do
+      room_binding_owner_result(stored, room_id)
+    end
   end
+
+  defp room_binding_owner_result(%RoomBinding{room_id: room_id} = binding, room_id), do: {:ok, binding}
+  defp room_binding_owner_result(binding, _room_id), do: {:error, {:room_binding_conflict, binding.room_id}}
 
   @impl true
   def list_room_bindings(state, room_id) do
@@ -1269,6 +1324,10 @@ defmodule Jido.Messaging.Persistence.Postgres do
   defp public_binding_result({:ok, :bound}), do: :ok
   defp public_binding_result({:error, _reason} = error), do: error
 
+  defp resolve_room_binding_conflict({:error, {:room_binding_conflict, _owner}}, state, channel, bridge_id, external_id) do
+    get_room_by_external_binding(state, channel, bridge_id, external_id)
+  end
+
   defp resolve_room_binding_conflict({:error, reason} = error, state, channel, bridge_id, external_id) do
     if unique_constraint_error?(reason) do
       get_room_by_external_binding(state, channel, bridge_id, external_id)
@@ -1628,7 +1687,7 @@ defmodule Jido.Messaging.Persistence.Postgres do
   end
 
   defp format_datetime(nil), do: nil
-  defp format_datetime(%DateTime{} = value), do: DateTime.to_iso8601(value)
+  defp format_datetime(%DateTime{} = value), do: Jido.Messaging.Transcript.format_timestamp(value)
   defp format_datetime(value), do: to_string(value)
 
   defp normalize_nullable(nil), do: nil

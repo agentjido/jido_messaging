@@ -67,7 +67,7 @@ defmodule Jido.Messaging.ChatActions.Executor do
          :ok <- authorize_scope(scope, target),
          :ok <- ensure_execution_scope(action, scope, target),
          audit = audit(action, target, scope),
-         {:ok, authorization_audit} <- authorize_principal(action, target, context),
+         {:ok, authorization_audit} <- authorize_principal(action, params, target, context),
          audit = Map.merge(audit, authorization_audit),
          {:ok, authorized_params} <- apply_authorization_constraints(action, params, authorization_audit),
          :ok <- authorize_write(action, audit, context) do
@@ -236,13 +236,13 @@ defmodule Jido.Messaging.ChatActions.Executor do
 
   defp authorize_write(_action, _audit, _context), do: :ok
 
-  defp authorize_principal(action, target, context) do
+  defp authorize_principal(action, params, target, context) do
     runtime_context = Resolver.runtime_context(context)
 
-    authorize_enforced(action, target, runtime_context)
+    authorize_enforced(action, params, target, runtime_context)
   end
 
-  defp authorize_enforced(action, target, runtime_context) do
+  defp authorize_enforced(action, params, target, runtime_context) do
     principal_id = get(runtime_context, :principal_id)
     resource = normalize_authorization_scope(get(runtime_context, :authorization_scope))
 
@@ -254,6 +254,9 @@ defmodule Jido.Messaging.ChatActions.Executor do
         {:authorization, :authorization_scope_required, target_audit(target)}
 
       is_binary(resource.bridge_id) and resource.bridge_id != target.bridge_id ->
+        {:authorization, :authorization_scope_mismatch, target_audit(target)}
+
+      not resource_matches_target?(resource, action, params, target) ->
         {:authorization, :authorization_scope_mismatch, target_audit(target)}
 
       true ->
@@ -274,6 +277,70 @@ defmodule Jido.Messaging.ChatActions.Executor do
         end
     end
   end
+
+  defp resource_matches_target?(%AuthorizationScope{kind: :bridge}, _action, _params, _target),
+    do: true
+
+  defp resource_matches_target?(resource, action, params, target) do
+    runtime = target.instance_module.__jido_messaging__(:runtime)
+
+    with false <- action in @workspace_operations,
+         true <- resource.kind != :message or action in @message_operations,
+         true <- is_nil(resource.thread_id) or action not in @channel_only_operations,
+         {:ok, room} <-
+           Jido.Messaging.get_room_by_external_binding(
+             runtime,
+             target.adapter,
+             target.bridge_id,
+             target.channel_id
+           ),
+         true <- room.id == resource.room_id,
+         true <- canonical_thread_matches?(runtime, resource, target) do
+      canonical_message_matches?(runtime, resource, action, params, target)
+    else
+      _ -> false
+    end
+  rescue
+    _ -> false
+  catch
+    _, _ -> false
+  end
+
+  defp canonical_thread_matches?(_runtime, %{thread_id: nil}, _target), do: true
+
+  defp canonical_thread_matches?(runtime, resource, target) do
+    case Jido.Messaging.get_thread_by_external_id(runtime, resource.room_id, target.thread_id) do
+      {:ok, thread} -> thread.id == resource.thread_id and thread.room_id == resource.room_id
+      _ -> false
+    end
+  end
+
+  defp canonical_message_matches?(runtime, resource, action, params, target) when action in @message_operations do
+    case Jido.Messaging.get_message_by_external_id(
+           runtime,
+           target.adapter,
+           target.bridge_id,
+           get(params, :message_id),
+           resource.room_id
+         ) do
+      {:ok, message} ->
+        message.room_id == resource.room_id and
+          (resource.kind != :message or message.id == resource.message_id) and
+          (is_nil(resource.thread_id) or message.thread_id == resource.thread_id) and
+          message_thread_matches?(runtime, resource, message, target)
+
+      _ ->
+        false
+    end
+  end
+
+  defp canonical_message_matches?(_runtime, _resource, _action, _params, _target), do: true
+
+  defp message_thread_matches?(_runtime, _resource, _message, %{thread_id: nil}), do: true
+  defp message_thread_matches?(_runtime, _resource, %{thread_id: nil}, _target), do: false
+
+  defp message_thread_matches?(runtime, resource, message, target),
+    do: canonical_thread_matches?(runtime, %{resource | thread_id: message.thread_id}, target)
 
   defp normalize_authorization_scope(%AuthorizationScope{} = scope), do: scope
 

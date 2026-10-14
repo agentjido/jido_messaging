@@ -295,27 +295,32 @@ defmodule Jido.Messaging.Persistence.ETSTest do
   end
 
   describe "room binding operations" do
-    test "deleting an old owner preserves the current external binding", %{state: state} do
+    test "a second room cannot replace the external binding owner", %{state: state} do
       first_room = persist_room!(state)
       second_room = persist_room!(state)
 
       assert {:ok, first_binding} =
                ETS.create_room_binding(state, first_room.id, :slack, "workspace", "channel", %{})
 
-      assert {:ok, second_binding} =
+      assert {:error, {:room_binding_conflict, owner_id}} =
                ETS.create_room_binding(state, second_room.id, :slack, "workspace", "channel", %{})
 
-      assert {:ok, ^second_room} =
+      assert owner_id == first_room.id
+
+      assert {:ok, ^first_binding} =
+               ETS.create_room_binding(state, first_room.id, :slack, "workspace", "channel", %{})
+
+      assert {:ok, ^first_room} =
                ETS.get_room_by_external_binding(state, :slack, "workspace", "channel")
 
-      assert :ok = ETS.delete_room(state, first_room.id)
+      assert :ok = ETS.delete_room(state, second_room.id)
 
-      assert {:ok, ^second_room} =
+      assert {:ok, ^first_room} =
                ETS.get_room_by_external_binding(state, :slack, "workspace", "channel")
 
-      assert {:error, :not_found} = ETS.get_room(state, first_room.id)
-      assert {:ok, [^second_binding]} = ETS.list_room_bindings(state, second_room.id)
-      assert {:error, :not_found} = ETS.delete_room_binding(state, first_binding.id)
+      assert {:error, :not_found} = ETS.get_room(state, second_room.id)
+      assert {:ok, [^first_binding]} = ETS.list_room_bindings(state, first_room.id)
+      assert {:ok, []} = ETS.list_room_bindings(state, second_room.id)
     end
   end
 

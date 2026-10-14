@@ -323,6 +323,7 @@ defmodule Jido.Messaging.AuthorizationTest do
              })
 
     provider_scope = Scope.channel("auth-main", :authorization_test, "external-room", actor_id: participant.id)
+    assert {:ok, _} = ActionMessaging.create_room_binding(room.id, :authorization_test, "auth-main", "external-room")
     policy = Policy.allow([:post_message], actor: participant.id, channel: "external-room")
     target = MessagingTarget.for_room("external-room", bridge_id: "auth-main", channel_type: :authorization_test)
     params = %{target: Map.from_struct(target), text: "bounded"}

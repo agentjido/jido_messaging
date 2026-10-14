@@ -43,7 +43,8 @@ defmodule Jido.Messaging.Streaming do
               current_content: Zoi.string() |> Zoi.nullish(),
               last_update_at: Zoi.integer() |> Zoi.nullish(),
               min_update_interval_ms: Zoi.integer(),
-              pending_update: Zoi.string() |> Zoi.nullish()
+              pending_update: Zoi.string() |> Zoi.nullish(),
+              pending_timer: Zoi.any() |> Zoi.default(nil)
             },
             coerce: false
           )
@@ -93,7 +94,8 @@ defmodule Jido.Messaging.Streaming do
   Finalize the streaming response.
 
   Sends the final content and stops the stream process.
-  Returns the final message info.
+  Returns the final message info on success, or the provider error on failure.
+  The stream stops in both cases, so pending content cannot be sent later.
   """
   def finish(stream, final_content) do
     GenServer.call(stream, {:finish, final_content})
@@ -154,31 +156,42 @@ defmodule Jido.Messaging.Streaming do
     elapsed = now - state.last_update_at
 
     if elapsed >= state.min_update_interval_ms do
-      new_state = do_update(state, content)
+      new_state = do_update(clear_pending(state), content)
       {:noreply, new_state}
     else
       remaining = state.min_update_interval_ms - elapsed
 
-      if state.pending_update == nil do
-        Process.send_after(self(), :flush_pending, remaining)
-      end
+      pending_timer =
+        case state.pending_timer do
+          nil ->
+            token = make_ref()
+            timer = Process.send_after(self(), {:flush_pending, token}, remaining)
+            {timer, token}
 
-      {:noreply, %{state | pending_update: content}}
+          timer ->
+            timer
+        end
+
+      {:noreply, %{state | pending_update: content, pending_timer: pending_timer}}
     end
   end
 
   def handle_cast(:cancel, state) do
-    {:stop, :normal, state}
+    {:stop, :normal, clear_pending(state)}
   end
 
   @impl true
   def handle_call({:finish, final_content}, _from, state) do
-    case cancel_pending_timer(state) do
-      state -> do_update(state, final_content)
-    end
+    state = clear_pending(state)
 
-    result = {:ok, %{message_id: state.message_id, content: final_content}}
-    {:stop, :normal, result, state}
+    case apply_update(state, final_content) do
+      {:ok, next_state} ->
+        result = {:ok, %{message_id: next_state.message_id, content: next_state.current_content}}
+        {:stop, :normal, result, next_state}
+
+      {:error, reason} ->
+        {:stop, :normal, {:error, reason}, state}
+    end
   end
 
   def handle_call(:get_state, _from, state) do
@@ -186,33 +199,54 @@ defmodule Jido.Messaging.Streaming do
   end
 
   @impl true
-  def handle_info(:flush_pending, %{pending_update: nil} = state) do
-    {:noreply, state}
-  end
-
-  def handle_info(:flush_pending, %{pending_update: content} = state) do
-    new_state = do_update(%{state | pending_update: nil}, content)
+  def handle_info(
+        {:flush_pending, token},
+        %{pending_timer: {_timer, expected}, pending_update: content} = state
+      )
+      when token == expected do
+    new_state = do_update(%{state | pending_update: nil, pending_timer: nil}, content)
     {:noreply, new_state}
   end
 
+  def handle_info({:flush_pending, _token}, state), do: {:noreply, state}
+  def handle_info(:flush_pending, state), do: {:noreply, state}
+
   # Private helpers
 
-  defp do_update(state, content) when content == state.current_content do
-    state
+  defp clear_pending(state) do
+    if state.pending_timer do
+      {timer, _token} = state.pending_timer
+      Process.cancel_timer(timer)
+    end
+
+    %{state | pending_update: nil, pending_timer: nil}
   end
 
   defp do_update(state, content) do
-    case edit_message(state, content) do
-      :ok ->
-        %{
-          state
-          | current_content: content,
-            last_update_at: System.monotonic_time(:millisecond)
-        }
+    case apply_update(state, content) do
+      {:ok, next_state} ->
+        next_state
 
       {:error, reason} ->
         Logger.warning("Streaming update failed: #{inspect(reason)}")
         state
+    end
+  end
+
+  defp apply_update(state, content) when content == state.current_content, do: {:ok, state}
+
+  defp apply_update(state, content) do
+    case edit_message(state, content) do
+      :ok ->
+        {:ok,
+         %{
+           state
+           | current_content: content,
+             last_update_at: System.monotonic_time(:millisecond)
+         }}
+
+      {:error, reason} ->
+        {:error, reason}
     end
   end
 
@@ -226,9 +260,5 @@ defmodule Jido.Messaging.Streaming do
       Logger.debug("Channel #{inspect(channel)} does not support edit_message")
       :ok
     end
-  end
-
-  defp cancel_pending_timer(state) do
-    %{state | pending_update: nil}
   end
 end

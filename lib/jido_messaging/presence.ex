@@ -10,6 +10,10 @@ defmodule Jido.Messaging.Presence do
   * Phoenix Presence `track/update/untrack` calls
   * normalized `jido.messaging.*` participant signals
 
+  A session can move to a new transport PID. The adapter attaches the new
+  target before it removes the old target. Failed attachment keeps the old
+  session state, and an unchanged room does not emit another join fact.
+
   Applications still own product policy and read models. A small app module can
   wrap the adapter with:
 
@@ -507,6 +511,25 @@ defmodule Jido.Messaging.Presence do
   end
 
   defp track_or_update(config, nil, meta), do: track(config, meta)
+
+  defp track_or_update(config, previous, meta) when previous.track_pid != meta.track_pid do
+    with :ok <- track(config, meta) do
+      case untrack(config, previous) do
+        :ok ->
+          :ok
+
+        {:error, reason} ->
+          case untrack(config, meta) do
+            :ok ->
+              {:error, reason}
+
+            {:error, cleanup_reason} ->
+              {:error, {:presence_move_cleanup_failed, reason, cleanup_reason}}
+          end
+      end
+    end
+  end
+
   defp track_or_update(config, _existing_session, meta), do: update(config, meta)
 
   defp track(config, meta) do
@@ -522,7 +545,7 @@ defmodule Jido.Messaging.Presence do
     case apply(config.presence, :update, [meta.track_pid, topic(config), presence_key(meta), meta]) do
       {:ok, _ref} -> :ok
       :ok -> :ok
-      {:error, :not_found} -> track(config, meta)
+      {:error, reason} when reason in [:not_found, :nopresence] -> track(config, meta)
       {:error, reason} -> {:error, reason}
     end
   end
@@ -553,6 +576,7 @@ defmodule Jido.Messaging.Presence do
 
         other ->
           Logger.debug("[Jido.Messaging.Presence] Ignoring invalid notify callback: #{inspect(other)}")
+
           :ok
       end
     rescue
@@ -566,6 +590,7 @@ defmodule Jido.Messaging.Presence do
     catch
       kind, reason ->
         Logger.debug("[Jido.Messaging.Presence] Notify callback failed: #{inspect({kind, reason})}")
+
         :ok
     end
   end

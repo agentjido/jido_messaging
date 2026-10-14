@@ -52,6 +52,44 @@ defmodule Jido.Messaging.AgentEndpointsTest do
     def deliver(_delivery, _opts), do: raise("provider failure")
   end
 
+  defmodule BlockingProvider do
+    def deliver(_, opts) do
+      send(opts[:notify], {:provider_worker, self()})
+      receive do: (:release -> :ok)
+    end
+  end
+
+  test "endpoint provider stops when the delivery caller dies" do
+    endpoint = endpoint("agent", "jidoka", :available)
+
+    membership =
+      RoomMembership.new(%{room_id: "room", principal_id: "agent", endpoint_id: endpoint.id})
+
+    route =
+      AgentThreadRoute.new(%{room_id: "room", thread_id: "thread", endpoint_id: endpoint.id})
+
+    assert {:ok, target} = AgentEndpointTarget.new(endpoint, membership, route)
+
+    message =
+      Message.new(%{room_id: "room", thread_id: "thread", sender_id: "human", role: :user})
+
+    notify = self()
+
+    caller =
+      spawn(fn ->
+        AgentEndpointDelivery.deliver(BlockingProvider, target, message,
+          notify: notify,
+          timeout: 5_000
+        )
+      end)
+
+    assert_receive {:provider_worker, worker}
+    monitor = Process.monitor(worker)
+    on_exit(fn -> if Process.alive?(worker), do: Process.exit(worker, :kill) end)
+    Process.exit(caller, :kill)
+    assert_receive {:DOWN, ^monitor, :process, ^worker, _}, 500
+  end
+
   setup do
     path = Path.join(System.tmp_dir!(), "jido-messaging-agent-endpoint-#{System.unique_integer([:positive])}.sqlite3")
 

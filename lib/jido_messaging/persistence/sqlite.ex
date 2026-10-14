@@ -55,12 +55,14 @@ defmodule Jido.Messaging.Persistence.SQLite do
   @table "jido_messaging_records"
   @default_instance_id "default"
 
-  defstruct [:db, :path, :instance_id]
+  defstruct [:db, :path, :instance_id, :transaction_owner, :transaction_ref]
 
   @type t :: %__MODULE__{
           db: reference(),
           path: String.t(),
-          instance_id: String.t()
+          instance_id: String.t(),
+          transaction_owner: pid() | nil,
+          transaction_ref: reference() | nil
         }
 
   @impl true
@@ -599,9 +601,28 @@ defmodule Jido.Messaging.Persistence.SQLite do
 
   @impl true
   def get_thread_by_root_message(state, room_id, root_message_id) do
-    state
-    |> list_threads(room_id, limit: 500)
-    |> find_record(&(&1.root_message_id == root_message_id))
+    find_thread_by_root_page(state, room_id, root_message_id, nil)
+  end
+
+  defp find_thread_by_root_page(state, room_id, root_message_id, cursor) do
+    {where, params} =
+      case cursor do
+        nil -> {"kind = ?1 AND room_id = ?2", ["thread", room_id]}
+        id -> {"kind = ?1 AND room_id = ?2 AND id > ?3", ["thread", room_id, id]}
+      end
+
+    with {:ok, threads} <- query_records(state, where, params, order: "id ASC", limit: 500) do
+      case Enum.find(threads, &(&1.root_message_id == root_message_id)) do
+        nil when length(threads) == 500 ->
+          find_thread_by_root_page(state, room_id, root_message_id, List.last(threads).id)
+
+        nil ->
+          {:error, :not_found}
+
+        thread ->
+          {:ok, thread}
+      end
+    end
   end
 
   @impl true
@@ -1097,6 +1118,19 @@ defmodule Jido.Messaging.Persistence.SQLite do
 
   @impl true
   def create_room_binding(state, room_id, channel, bridge_id, external_id, attrs) do
+    case find_room_binding(state, channel, bridge_id, external_id) do
+      {:ok, binding} ->
+        room_binding_owner_result(binding, room_id)
+
+      {:error, :not_found} ->
+        store_room_binding(state, room_id, channel, bridge_id, external_id, attrs)
+
+      {:error, _reason} = error ->
+        error
+    end
+  end
+
+  defp store_room_binding(state, room_id, channel, bridge_id, external_id, attrs) do
     binding =
       RoomBinding.new(
         Map.merge(attrs, %{
@@ -1107,14 +1141,34 @@ defmodule Jido.Messaging.Persistence.SQLite do
         })
       )
 
-    persist(state, "room_binding", binding.id, binding,
-      room_id: room_id,
-      channel: channel,
-      bridge_id: binding.bridge_id,
-      external_id: binding.external_room_id,
-      inserted_at: binding.inserted_at
-    )
+    with :ok <-
+           run(
+             state.db,
+             """
+             INSERT INTO #{@table}
+               (instance_id, kind, id, room_id, channel, bridge_id, external_id, inserted_at, payload)
+             VALUES (?1, 'room_binding', ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+             ON CONFLICT (instance_id, channel, bridge_id, external_id)
+               WHERE kind = 'room_binding' DO NOTHING
+             """,
+             [
+               state.instance_id,
+               binding.id,
+               room_id,
+               normalize_term(channel),
+               binding.bridge_id,
+               binding.external_room_id,
+               format_datetime(binding.inserted_at),
+               {:blob, :erlang.term_to_binary(binding)}
+             ]
+           ),
+         {:ok, stored} <- find_room_binding(state, channel, bridge_id, external_id) do
+      room_binding_owner_result(stored, room_id)
+    end
   end
+
+  defp room_binding_owner_result(%RoomBinding{room_id: room_id} = binding, room_id), do: {:ok, binding}
+  defp room_binding_owner_result(binding, _room_id), do: {:error, {:room_binding_conflict, binding.room_id}}
 
   @impl true
   def list_room_bindings(state, room_id) do
@@ -1825,6 +1879,7 @@ defmodule Jido.Messaging.Persistence.SQLite do
          :ok <- migrate_schema(db, columns, instance_id),
          :ok <- ensure_sender_id_column(db),
          :ok <- backfill_message_sender_ids(db),
+         :ok <- normalize_message_timestamps(db),
          :ok <- create_history_index(db) do
       create_activity_index(db)
     end
@@ -2043,6 +2098,52 @@ defmodule Jido.Messaging.Persistence.SQLite do
 
           _other ->
             {:cont, :ok}
+        end
+      end)
+    end
+  end
+
+  defp normalize_message_timestamps(db) do
+    with :ok <- exec(db, "BEGIN IMMEDIATE") do
+      result = normalize_message_timestamps_locked(db)
+
+      case result do
+        :ok ->
+          case exec(db, "COMMIT") do
+            :ok -> :ok
+            {:error, _reason} = error -> rollback(%{db: db}, error)
+          end
+
+        {:error, _reason} = error ->
+          rollback(%{db: db}, error)
+      end
+    end
+  end
+
+  defp normalize_message_timestamps_locked(db) do
+    with {:ok, rows} <-
+           query_all(
+             db,
+             """
+             SELECT instance_id, id, inserted_at FROM #{@table}
+             WHERE kind = 'message' AND inserted_at IS NOT NULL
+               AND inserted_at NOT GLOB '????-??-??T??:??:??.??????Z'
+             """,
+             []
+           ) do
+      Enum.reduce_while(rows, :ok, fn [instance_id, id, timestamp], :ok ->
+        result =
+          with {:ok, datetime, _offset} <- DateTime.from_iso8601(timestamp) do
+            run(
+              db,
+              "UPDATE #{@table} SET inserted_at = ?1 WHERE instance_id = ?2 AND kind = 'message' AND id = ?3",
+              [format_datetime(datetime), instance_id, id]
+            )
+          end
+
+        case result do
+          :ok -> {:cont, :ok}
+          {:error, _reason} = error -> {:halt, error}
         end
       end)
     end
@@ -2299,9 +2400,12 @@ defmodule Jido.Messaging.Persistence.SQLite do
   defp find_record({:error, _reason} = error, _predicate), do: error
 
   defp binding_lock(state, key, fun) do
-    resource = {__MODULE__, Path.expand(state.path), state.instance_id, :binding, key}
-
-    binding_transaction({resource, self()}, fun)
+    if owned_transaction?(state) do
+      fun.()
+    else
+      resource = {__MODULE__, Path.expand(state.path), state.instance_id, :binding, key}
+      binding_transaction({resource, self()}, fun)
+    end
   end
 
   # The default global lock backoff can reach eight seconds. Keep the same
@@ -2322,10 +2426,37 @@ defmodule Jido.Messaging.Persistence.SQLite do
   end
 
   @impl true
-  def transaction(state, fun) do
+  def transaction(%{transaction_owner: owner, transaction_ref: ref} = state, fun)
+      when is_pid(owner) and is_reference(ref) and is_function(fun, 1) do
+    cond do
+      owner != self() ->
+        {:error, :transaction_owner_mismatch}
+
+      Process.get(transaction_key(state), :inactive) == :inactive ->
+        {:error, :transaction_closed}
+
+      true ->
+        result = transaction_result(fn -> fun.(state) end)
+
+        if match?({:error, _}, result) and Process.get(transaction_key(state)) == :active do
+          Process.put(transaction_key(state), result)
+        end
+
+        result
+    end
+  end
+
+  def transaction(state, fun) when is_function(fun, 1) do
     case transaction_connection(state) do
       {:ok, transaction_db, close?} ->
-        transaction_state = %{state | db: transaction_db}
+        transaction_state = %{
+          state
+          | db: transaction_db,
+            transaction_owner: self(),
+            transaction_ref: make_ref()
+        }
+
+        Process.put(transaction_key(transaction_state), :active)
 
         try do
           with :ok <- Sqlite3.set_busy_timeout(transaction_db, 5_000),
@@ -2333,6 +2464,7 @@ defmodule Jido.Messaging.Persistence.SQLite do
             finish_transaction(transaction_state, fn -> fun.(transaction_state) end)
           end
         after
+          Process.delete(transaction_key(transaction_state))
           if close?, do: Sqlite3.close(transaction_db)
         end
 
@@ -2355,7 +2487,13 @@ defmodule Jido.Messaging.Persistence.SQLite do
   end
 
   defp finish_transaction(state, fun) do
-    result = fun.()
+    callback_result = transaction_result(fun)
+
+    result =
+      case Process.get(transaction_key(state)) do
+        :active -> callback_result
+        {:error, _reason} = error -> error
+      end
 
     case result do
       {:ok, _value} ->
@@ -2373,9 +2511,32 @@ defmodule Jido.Messaging.Persistence.SQLite do
     kind, reason -> rollback(state, {:error, {kind, reason}})
   end
 
+  defp transaction_result(fun) do
+    case fun.() do
+      {:ok, _value} = result -> result
+      {:error, _reason} = error -> error
+      other -> {:error, {:invalid_transaction_result, other}}
+    end
+  rescue
+    exception -> {:error, exception}
+  catch
+    kind, reason -> {:error, {kind, reason}}
+  end
+
+  defp transaction_key(state), do: {__MODULE__, :transaction, state.transaction_ref}
+
+  defp owned_transaction?(state) do
+    state.transaction_owner == self() and is_reference(state.transaction_ref) and
+      Process.get(transaction_key(state), :inactive) != :inactive
+  end
+
   defp rollback(state, result) do
     _ = exec(state.db, "ROLLBACK")
     result
+  end
+
+  defp resolve_room_binding_conflict({:error, {:room_binding_conflict, _owner}}, state, channel, bridge_id, external_id) do
+    get_room_by_external_binding(state, channel, bridge_id, external_id)
   end
 
   defp resolve_room_binding_conflict({:error, reason} = error, state, channel, bridge_id, external_id) do
@@ -2499,16 +2660,20 @@ defmodule Jido.Messaging.Persistence.SQLite do
   end
 
   defp participant_binding_lock(state, channel, external_id, fun) do
-    resource = {
-      __MODULE__,
-      Path.expand(state.path),
-      state.instance_id,
-      :participant_binding,
-      normalize_term(channel),
-      normalize_term(external_id)
-    }
+    if owned_transaction?(state) do
+      fun.()
+    else
+      resource = {
+        __MODULE__,
+        Path.expand(state.path),
+        state.instance_id,
+        :participant_binding,
+        normalize_term(channel),
+        normalize_term(external_id)
+      }
 
-    binding_transaction({resource, self()}, fun)
+      binding_transaction({resource, self()}, fun)
+    end
   end
 
   defp do_save_external_identity_binding(state, %ExternalIdentityBinding{} = binding) do
@@ -2849,7 +3014,7 @@ defmodule Jido.Messaging.Persistence.SQLite do
   end
 
   defp format_datetime(nil), do: nil
-  defp format_datetime(%DateTime{} = value), do: DateTime.to_iso8601(value)
+  defp format_datetime(%DateTime{} = value), do: Jido.Messaging.Transcript.format_timestamp(value)
   defp format_datetime(value), do: to_string(value)
 
   defp normalize_nullable(nil), do: nil

@@ -3,6 +3,7 @@ defmodule Jido.Messaging.Moderators.RateLimiter do
   Rate limiting moderator to prevent message flooding.
 
   Uses ETS to track message counts per sender within a time window.
+  The table survives short callback workers through its VM-lifetime ETS heir.
 
   ## Options
 
@@ -84,7 +85,12 @@ defmodule Jido.Messaging.Moderators.RateLimiter do
   defp ensure_table_exists(table) do
     if :ets.whereis(table) == :undefined do
       try do
-        :ets.new(table, [:duplicate_bag, :public, :named_table])
+        :ets.new(table, [
+          :duplicate_bag,
+          :public,
+          :named_table,
+          {:heir, Process.whereis(:init), nil}
+        ])
       rescue
         ArgumentError -> :ok
       end

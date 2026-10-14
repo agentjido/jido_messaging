@@ -1,5 +1,17 @@
 defmodule Jido.Messaging.RoomServer do
-  @moduledoc "GenServer that manages a single room's state.\n\nEach room has its own process that holds:\n- The Room struct\n- Bounded message history\n- Active participants\n\nRooms are started on-demand and hibernate after inactivity.\n"
+  @moduledoc """
+  GenServer that manages a single room's state.
+
+  Each room has its own process that holds:
+  - The Room struct
+  - Bounded message history
+  - Active participants
+
+  Rooms are started on demand and hibernate after inactivity. On restart, the
+  room restores agent specs and thread assignments from live runner Registry
+  records. It does not wait for a runner handler or its supervisor. If the
+  Registry is temporarily unavailable, a room-owned timer retries the read.
+  """
   use GenServer
   require Logger
   alias Jido.Chat.{Participant, Room}
@@ -7,6 +19,7 @@ defmodule Jido.Messaging.RoomServer do
   @default_message_limit 100
   @default_timeout_ms :timer.minutes(5)
   @default_typing_timeout_ms :timer.seconds(5)
+  @restore_retry_ms 100
   @schema Zoi.struct(
             __MODULE__,
             %{
@@ -37,6 +50,7 @@ defmodule Jido.Messaging.RoomServer do
   def start_link(opts) do
     room = Keyword.fetch!(opts, :room)
     instance_module = Keyword.fetch!(opts, :instance_module)
+
     GenServer.start_link(__MODULE__, opts, name: via_tuple(instance_module, room.id))
   end
 
@@ -205,7 +219,12 @@ defmodule Jido.Messaging.RoomServer do
         timeout_ms: Keyword.get(opts, :timeout_ms, @default_timeout_ms)
       })
 
-    {:ok, state, state.timeout_ms}
+    {:ok, state, {:continue, :restore_agents}}
+  end
+
+  @impl true
+  def handle_continue(:restore_agents, state) do
+    restore_agents(state)
   end
 
   @impl true
@@ -653,9 +672,62 @@ defmodule Jido.Messaging.RoomServer do
   end
 
   @impl true
+  def handle_info(:restore_agents, state) do
+    restore_agents(state)
+  end
+
+  @impl true
   def handle_info(:timeout, state) do
     Logger.debug("RoomServer #{state.room.id} hibernating due to inactivity")
     {:noreply, state, :hibernate}
+  end
+
+  defp restore_agents(state) do
+    case runner_records(state.instance_module, state.room.id) do
+      {:ok, records} ->
+        supervisor = Process.whereis(Module.concat(state.instance_module, :AgentSupervisor))
+
+        restored =
+          Enum.reduce(records, state, fn
+            {thread_id, agent_id, pid, {:agent_runner, owner, config}}, current
+            when is_pid(pid) and is_pid(owner) and is_map(config) ->
+              if Process.alive?(pid) and Process.alive?(owner) and (is_nil(supervisor) or supervisor == owner) do
+                spec = config |> Map.put(:agent_id, agent_id) |> Map.put_new(:name, agent_id)
+
+                %{
+                  current
+                  | registered_agents: Map.put_new(current.registered_agents, agent_id, spec),
+                    thread_assignments: Map.put_new(current.thread_assignments, thread_id, agent_id)
+                }
+              else
+                current
+              end
+
+            _other, current ->
+              current
+          end)
+
+        {:noreply, restored, restored.timeout_ms}
+
+      {:error, :registry_unavailable} ->
+        Process.send_after(self(), :restore_agents, @restore_retry_ms)
+        {:noreply, state, state.timeout_ms}
+    end
+  end
+
+  defp runner_records(instance_module, room_id) do
+    registry = Module.concat(instance_module, Registry.Agents)
+
+    records =
+      Registry.select(registry, [
+        {{{room_id, :"$1", :"$2"}, :"$3", :"$4"}, [], [{{:"$1", :"$2", :"$3", :"$4"}}]}
+      ])
+
+    {:ok, records}
+  rescue
+    ArgumentError -> {:error, :registry_unavailable}
+  catch
+    :exit, _reason -> {:error, :registry_unavailable}
   end
 
   defp command_call(state, "participant_joined", data) do

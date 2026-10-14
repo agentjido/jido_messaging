@@ -3,6 +3,34 @@ defmodule Jido.Messaging.MediaPolicyOwnershipTest do
 
   alias Jido.Chat.Content.{Audio, File, Image, Video}
   alias Jido.Messaging.MediaPolicy
+  alias __MODULE__.MediaAdapter
+
+  test "inline data retains every byte on inbound and outbound paths" do
+    for data <- ["  A\n", " \t\n", <<0, 255, 32>>] do
+      payload = %{kind: :file, data: data, filename: "raw.bin"}
+
+      assert {:ok, [%File{data: ^data}], %{total_bytes: size}} =
+               MediaPolicy.normalize_inbound(payload)
+
+      assert size == byte_size(data)
+
+      assert {:ok, %{data: ^data}, %{total_bytes: ^size}} =
+               MediaPolicy.prepare_outbound(payload, MediaAdapter, :send_media)
+    end
+  end
+
+  test "declared size cannot reduce known inline size or total size" do
+    payload = %{kind: :file, data: String.duplicate("x", 25), size_bytes: 1}
+
+    assert {:error, {:media_policy_denied, :max_item_bytes_exceeded}, _} =
+             MediaPolicy.normalize_inbound(payload, max_item_bytes: 10)
+
+    assert {:error, {:media_policy_denied, :max_total_bytes_exceeded}, _} =
+             MediaPolicy.normalize_inbound([payload, payload], max_total_bytes: 30)
+
+    assert {:error, {:media_policy_denied, :max_item_bytes_exceeded}, _} =
+             MediaPolicy.prepare_outbound(payload, MediaAdapter, :send_media, max_item_bytes: 10)
+  end
 
   defmodule MediaAdapter do
     use Jido.Chat.Adapter

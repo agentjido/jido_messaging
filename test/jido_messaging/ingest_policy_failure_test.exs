@@ -62,9 +62,15 @@ defmodule Jido.Messaging.IngestPolicyFailureTest do
       refute Process.alive?(pid)
 
       assert {:error, :not_found} =
-               Runtime.get_message_by_external_id(:policy_failure_test, "owned-bridge", "owned-message")
+               Runtime.get_message_by_external_id(
+                 :policy_failure_test,
+                 "owned-bridge",
+                 "owned-message"
+               )
 
-      assert {:ok, message, _context} = Ingest.ingest_incoming(Runtime, Channel, "owned-bridge", incoming)
+      assert {:ok, message, _context} =
+               Ingest.ingest_incoming(Runtime, Channel, "owned-bridge", incoming)
+
       assert message.external_id == "owned-message"
       assert {:ok, :duplicate} = Ingest.ingest_incoming(Runtime, Channel, "owned-bridge", incoming)
       assert {:ok, [^message]} = Runtime.list_messages(message.room_id)
@@ -87,6 +93,28 @@ defmodule Jido.Messaging.IngestPolicyFailureTest do
   end
 
   for stage <- [:gating, :moderation] do
+    test "#{stage} worker stops after caller death" do
+      notify = self()
+      opts = timeout_opts(unquote(stage))
+
+      opts =
+        Keyword.put(opts, :gating_timeout_ms, 5_000) |> Keyword.put(:moderation_timeout_ms, 5_000)
+
+      key = if unquote(stage) == :gating, do: :gating_opts, else: :moderation_opts
+      opts = Keyword.update!(opts, key, &Keyword.put(&1, :test_pid, notify))
+
+      caller =
+        spawn(fn ->
+          Ingest.ingest_incoming(Runtime, Channel, "owned-bridge", incoming(), opts)
+        end)
+
+      assert_receive {:policy_called, worker}
+      monitor = Process.monitor(worker)
+      on_exit(fn -> if Process.alive?(worker), do: Process.exit(worker, :kill) end)
+      Process.exit(caller, :kill)
+      assert_receive {:DOWN, ^monitor, :process, ^worker, _}, 500
+    end
+
     test "#{stage} timeout stops the policy and permits one retry" do
       stage = unquote(stage)
       opts = timeout_opts(stage)
@@ -99,9 +127,15 @@ defmodule Jido.Messaging.IngestPolicyFailureTest do
       refute_receive {:DOWN, _, :process, ^pid, _}, 0
 
       assert {:error, :not_found} =
-               Runtime.get_message_by_external_id(:policy_failure_test, "owned-bridge", "owned-message")
+               Runtime.get_message_by_external_id(
+                 :policy_failure_test,
+                 "owned-bridge",
+                 "owned-message"
+               )
 
-      assert {:ok, message, _} = Ingest.ingest_incoming(Runtime, Channel, "owned-bridge", incoming())
+      assert {:ok, message, _} =
+               Ingest.ingest_incoming(Runtime, Channel, "owned-bridge", incoming())
+
       assert {:ok, [^message]} = Runtime.list_messages(message.room_id)
       assert {:ok, :duplicate} = Ingest.ingest_incoming(Runtime, Channel, "owned-bridge", incoming())
     end

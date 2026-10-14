@@ -40,7 +40,6 @@ defmodule Jido.Messaging.RoomSupervisor do
 
     case DynamicSupervisor.start_child(supervisor, child_spec) do
       {:ok, pid} ->
-        Jido.Messaging.restore_room_server_state(instance_module, room.id, pid)
         {:ok, pid}
 
       {:error, {:already_started, pid}} ->

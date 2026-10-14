@@ -1019,6 +1019,222 @@ defmodule Jido.Messaging.ChatActionsTest do
     )
   end
 
+  test "canonical room authority must match the resolved provider target" do
+    for {id, external} <- [{"canonical-a", "provider-a"}, {"canonical-b", "provider-b"}] do
+      assert {:ok, _} = TestMessaging.create_room(%{id: id, type: :group})
+      assert {:ok, _} = TestMessaging.create_room_binding(id, :full, "full-main", external)
+    end
+
+    resource =
+      Jido.Messaging.AuthorizationScope.new(%{
+        kind: :room,
+        room_id: "canonical-a",
+        bridge_id: "full-main"
+      })
+
+    assert {:ok, _} =
+             TestMessaging.create_principal_grant(%{
+               principal_id: "actor-1",
+               issuer_principal_id: "host",
+               actions: [:fetch_channel_metadata],
+               scope: resource,
+               constraints: %{requires_membership: false}
+             })
+
+    context =
+      action_context(Scope.workspace("workspace-1"))
+      |> put_in([:chat_action, :authorization_scope], resource)
+
+    assert {:ok,
+            %Jido.Signal{
+              type: "jido.messaging.operation.failed",
+              data: %{"code" => "authorization_denied"}
+            }} =
+             Jido.Messaging.ChatActions.Executor.execute(
+               :fetch_channel_metadata,
+               %{target: target_map("full-main", :full, "provider-b")},
+               context
+             )
+
+    refute_receive {:provider_call, FullAdapter, _, _}
+
+    assert {:ok, %Jido.Signal{type: "jido.messaging.operation.completed"}} =
+             Jido.Messaging.ChatActions.Executor.execute(
+               :fetch_channel_metadata,
+               %{target: target_map("full-main", :full, "provider-a")},
+               context
+             )
+
+    assert_receive {:provider_call, FullAdapter, :fetch_metadata, _}
+  end
+
+  test "unbound provider rooms cannot use a canonical room grant" do
+    assert {:ok, _} = TestMessaging.create_room(%{id: "canonical-a", type: :group})
+
+    resource =
+      Jido.Messaging.AuthorizationScope.new(%{
+        kind: :room,
+        room_id: "canonical-a",
+        bridge_id: "full-main"
+      })
+
+    context =
+      action_context(Scope.workspace("workspace-1"))
+      |> put_in([:chat_action, :authorization_scope], resource)
+
+    assert {:ok,
+            %Jido.Signal{
+              type: "jido.messaging.operation.failed",
+              data: %{"code" => "authorization_denied"}
+            }} =
+             Jido.Messaging.ChatActions.Executor.execute(
+               :fetch_channel_metadata,
+               %{target: target_map("full-main", :full, "unbound")},
+               context
+             )
+
+    refute_receive {:provider_call, FullAdapter, _, _}
+  end
+
+  test "message authority uses the provider bridge and canonical room, with an optional thread constraint" do
+    assert {:ok, _} = TestMessaging.create_room(%{id: "canonical-a", type: :group})
+    assert {:ok, _} = TestMessaging.create_room(%{id: "canonical-b", type: :group})
+    assert {:ok, _} = TestMessaging.create_room_binding("canonical-a", :full, "full-main", "provider-a")
+
+    assert {:ok, _} =
+             TestMessaging.save_thread(%{id: "thread-a", room_id: "canonical-a", external_thread_id: "external-thread"})
+
+    for {id, room, bridge, external, thread} <- [
+          {"foreign-bridge", "canonical-a", "another-bridge", "shared-id", "thread-a"},
+          {"own-message", "canonical-a", "full-main", "shared-id", "thread-a"},
+          {"foreign-room", "canonical-b", "full-main", "foreign-id", nil}
+        ] do
+      assert {:ok, _} =
+               TestMessaging.save_message(%{
+                 id: id,
+                 room_id: room,
+                 sender_id: "actor-1",
+                 role: :user,
+                 external_id: external,
+                 thread_id: thread,
+                 metadata: %{channel: :full, bridge_id: bridge}
+               })
+    end
+
+    base = action_context(Scope.workspace("workspace-1"))
+
+    for message_id <- ["foreign-bridge", "own-message"] do
+      resource =
+        Jido.Messaging.AuthorizationScope.new(%{
+          kind: :message,
+          room_id: "canonical-a",
+          message_id: message_id,
+          bridge_id: "full-main"
+        })
+
+      assert {:ok, _} =
+               TestMessaging.create_principal_grant(%{
+                 principal_id: "actor-1",
+                 issuer_principal_id: "host",
+                 actions: [:fetch_message],
+                 scope: resource,
+                 constraints: %{requires_membership: false}
+               })
+
+      context = put_in(base, [:chat_action, :authorization_scope], resource)
+
+      assert {:ok, result} =
+               Jido.Messaging.ChatActions.Executor.execute(
+                 :fetch_message,
+                 %{target: target_map("full-main", :full, "provider-a"), message_id: "shared-id"},
+                 context
+               )
+
+      if message_id == "own-message" do
+        assert result.type == "jido.messaging.operation.completed"
+        assert_receive {:provider_call, FullAdapter, :fetch_message, _}
+      else
+        assert result.data["code"] == "authorization_denied"
+        refute_receive {:provider_call, FullAdapter, _, _}
+      end
+    end
+
+    for kind <- [:room, :thread] do
+      attrs = %{kind: kind, room_id: "canonical-a", bridge_id: "full-main"}
+      attrs = if kind == :thread, do: Map.put(attrs, :thread_id, "thread-a"), else: attrs
+      resource = Jido.Messaging.AuthorizationScope.new(attrs)
+
+      assert {:ok, _} =
+               TestMessaging.create_principal_grant(%{
+                 principal_id: "actor-1",
+                 issuer_principal_id: "host",
+                 actions: [:fetch_message],
+                 scope: resource,
+                 constraints: %{requires_membership: false}
+               })
+
+      context = put_in(base, [:chat_action, :authorization_scope], resource)
+      target = target_map("full-main", :full, "provider-a", if(kind == :thread, do: "external-thread", else: nil))
+
+      assert {:ok, %Jido.Signal{data: %{"code" => "authorization_denied"}}} =
+               Jido.Messaging.ChatActions.Executor.execute(
+                 :fetch_message,
+                 %{target: target, message_id: "foreign-id"},
+                 context
+               )
+
+      refute_receive {:provider_call, FullAdapter, _, _}
+    end
+  end
+
+  test "a canonical thread scope cannot authorize channel-wide reads" do
+    assert {:ok, _} = TestMessaging.create_room(%{id: "canonical-a", type: :group})
+
+    assert {:ok, _} =
+             TestMessaging.create_room_binding("canonical-a", :full, "full-main", "provider-a")
+
+    assert {:ok, _} =
+             TestMessaging.save_thread(%{
+               id: "thread-a",
+               room_id: "canonical-a",
+               external_thread_id: "external-thread"
+             })
+
+    resource =
+      Jido.Messaging.AuthorizationScope.new(%{
+        kind: :thread,
+        room_id: "canonical-a",
+        thread_id: "thread-a",
+        bridge_id: "full-main"
+      })
+
+    assert {:ok, _} =
+             TestMessaging.create_principal_grant(%{
+               principal_id: "actor-1",
+               issuer_principal_id: "host",
+               actions: [:fetch_channel_metadata],
+               scope: resource,
+               constraints: %{requires_membership: false}
+             })
+
+    context =
+      action_context(Scope.workspace("workspace-1"))
+      |> put_in([:chat_action, :authorization_scope], resource)
+
+    assert {:ok,
+            %Jido.Signal{
+              type: "jido.messaging.operation.failed",
+              data: %{"code" => "authorization_denied"}
+            }} =
+             Jido.Messaging.ChatActions.Executor.execute(
+               :fetch_channel_metadata,
+               %{target: target_map("full-main", :full, "provider-a", "external-thread")},
+               context
+             )
+
+    refute_receive {:provider_call, FullAdapter, _, _}
+  end
+
   defp channel_scope(bridge_id, adapter, channel_id) do
     Scope.channel(bridge_id, adapter, channel_id, actor_id: "actor-1")
   end

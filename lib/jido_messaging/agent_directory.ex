@@ -102,7 +102,7 @@ defmodule Jido.Messaging.AgentDirectory do
   @spec lookup(module(), atom(), map(), AgentDirectoryScope.t(), keyword()) ::
           {:ok, AgentDirectoryEntry.t()} | {:error, term()}
   def lookup(instance_module, runtime, query, scope, opts \\ []) do
-    case search(instance_module, runtime, query, scope, opts) do
+    case search(instance_module, runtime, query, scope, Keyword.delete(opts, :limit)) do
       {:ok, [entry]} -> {:ok, entry}
       {:ok, []} -> {:error, :not_found}
       {:ok, entries} -> {:error, {:ambiguous, entries}}

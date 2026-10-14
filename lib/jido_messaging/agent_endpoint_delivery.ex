@@ -83,28 +83,13 @@ defmodule Jido.Messaging.AgentEndpointDelivery do
   end
 
   defp invoke_bounded(provider, delivery, opts, timeout) do
-    caller = self()
-    result_ref = make_ref()
-
-    {pid, monitor_ref} =
-      spawn_monitor(fn ->
-        result = safe_provider_call(provider, delivery, opts)
-        send(caller, {result_ref, result})
-      end)
-
-    receive do
-      {^result_ref, result} ->
-        Process.demonitor(monitor_ref, [:flush])
-        normalize_result(result, delivery.id)
-
-      {:DOWN, ^monitor_ref, :process, ^pid, reason} ->
-        {:error, {:endpoint_provider_failed, failure_class(reason)}}
-    after
-      timeout ->
-        Process.exit(pid, :kill)
-        await_down(monitor_ref, pid)
-        flush_result(result_ref)
-        {:error, :endpoint_provider_timeout}
+    case Jido.Messaging.BoundedCall.run(
+           fn -> safe_provider_call(provider, delivery, opts) end,
+           timeout
+         ) do
+      {:ok, result} -> normalize_result(result, delivery.id)
+      {:exit, reason} -> {:error, {:endpoint_provider_failed, failure_class(reason)}}
+      :timeout -> {:error, :endpoint_provider_timeout}
     end
   end
 
@@ -126,22 +111,6 @@ defmodule Jido.Messaging.AgentEndpointDelivery do
 
   defp normalize_timeout(value) when is_integer(value), do: value |> max(1) |> min(@max_timeout)
   defp normalize_timeout(_value), do: @default_timeout
-
-  defp await_down(monitor_ref, pid) do
-    receive do
-      {:DOWN, ^monitor_ref, :process, ^pid, _reason} -> :ok
-    after
-      100 -> Process.demonitor(monitor_ref, [:flush])
-    end
-  end
-
-  defp flush_result(result_ref) do
-    receive do
-      {^result_ref, _result} -> :ok
-    after
-      0 -> :ok
-    end
-  end
 
   defp failure_class(:normal), do: :normal_exit
   defp failure_class(:killed), do: :killed
