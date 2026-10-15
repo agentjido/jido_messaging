@@ -679,8 +679,8 @@ defmodule Jido.Messaging.AgentRunnerTest do
     assert is_pid(supervisor_pid)
     assert is_pid(agent_supervisor_pid)
 
-    :ok = :sys.suspend(supervisor_pid)
-    Process.exit(agent_supervisor_pid, :kill)
+    registry = Module.concat(instance_module, Registry.Agents)
+    :ok = Supervisor.terminate_child(supervisor_pid, registry)
 
     assert_eventually(
       fn ->
@@ -692,7 +692,7 @@ defmodule Jido.Messaging.AgentRunnerTest do
     try do
       fun.()
     after
-      :ok = :sys.resume(supervisor_pid)
+      assert {:ok, _} = Supervisor.restart_child(supervisor_pid, registry)
 
       assert_eventually(
         fn ->

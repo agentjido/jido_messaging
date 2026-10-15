@@ -78,7 +78,8 @@ stored records. Compare public contracts separately from those internal details.
 | C6 | Complete | 2,278 tests passed, including PostgreSQL, integration, and story tests. Coverage: 11,531/12,803 lines (90.0648%). Public contract comparison: 19 modules unchanged. Format, compilation, and 16 Credo checks passed. CI: 22 passed, one expected skip on `19a79f66`. |
 | C7 | Local verification complete; CI pending | 2,286 tests passed, including PostgreSQL, integration, and story tests. Coverage: 11,600/12,875 lines (90.0%). Public contract comparison: 22 modules unchanged. Format, compilation, and 16 Credo checks passed. |
 | C8a | Local verification complete; CI pending | 2,292 tests passed. Coverage: 11,637/12,899 lines (90.2%). Public contracts: 24 modules unchanged. Format, compilation, and 16 Credo checks passed. |
-| C8b–C8e | Pending | |
+| C8b | Local verification complete; CI pending | 2,297 tests passed. Coverage: 11,660/12,920 lines (90.2%). Public contracts: 25 modules unchanged. Format, compilation, and 16 Credo checks passed. |
+| C8c–C8e | Pending | |
 | C9–C14 | Pending | |
 
 ## C6 — Bus subscription recovery
@@ -360,3 +361,13 @@ delivery. Do not change CHANGELOG or restore unrelated user deletions.
 
 The active goal covers all checkpoints. Complete C6 first, record its results,
 and continue through C14. Do not merge or publish packages.
+
+### Open CI evidence
+
+C7 and C8a remain open for final CI. The C7 run found a 100 ms caller-death
+setup wait; commit `31a3b88` adds a one-second limit and caller cleanup. The C8a
+run found two 100 ms recovery waits competing with the 100 ms retry timer; commit
+`1d316d0` sets one-second test limits. Its focused regression run passed 18 tests.
+That run also reported an intermittent existing concurrent endpoint-membership
+lookup failure on OTP 29. The assertion now identifies the affected adapter.
+Keep this issue open until a verified fix or clean repeated evidence resolves it.

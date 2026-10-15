@@ -1,10 +1,10 @@
 # Runtime ownership and failure limits
 
-This document defines the runtime contract after C8a. Public functions, existing
+This document defines the runtime contract after C8b. Public functions, existing
 process names, state structs, Signal schemas, and stored records remain unchanged.
-C6 adds private subscription workers. C7 and C8a isolate the instance and room
-registries with their workers. Request retention and provider scheduling remain
-as measured in C5.
+C6 adds private subscription workers. C7, C8a, and C8b isolate the instance, room,
+and agent registries with their workers. Request retention and provider scheduling
+remain as measured in C5.
 
 ## Process groups
 
@@ -141,8 +141,9 @@ kill a partition after a provider effect but before its reply.
   observations are not replayed by the current memory store.
 * Instance-registry loss restarts its delivery and provider worker group. Runtime
   and the Bus remain alive. Completed and unknown request entries stay intact.
-  Room-registry loss restores desired room workers in its own branch. Other
-  instance registries retain their earlier recovery limits until their C8 step.
+  Room-registry loss restores desired room workers in its own branch. Agent-registry loss restores desired runners with their handler settings.
+  Bridge, replay, and onboarding registries retain their earlier limits until
+  their C8 steps.
 * A partition restart preserves a Runtime-owned Chat binding. A request whose
   provider owner died after an effect remains `request_outcome_unknown` and
   terminates at attempt one. It does not cause a second provider call.
@@ -212,3 +213,29 @@ an observation-failure event when their room observation cannot run.
 Tests restore 64 rooms with custom settings. Runtime, the Bus, other process
 groups, completed request history, and saved room data survive. The private
 subscription registry also uses the safe starter for a stale Registry partition.
+
+## Agent registry recovery after C8b
+
+The agent registry and AgentSupervisor form a separate recovery branch. Desired
+runner specifications include handler configuration and remain in root-owned ETS.
+They do not become canonical stored records. Runner recovery restores the same
+configuration and managed Bus subscription. A new runner also asks its room to
+restore assignment state from the existing owner-tagged Registry records. This
+works when room and agent groups recover in either order.
+
+Managed supervisor recovery uses the retained desired set. It does not infer
+desired workers again from saved assignments after an explicit stop. The existing
+explicit `restore_agent_runners/1` operation can still start registered agents
+from saved thread assignments. Standalone AgentSupervisor startup retains its
+earlier restoration path.
+
+Stop and recovery run through the same private coordinator. Lookup occurs inside
+the serialized stop command. A missing runner removes its desired entry and
+returns the existing `not_found` result. Unassignment during registry downtime
+therefore cannot restore that runner later. Failed starts are not retained. A
+stale runner outside the owned supervisor is not adopted or stopped.
+
+Tests restore 16 runners, compare exact handler configuration, and verify one
+handler call for a new observation. They also test combined room/agent recovery,
+explicit stop, unassignment during downtime, stale registration, startup failure,
+and unchanged Runtime, Bus, and unrelated group PIDs.

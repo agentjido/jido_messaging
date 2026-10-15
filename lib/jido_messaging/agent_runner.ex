@@ -98,6 +98,8 @@ defmodule Jido.Messaging.AgentRunner do
       [{pid, _}] -> if Process.alive?(pid), do: pid
       [] -> nil
     end
+  rescue
+    ArgumentError -> nil
   end
 
   @impl true
@@ -119,6 +121,7 @@ defmodule Jido.Messaging.AgentRunner do
       })
 
     register_as_participant(state)
+    if room = RoomServer.whereis(instance_module, room_id), do: send(room, :restore_agents)
     send(self(), :subscribe)
 
     Logger.debug("[Jido.Messaging.AgentRunner] Agent #{agent_id} started in room #{room_id} thread #{thread_id}")

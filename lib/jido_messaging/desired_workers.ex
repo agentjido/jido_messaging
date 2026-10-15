@@ -23,10 +23,13 @@ defmodule Jido.Messaging.DesiredWorkers do
     end)
   end
 
-  @spec stop(module(), atom(), term(), pid()) :: :ok | {:error, term()}
+  @spec stop(module(), atom(), term(), pid() | (-> pid() | nil)) :: :ok | {:error, term()}
   def stop(instance, supervisor, key, pid) do
-    manage(instance, supervisor, {:stop, key, pid}, fn -> DynamicSupervisor.terminate_child(supervisor, pid) end)
+    manage(instance, supervisor, {:stop, key, pid}, fn -> terminate_child(supervisor, resolve_pid(pid)) end)
   end
+
+  @spec managed?(module()) :: boolean()
+  def managed?(instance), do: :ets.whereis(table_name(instance)) != :undefined
 
   @spec restore(atom()) :: :ok
   def restore(supervisor), do: GenServer.cast(name(supervisor), :restore)
@@ -49,8 +52,9 @@ defmodule Jido.Messaging.DesiredWorkers do
   end
 
   def handle_call({:stop, key, pid}, _from, state) do
-    result = safely(fn -> DynamicSupervisor.terminate_child(state.supervisor, pid) end)
-    if result == :ok, do: :ets.delete(state.table, {state.supervisor, key})
+    pid = resolve_pid(pid)
+    result = safely(fn -> terminate_child(state.supervisor, pid) end)
+    if result == :ok or is_nil(pid), do: :ets.delete(state.table, {state.supervisor, key})
     {:reply, result, state}
   end
 
@@ -96,10 +100,15 @@ defmodule Jido.Messaging.DesiredWorkers do
   defp started?(_result), do: false
 
   defp manage(instance, supervisor, message, standalone) do
-    if :ets.whereis(table_name(instance)) == :undefined,
+    if not managed?(instance),
       do: standalone.(),
       else: safely(fn -> GenServer.call(name(supervisor), message, :infinity) end)
   end
+
+  defp resolve_pid(lookup) when is_function(lookup, 0), do: lookup.()
+  defp resolve_pid(pid), do: pid
+  defp terminate_child(_supervisor, nil), do: {:error, :not_found}
+  defp terminate_child(supervisor, pid), do: DynamicSupervisor.terminate_child(supervisor, pid)
 
   defp table_name(instance), do: Module.concat(instance, DesiredWorkerSpecs)
   defp name(supervisor), do: Module.concat(supervisor, DesiredWorkers)
