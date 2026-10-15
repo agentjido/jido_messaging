@@ -277,3 +277,17 @@ Tests replace 64 replay workers and preserve completed and running records,
 request history, Runtime, the Bus, and unrelated groups. An external registry
 prevents startup without adoption or termination of its workers. Static workers
 retain ordinary Supervisor stop/restart behavior.
+
+## Onboarding registry recovery after C8e
+
+The onboarding registry and dynamic supervisor form an optional recovery group.
+The existing profile rules are unchanged: `:core` omits onboarding, `:full` and
+unknown profiles include it, and explicit `:onboarding` enables it with `:core`.
+The root-owned desired set retains successful worker specifications. Recovery
+loads saved flows, including transition keys and side-effect records. It does
+not repeat transitions. Explicit private stop removes the desired entry.
+
+During group downtime, worker lookup returns nil, count returns zero, and flow
+operations use the existing worker-unavailable result. Recovery waits for stale
+external registrations and Runtime availability. Failed starts are not retained.
+Six new tests verify these rules, 16-flow recovery, and unchanged unrelated PIDs.

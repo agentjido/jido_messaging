@@ -96,8 +96,13 @@ defmodule Jido.Messaging.Supervisor do
         onboarding_children =
           if :onboarding in runtime_features do
             [
-              {Registry, keys: :unique, name: onboarding_registry_name},
-              {Jido.Messaging.Onboarding.Supervisor, name: onboarding_supervisor_name, instance_module: instance_module}
+              {Jido.Messaging.DesiredWorkers, supervisor: onboarding_supervisor_name, table: desired_workers},
+              {Jido.Messaging.RegistryDomain,
+               registry: onboarding_registry_name,
+               children: [
+                 {Jido.Messaging.Onboarding.Supervisor,
+                  name: onboarding_supervisor_name, instance_module: instance_module}
+               ]}
             ]
           else
             []

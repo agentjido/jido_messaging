@@ -62,7 +62,7 @@ stored records. Compare public contracts separately from those internal details.
 | Checkpoint | Deliverable | Required result |
 | --- | --- | --- |
 | C6 | Restore library-owned Bus subscriptions | AgentRunner and Demo.Bridge receive new observations after Bus restart. |
-| C7 | Isolate the instance registry and its workers | One registry failure does not restart Runtime or the Bus. |
+| C7 | Isolate the instance registry and its workers | One registry failure does not restart Runtime or the Bus. CI: 22 passed, one expected skip on `32f61ea`. |
 | C8a–C8e | Isolate each remaining instance registry | Each dependency loss stays in its own process group. |
 | C9 | Bound the Messaging request-history cache | Exact results remain available after memory-cache eviction. |
 | C10 | Use the same retention policy for Runtime-created Chat bindings | The second request ledger no longer defeats the memory bound. |
@@ -76,12 +76,12 @@ stored records. Compare public contracts separately from those internal details.
 | Checkpoint | Status | Evidence |
 | --- | --- | --- |
 | C6 | Complete | 2,278 tests passed, including PostgreSQL, integration, and story tests. Coverage: 11,531/12,803 lines (90.0648%). Public contract comparison: 19 modules unchanged. Format, compilation, and 16 Credo checks passed. CI: 22 passed, one expected skip on `19a79f66`. |
-| C7 | Local verification complete; CI pending | 2,286 tests passed, including PostgreSQL, integration, and story tests. Coverage: 11,600/12,875 lines (90.0%). Public contract comparison: 22 modules unchanged. Format, compilation, and 16 Credo checks passed. |
-| C8a | Local verification complete; CI pending | 2,292 tests passed. Coverage: 11,637/12,899 lines (90.2%). Public contracts: 24 modules unchanged. Format, compilation, and 16 Credo checks passed. |
-| C8b | Local verification complete; CI pending | 2,297 tests passed. Coverage: 11,660/12,920 lines (90.2%). Public contracts: 25 modules unchanged. Format, compilation, and 16 Credo checks passed. |
-| C8c | Local verification complete; CI pending | 2,303 tests passed. Coverage: 11,661/12,929 lines (90.1%). Public contracts: 27 modules unchanged. Format, compilation, and 16 Credo checks passed. |
-| C8d | Local verification complete; CI pending | 2,307 tests passed. Coverage: 11,665/12,929 lines (90.2%). Public contracts: 29 modules unchanged. Format, compilation, and 16 Credo checks passed. |
-| C8e | Pending | |
+| C7 | Complete | 2,286 tests passed, including PostgreSQL, integration, and story tests. Coverage: 11,600/12,875 lines (90.0%). Public contract comparison: 22 modules unchanged. Format, compilation, and 16 Credo checks passed. |
+| C8a | Complete | 2,292 tests passed. Coverage: 11,637/12,899 lines (90.2%). Public contracts: 24 modules unchanged. Format, compilation, and 16 Credo checks passed. CI: 22 passed, one expected skip on `32f61ea`. |
+| C8b | Complete | 2,297 tests passed. Coverage: 11,660/12,920 lines (90.2%). Public contracts: 25 modules unchanged. Format, compilation, and 16 Credo checks passed. CI: 22 passed, one expected skip on `32f61ea`. |
+| C8c | Complete | 2,303 tests passed. Coverage: 11,661/12,929 lines (90.1%). Public contracts: 27 modules unchanged. Format, compilation, and 16 Credo checks passed. CI: 22 passed, one expected skip on `32f61ea`. |
+| C8d | Complete | 2,307 tests passed. Coverage: 11,665/12,929 lines (90.2%). Public contracts: 29 modules unchanged. Format, compilation, and 16 Credo checks passed. CI: 22 passed, one expected skip on `32f61ea`. |
+| C8e | Local verification complete; CI pending | 2,313 tests passed. Coverage: 11,673/12,937 lines (90.2%). Public contracts: 33 modules unchanged. Format, compilation, and 16 Credo checks passed. |
 | C9–C14 | Pending | |
 
 ## C6 — Bus subscription recovery
@@ -366,7 +366,7 @@ and continue through C14. Do not merge or publish packages.
 
 ### Open CI evidence
 
-C7 and C8a remain open for final CI. The C7 run found a 100 ms caller-death
+C7 through C8d passed final CI on `32f61ea` (22 checks passed, one expected skip). The C7 run found a 100 ms caller-death
 setup wait; commit `31a3b88` adds a one-second limit and caller cleanup. The C8a
 run found two 100 ms recovery waits competing with the 100 ms retry timer; commit
 `1d316d0` sets one-second test limits. Its focused regression run passed 18 tests.
@@ -376,4 +376,4 @@ Keep this issue open until a verified fix or clean repeated evidence resolves it
 
 C8b CI passed all test jobs, including PostgreSQL and the earlier recovery
 regressions. Dialyzer found one unreachable private restoration clause. Commit
-`394fc99` removes it; 25 focused agent tests passed. Final CI remains pending.
+`394fc99` removes it; 25 focused agent tests passed. Dialyzer passed on `32f61ea`.

@@ -5,6 +5,7 @@ defmodule Jido.Messaging.Onboarding.Supervisor do
   use DynamicSupervisor
 
   alias Jido.Messaging.Onboarding.Worker
+  alias Jido.Messaging.DesiredWorkers
 
   @spec start_link(keyword()) :: Supervisor.on_start()
   @doc """
@@ -12,7 +13,15 @@ defmodule Jido.Messaging.Onboarding.Supervisor do
   """
   def start_link(opts) do
     name = Keyword.fetch!(opts, :name)
-    DynamicSupervisor.start_link(__MODULE__, opts, name: name)
+
+    case DynamicSupervisor.start_link(__MODULE__, opts, name: name) do
+      {:ok, _pid} = result ->
+        DesiredWorkers.restore(name)
+        result
+
+      error ->
+        error
+    end
   end
 
   @impl true
@@ -36,7 +45,7 @@ defmodule Jido.Messaging.Onboarding.Supervisor do
          start_request: Keyword.get(opts, :start_request)
        ]}
 
-    case DynamicSupervisor.start_child(supervisor, child_spec) do
+    case DesiredWorkers.start(instance_module, supervisor, onboarding_id, child_spec) do
       {:ok, pid} ->
         {:ok, pid}
 
@@ -48,6 +57,9 @@ defmodule Jido.Messaging.Onboarding.Supervisor do
           pid when is_pid(pid) -> {:ok, pid}
           nil -> {:error, :worker_unavailable}
         end
+
+      {:error, :supervisor_unavailable} ->
+        {:error, :worker_unavailable}
 
       {:error, reason} ->
         {:error, reason}
@@ -75,6 +87,8 @@ defmodule Jido.Messaging.Onboarding.Supervisor do
     |> supervisor_name()
     |> DynamicSupervisor.count_children()
     |> Map.fetch!(:active)
+  catch
+    :exit, _ -> 0
   end
 
   @spec supervisor_name(module()) :: atom()
