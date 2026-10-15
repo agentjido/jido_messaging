@@ -1,10 +1,10 @@
 # Runtime ownership and failure limits
 
-This document defines the runtime contract after C8b. Public functions, existing
+This document defines the runtime contract after C8c. Public functions, existing
 process names, state structs, Signal schemas, and stored records remain unchanged.
-C6 adds private subscription workers. C7, C8a, and C8b isolate the instance, room,
-and agent registries with their workers. Request retention and provider scheduling
-remain as measured in C5.
+C6 adds private subscription workers. C7 and C8a–C8c isolate the instance, room,
+agent, and bridge registries with their workers. Request retention and provider
+scheduling remain as measured in C5.
 
 ## Process groups
 
@@ -142,8 +142,8 @@ kill a partition after a provider effect but before its reply.
 * Instance-registry loss restarts its delivery and provider worker group. Runtime
   and the Bus remain alive. Completed and unknown request entries stay intact.
   Room-registry loss restores desired room workers in its own branch. Agent-registry loss restores desired runners with their handler settings.
-  Bridge, replay, and onboarding registries retain their earlier limits until
-  their C8 steps.
+  Bridge-registry loss restores desired bridge workers and listeners. Replay
+  and onboarding registries retain their earlier limits until their C8 steps.
 * A partition restart preserves a Runtime-owned Chat binding. A request whose
   provider owner died after an effect remains `request_outcome_unknown` and
   terminates at attempt one. It does not cause a second provider call.
@@ -239,3 +239,23 @@ Tests restore 16 runners, compare exact handler configuration, and verify one
 handler call for a new observation. They also test combined room/agent recovery,
 explicit stop, unassignment during downtime, stale registration, startup failure,
 and unchanged Runtime, Bus, and unrelated group PIDs.
+
+## Bridge registry recovery after C8c
+
+The bridge registry and BridgeSupervisor form a separate recovery branch. The
+root-owned desired set retains each successfully started worker's resolved
+configuration. This includes direct starts with a supplied config. Registry loss
+restores the desired set and listener subtrees. Runtime keeps binding ownership.
+
+The first BridgeSupervisor start in an instance lifetime reconciles persisted
+enabled configuration, after ConfigStore and Deduper are available. A private
+initialization marker survives registry-group loss. Later group recovery uses
+the retained desired set, so it does not undo an explicit stop. Explicit
+`reconcile/1` still applies current enabled configuration and can start a stopped
+configured bridge. Existing config changes retain their reconciliation path.
+
+Successful stop removes the desired entry. Stop during group downtime removes
+it too, with the existing `not_found` result. Failed startup and duplicate starts
+do not replace desired configuration. Recovery waits for stale external
+registrations and for Runtime availability. Tests check listener replacement,
+exact config revision, request history, and unchanged unrelated process PIDs.

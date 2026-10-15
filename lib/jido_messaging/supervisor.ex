@@ -57,7 +57,6 @@ defmodule Jido.Messaging.Supervisor do
         signal_bus_name = Module.concat(instance_module, SignalBus)
 
         base_children = [
-          {Registry, keys: :unique, name: bridge_registry_name},
           {Jido.Signal.Bus, name: signal_bus_name},
           {Jido.Messaging.Runtime,
            name: runtime_name,
@@ -88,7 +87,10 @@ defmodule Jido.Messaging.Supervisor do
               name: outbound_gateway_supervisor_name, instance_module: instance_module},
              {Jido.Messaging.InstanceSupervisor, name: instance_supervisor_name, instance_module: instance_module}
            ]},
-          {Jido.Messaging.BridgeSupervisor, name: bridge_supervisor_name, instance_module: instance_module}
+          {Jido.Messaging.DesiredWorkers, supervisor: bridge_supervisor_name, table: desired_workers},
+          {Jido.Messaging.RegistryDomain,
+           registry: bridge_registry_name,
+           children: [{Jido.Messaging.BridgeSupervisor, name: bridge_supervisor_name, instance_module: instance_module}]}
         ]
 
         onboarding_children =

@@ -31,6 +31,16 @@ defmodule Jido.Messaging.DesiredWorkers do
   @spec managed?(module()) :: boolean()
   def managed?(instance), do: :ets.whereis(table_name(instance)) != :undefined
 
+  @spec initialized?(module(), atom()) :: boolean()
+  def initialized?(instance, supervisor),
+    do: managed?(instance) and :ets.member(table_name(instance), {:initialized, supervisor})
+
+  @spec mark_initialized(module(), atom()) :: :ok
+  def mark_initialized(instance, supervisor) do
+    if managed?(instance), do: :ets.insert(table_name(instance), {{:initialized, supervisor}, true})
+    :ok
+  end
+
   @spec restore(atom()) :: :ok
   def restore(supervisor), do: GenServer.cast(name(supervisor), :restore)
 

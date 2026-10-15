@@ -43,6 +43,8 @@ defmodule Jido.Messaging.BridgeServer do
       [{pid, _}] -> pid
       [] -> nil
     end
+  rescue
+    ArgumentError -> nil
   end
 
   @spec status(pid()) :: {:ok, BridgeStatus.t()}

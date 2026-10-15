@@ -79,7 +79,8 @@ stored records. Compare public contracts separately from those internal details.
 | C7 | Local verification complete; CI pending | 2,286 tests passed, including PostgreSQL, integration, and story tests. Coverage: 11,600/12,875 lines (90.0%). Public contract comparison: 22 modules unchanged. Format, compilation, and 16 Credo checks passed. |
 | C8a | Local verification complete; CI pending | 2,292 tests passed. Coverage: 11,637/12,899 lines (90.2%). Public contracts: 24 modules unchanged. Format, compilation, and 16 Credo checks passed. |
 | C8b | Local verification complete; CI pending | 2,297 tests passed. Coverage: 11,660/12,920 lines (90.2%). Public contracts: 25 modules unchanged. Format, compilation, and 16 Credo checks passed. |
-| C8c–C8e | Pending | |
+| C8c | Local verification complete; CI pending | 2,303 tests passed. Coverage: 11,661/12,929 lines (90.1%). Public contracts: 27 modules unchanged. Format, compilation, and 16 Credo checks passed. |
+| C8d–C8e | Pending | |
 | C9–C14 | Pending | |
 
 ## C6 — Bus subscription recovery
