@@ -243,10 +243,7 @@ defmodule Jido.Messaging.Demo.BridgeOwnershipTest do
     {message, fact}
   end
 
-  defp await_subscribed(bridge, remaining \\ 100)
-  defp await_subscribed(_bridge, 0), do: flunk("bridge subscription did not complete")
-
-  defp await_subscribed(bridge, remaining) do
-    if :sys.get_state(bridge).subscribed, do: :ok, else: await_subscribed(bridge, remaining - 1)
+  defp await_subscribed(bridge) do
+    Jido.Messaging.TestHelpers.assert_eventually(fn -> :sys.get_state(bridge).subscribed end, timeout: 1_000)
   end
 end
