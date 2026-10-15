@@ -15,6 +15,11 @@ defmodule Jido.Messaging.Persistence.Postgres do
   Migration work uses a PostgreSQL advisory lock and a package-specific
   migration table.
 
+  Principal, membership, grant, and invocation-policy storage supports authorized
+  messaging and typed commands. Optional identity credentials, external identity
+  lifecycle, agent projections, delegation, continuity, trust evidence, and
+  activity projections are not implemented by this adapter.
+
   ## Options
 
     * `:instance_id` - Stable record namespace. Defaults to `"default"` for
@@ -31,15 +36,26 @@ defmodule Jido.Messaging.Persistence.Postgres do
   options, SQL parameters, or credentials.
   """
 
-  @behaviour Jido.Messaging.Persistence
+  @behaviour Jido.Messaging.Persistence.Contracts.Lifecycle
+  @behaviour Jido.Messaging.Persistence.Contracts.Transactions
+  @behaviour Jido.Messaging.Persistence.Contracts.Records
+  @behaviour Jido.Messaging.Persistence.Contracts.ProviderBindings
+  @behaviour Jido.Messaging.Persistence.Contracts.ControlPlane
+  @behaviour Jido.Messaging.Persistence.Contracts.Authorization
   @behaviour Jido.Messaging.Directory
 
   alias Jido.Chat.{Participant, Room}
+  alias Jido.Messaging.Persistence.{Payload, RecordRules}
 
   alias Jido.Messaging.{
+    AuthorizationScope,
     BridgeConfig,
+    Grant,
     IngressSubscription,
+    InvocationPolicy,
+    Membership,
     Message,
+    Principal,
     RoomBinding,
     RoutingPolicy,
     Thread
@@ -215,17 +231,20 @@ defmodule Jido.Messaging.Persistence.Postgres do
 
   @impl true
   def delete_room(state, room_id) do
-    run(
-      state,
-      """
-      DELETE FROM #{@table}
-      WHERE instance_id = $1
-        AND ((kind = 'room' AND id = $2)
-         OR (kind IN ('message', 'thread', 'room_binding', 'routing_policy') AND room_id = $2))
-      """,
-      [state.instance_id, room_id],
-      :delete_room
-    )
+    authorization_delete(state, fn transaction_state ->
+      run(
+        transaction_state,
+        """
+        DELETE FROM #{@table}
+        WHERE instance_id = $1
+          AND ((kind = 'room' AND id = $2)
+           OR (kind IN ('message', 'thread', 'room_binding', 'routing_policy',
+                        'membership', 'principal_grant', 'invocation_policy') AND room_id = $2))
+        """,
+        [state.instance_id, room_id],
+        :delete_room
+      )
+    end)
   end
 
   @impl true
@@ -235,7 +254,13 @@ defmodule Jido.Messaging.Persistence.Postgres do
 
   @impl true
   def save_participant(state, %Participant{} = participant) do
-    persist(state, "participant", participant.id, participant)
+    with_authorization_lock(state, fn transaction_state ->
+      with :ok <- validate_existing_principal(transaction_state, participant),
+           {:ok, participant} <- persist(transaction_state, "participant", participant.id, participant),
+           {:ok, _principal} <- ensure_principal(transaction_state, participant) do
+        {:ok, participant}
+      end
+    end)
   end
 
   @impl true
@@ -243,17 +268,166 @@ defmodule Jido.Messaging.Persistence.Postgres do
 
   @impl true
   def delete_participant(state, participant_id) do
-    run(
-      state,
-      """
-      DELETE FROM #{@table}
-      WHERE instance_id = $1
-        AND ((kind = 'participant' AND id = $2)
-          OR (kind = 'participant_binding' AND room_id = $2))
-      """,
-      [state.instance_id, participant_id],
-      :delete_participant
-    )
+    authorization_delete(state, fn transaction_state ->
+      run(
+        transaction_state,
+        """
+        DELETE FROM #{@table}
+        WHERE instance_id = $1
+          AND ((kind IN ('participant', 'principal') AND id = $2)
+            OR (kind = 'participant_binding' AND room_id = $2)
+            OR (kind IN ('membership', 'principal_grant', 'invocation_policy') AND sender_id = $2))
+        """,
+        [state.instance_id, participant_id],
+        :delete_participant
+      )
+    end)
+  end
+
+  @impl true
+  def save_principal(state, %Principal{} = principal) do
+    with_authorization_lock(state, fn transaction_state ->
+      with {:ok, participant} <- get_participant(transaction_state, principal.participant_id),
+           :ok <- validate_principal_projection(principal, participant),
+           :ok <- validate_principal_controller(transaction_state, principal) do
+        persist(transaction_state, "principal", principal.id, principal, room_id: principal.participant_id)
+      end
+    end)
+  end
+
+  @impl true
+  def get_principal(state, principal_id) do
+    case fetch_record(state, "principal", principal_id) do
+      {:error, :not_found} ->
+        with_authorization_lock(state, fn transaction_state ->
+          with {:ok, participant} <- get_participant(transaction_state, principal_id) do
+            ensure_principal(transaction_state, participant)
+          end
+        end)
+
+      result ->
+        result
+    end
+  end
+
+  @impl true
+  def save_membership(state, %Membership{} = membership) do
+    with_authorization_lock(state, fn transaction_state ->
+      with :ok <-
+             validate_authorization_revision(
+               transaction_state,
+               "membership",
+               membership,
+               &RecordRules.membership_identity?/2
+             ),
+           :ok <- validate_membership_scope(transaction_state, membership) do
+        persist(transaction_state, "membership", membership.id, membership,
+          room_id: membership.room_id,
+          sender_id: membership.principal_id,
+          inserted_at: membership.inserted_at,
+          external_id: membership.principal_id
+        )
+      end
+    end)
+  end
+
+  @impl true
+  def get_membership(state, membership_id), do: fetch_record(state, "membership", membership_id)
+
+  @impl true
+  def get_membership_by_scope(state, room_id, principal_id) do
+    fetch_one(state, "membership", [{"room_id", room_id}, {"sender_id", principal_id}])
+  end
+
+  @impl true
+  def list_memberships(state, room_id, opts \\ []) do
+    with {:ok, records} <- query_records(state, "kind = $1 AND room_id = $2", ["membership", room_id], limit: 501) do
+      {:ok,
+       records
+       |> filter_authorization_record(:principal_id, Keyword.get(opts, :principal_id))
+       |> filter_authorization_record(:status, Keyword.get(opts, :status))
+       |> take_authorization_records(opts)}
+    end
+  end
+
+  @impl true
+  def save_principal_grant(state, %Grant{} = grant) do
+    with_authorization_lock(state, fn transaction_state ->
+      with :ok <-
+             validate_authorization_revision(
+               transaction_state,
+               "principal_grant",
+               grant,
+               &RecordRules.grant_identity?/2
+             ) do
+        persist(transaction_state, "principal_grant", grant.id, grant,
+          room_id: grant.scope.room_id,
+          thread_id: grant.scope.thread_id,
+          sender_id: grant.principal_id,
+          inserted_at: grant.inserted_at,
+          bridge_id: grant.scope.bridge_id,
+          external_id: AuthorizationScope.key(grant.scope)
+        )
+      end
+    end)
+  end
+
+  @impl true
+  def get_principal_grant(state, grant_id), do: fetch_record(state, "principal_grant", grant_id)
+
+  @impl true
+  def list_principal_grants(state, principal_id, opts \\ []) do
+    with {:ok, records} <-
+           query_records(state, "kind = $1 AND sender_id = $2", ["principal_grant", principal_id], limit: 501) do
+      records = filter_authorization_record(records, :status, Keyword.get(opts, :status))
+      action = Keyword.get(opts, :action)
+      records = if is_nil(action), do: records, else: Enum.filter(records, &(action in &1.actions))
+      {:ok, take_authorization_records(records, opts)}
+    end
+  end
+
+  @impl true
+  def save_invocation_policy(state, %InvocationPolicy{} = policy) do
+    scope_key = AuthorizationScope.key(policy.scope)
+
+    with_authorization_lock(state, fn transaction_state ->
+      with :ok <-
+             validate_authorization_revision(
+               transaction_state,
+               "invocation_policy",
+               policy,
+               &RecordRules.policy_identity?/2
+             ),
+           :ok <- validate_policy_scope(transaction_state, policy, scope_key) do
+        persist(transaction_state, "invocation_policy", policy.id, policy,
+          room_id: policy.scope.room_id,
+          thread_id: policy.scope.thread_id,
+          sender_id: policy.target_principal_id,
+          inserted_at: policy.inserted_at,
+          bridge_id: policy.scope.bridge_id,
+          external_id: scope_key
+        )
+      end
+    end)
+  end
+
+  @impl true
+  def get_invocation_policy(state, policy_id), do: fetch_record(state, "invocation_policy", policy_id)
+
+  @impl true
+  def get_invocation_policy_by_scope(state, target_principal_id, scope_key) do
+    fetch_one(state, "invocation_policy", [{"sender_id", target_principal_id}, {"external_id", scope_key}])
+  end
+
+  @impl true
+  def list_invocation_policies(state, target_principal_id, opts \\ []) do
+    with {:ok, records} <-
+           query_records(state, "kind = $1 AND sender_id = $2", ["invocation_policy", target_principal_id], limit: 501) do
+      {:ok,
+       records
+       |> filter_authorization_record(:status, Keyword.get(opts, :status))
+       |> take_authorization_records(opts)}
+    end
   end
 
   @impl true
@@ -279,7 +453,8 @@ defmodule Jido.Messaging.Persistence.Postgres do
     limit = Keyword.get(opts, :limit, 50)
     thread_id = Keyword.get(opts, :thread_id)
 
-    with {:ok, direction} <- cursor_direction(opts),
+    with true <- is_integer(limit) and limit > 0,
+         {:ok, direction} <- RecordRules.cursor_direction(opts),
          {scope_where, scope_params} <- message_scope(room_id, thread_id),
          {where, params} <- with_instance_scope(state, scope_where, scope_params),
          {:ok, cursor} <- resolve_message_cursor(state, where, params, direction),
@@ -287,6 +462,9 @@ defmodule Jido.Messaging.Persistence.Postgres do
          {:ok, rows} <- query_message_page(state, where, params, order, limit) do
       messages = decode_rows(rows)
       {:ok, if(reverse?, do: Enum.reverse(messages), else: messages)}
+    else
+      false -> {:error, :invalid_limit}
+      {:error, _} = error -> error
     end
   end
 
@@ -340,15 +518,34 @@ defmodule Jido.Messaging.Persistence.Postgres do
   def get_thread_by_external_id(state, room_id, external_thread_id) do
     fetch_one(state, "thread", [
       {"room_id", room_id},
-      {"external_id", normalize_term(external_thread_id)}
+      {"external_id", RecordRules.normalize_term(external_thread_id)}
     ])
   end
 
   @impl true
   def get_thread_by_root_message(state, room_id, root_message_id) do
-    state
-    |> list_threads(room_id, limit: 500)
-    |> find_record(&(&1.root_message_id == root_message_id))
+    find_thread_by_root_page(state, room_id, root_message_id, nil)
+  end
+
+  defp find_thread_by_root_page(state, room_id, root_message_id, cursor) do
+    {where, params} =
+      case cursor do
+        nil -> {"kind = $1 AND room_id = $2", ["thread", room_id]}
+        id -> {"kind = $1 AND room_id = $2 AND id > $3", ["thread", room_id, id]}
+      end
+
+    with {:ok, threads} <- query_records(state, where, params, order: "id ASC", limit: 500) do
+      case Enum.find(threads, &(&1.root_message_id == root_message_id)) do
+        nil when length(threads) == 500 ->
+          find_thread_by_root_page(state, room_id, root_message_id, List.last(threads).id)
+
+        nil ->
+          {:error, :not_found}
+
+        thread ->
+          {:ok, thread}
+      end
+    end
   end
 
   @impl true
@@ -425,9 +622,19 @@ defmodule Jido.Messaging.Persistence.Postgres do
   @impl true
   def get_message_by_external_id(state, channel, bridge_id, external_id) do
     fetch_one(state, "message", [
-      {"channel", normalize_term(channel)},
-      {"bridge_id", normalize_term(bridge_id)},
-      {"external_id", normalize_term(external_id)}
+      {"channel", RecordRules.normalize_term(channel)},
+      {"bridge_id", RecordRules.normalize_term(bridge_id)},
+      {"external_id", RecordRules.normalize_term(external_id)}
+    ])
+  end
+
+  @impl true
+  def get_message_by_external_id(state, channel, bridge_id, external_id, room_id) do
+    fetch_one(state, "message", [
+      {"channel", RecordRules.normalize_term(channel)},
+      {"bridge_id", RecordRules.normalize_term(bridge_id)},
+      {"external_id", RecordRules.normalize_term(external_id)},
+      {"room_id", room_id}
     ])
   end
 
@@ -447,24 +654,60 @@ defmodule Jido.Messaging.Persistence.Postgres do
 
   @impl true
   def create_room_binding(state, room_id, channel, bridge_id, external_id, attrs) do
+    case find_room_binding(state, channel, bridge_id, external_id) do
+      {:ok, binding} ->
+        room_binding_owner_result(binding, room_id)
+
+      {:error, :not_found} ->
+        store_room_binding(state, room_id, channel, bridge_id, external_id, attrs)
+
+      {:error, _reason} = error ->
+        error
+    end
+  end
+
+  defp store_room_binding(state, room_id, channel, bridge_id, external_id, attrs) do
     binding =
       RoomBinding.new(
         Map.merge(attrs, %{
           room_id: room_id,
           channel: channel,
-          bridge_id: normalize_term(bridge_id),
-          external_room_id: normalize_term(external_id)
+          bridge_id: RecordRules.normalize_term(bridge_id),
+          external_room_id: RecordRules.normalize_term(external_id)
         })
       )
 
-    persist(state, "room_binding", binding.id, binding,
-      room_id: room_id,
-      channel: channel,
-      bridge_id: binding.bridge_id,
-      external_id: binding.external_room_id,
-      inserted_at: binding.inserted_at
-    )
+    # A binding-key collision must not abort the caller's transaction. Read
+    # the retained owner after the claim, including a concurrent same-room retry.
+    with :ok <-
+           run(
+             state,
+             """
+             INSERT INTO #{@table}
+               (instance_id, kind, id, room_id, channel, bridge_id, external_id, inserted_at, payload)
+             VALUES ($1, 'room_binding', $2, $3, $4, $5, $6, $7, $8)
+             ON CONFLICT (instance_id, channel, bridge_id, external_id)
+               WHERE kind = 'room_binding' DO NOTHING
+             """,
+             [
+               state.instance_id,
+               binding.id,
+               room_id,
+               RecordRules.normalize_term(channel),
+               binding.bridge_id,
+               binding.external_room_id,
+               RecordRules.format_datetime(binding.inserted_at),
+               Payload.encode(binding)
+             ],
+             :create_room_binding
+           ),
+         {:ok, stored} <- find_room_binding(state, channel, bridge_id, external_id) do
+      room_binding_owner_result(stored, room_id)
+    end
   end
+
+  defp room_binding_owner_result(%RoomBinding{room_id: room_id} = binding, room_id), do: {:ok, binding}
+  defp room_binding_owner_result(binding, _room_id), do: {:error, {:room_binding_conflict, binding.room_id}}
 
   @impl true
   def list_room_bindings(state, room_id) do
@@ -490,7 +733,7 @@ defmodule Jido.Messaging.Persistence.Postgres do
 
   @impl true
   def directory_lookup(state, target, query, opts \\ []) when is_map(query) do
-    case directory_search(state, target, query, opts) do
+    case directory_search(state, target, query, Keyword.delete(opts, :limit)) do
       {:ok, [entry]} -> {:ok, entry}
       {:ok, []} -> {:error, :not_found}
       {:ok, matches} -> {:error, {:ambiguous, matches}}
@@ -500,33 +743,40 @@ defmodule Jido.Messaging.Persistence.Postgres do
 
   @impl true
   def directory_search(state, :participant, query, opts) when is_map(query) do
-    limit = Keyword.get(opts, :limit, 500)
-
-    with {:ok, participants} <- list_records(state, "participant", limit: limit) do
-      participants =
-        participants
-        |> Enum.filter(&participant_matches?(&1, query))
-        |> Enum.sort_by(& &1.id)
-
-      {:ok, participants}
-    end
+    directory_matches(state, "participant", &participant_matches?(state, &1, query), opts)
   end
 
   def directory_search(state, :room, query, opts) when is_map(query) do
-    limit = Keyword.get(opts, :limit, 500)
-
-    with {:ok, rooms} <- list_records(state, "room", limit: limit) do
-      rooms =
-        rooms
-        |> Enum.filter(&room_matches?(state, &1, query))
-        |> Enum.sort_by(& &1.id)
-
-      {:ok, rooms}
-    end
+    directory_matches(state, "room", &room_matches?(state, &1, query), opts)
   end
 
   def directory_search(_state, target, _query, _opts) do
     {:error, {:invalid_directory_target, target}}
+  end
+
+  defp directory_matches(state, kind, matches?, opts) do
+    case Keyword.get(opts, :limit, 500) do
+      limit when is_integer(limit) and limit >= 0 -> directory_page(state, kind, matches?, limit, nil, [])
+      _ -> {:error, :invalid_directory_limit}
+    end
+  end
+
+  defp directory_page(_state, _kind, _matches?, 0, _cursor, found), do: {:ok, Enum.reverse(found)}
+
+  defp directory_page(state, kind, matches?, limit, cursor, found) do
+    {where, params} = if cursor, do: {"kind = $1 AND id > $2", [kind, cursor]}, else: {"kind = $1", [kind]}
+
+    with {:ok, records} <- query_records(state, where, params, order: "id ASC", limit: 500) do
+      selected = records |> Enum.filter(matches?) |> Enum.take(limit)
+      found = Enum.reverse(selected, found)
+      remaining = limit - length(selected)
+
+      if remaining == 0 or length(records) < 500 do
+        {:ok, Enum.reverse(found)}
+      else
+        directory_page(state, kind, matches?, remaining, List.last(records).id, found)
+      end
+    end
   end
 
   @impl true
@@ -606,6 +856,121 @@ defmodule Jido.Messaging.Persistence.Postgres do
   @impl true
   def delete_routing_policy(state, room_id) do
     delete_existing_record(state, "routing_policy", room_id)
+  end
+
+  # Database locks apply across pools and BEAM nodes. A namespace lock keeps
+  # scope claims, record revisions, principal projections, and cleanup in order.
+  defp with_authorization_lock(state, fun) do
+    transaction(state, fn transaction_state ->
+      with {:ok, _result} <-
+             query(
+               transaction_state,
+               "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+               ["jido_messaging:authorization:" <> state.instance_id],
+               :authorization_lock
+             ) do
+        fun.(transaction_state)
+      end
+    end)
+  end
+
+  defp authorization_delete(state, fun) do
+    case with_authorization_lock(state, fn transaction_state ->
+           case fun.(transaction_state) do
+             :ok -> {:ok, :ok}
+             {:error, _reason} = error -> error
+           end
+         end) do
+      {:ok, :ok} -> :ok
+      {:error, _reason} = error -> error
+    end
+  end
+
+  defp ensure_principal(state, participant) do
+    case fetch_record(state, "principal", participant.id) do
+      {:error, :not_found} ->
+        principal = Principal.from_participant(participant)
+        persist(state, "principal", principal.id, principal, room_id: principal.participant_id)
+
+      result ->
+        result
+    end
+  end
+
+  defp validate_existing_principal(state, participant) do
+    case fetch_record(state, "principal", participant.id) do
+      {:ok, principal} -> validate_principal_projection(principal, participant)
+      {:error, :not_found} -> :ok
+      {:error, _reason} = error -> error
+    end
+  end
+
+  defp validate_principal_projection(principal, participant) do
+    if principal.id == participant.id and principal.participant_id == participant.id and
+         principal.type == participant.type do
+      :ok
+    else
+      {:error, :principal_participant_mismatch}
+    end
+  end
+
+  defp validate_principal_controller(_state, %Principal{controller_principal_id: nil}), do: :ok
+
+  defp validate_principal_controller(_state, %Principal{id: id, controller_principal_id: id}),
+    do: {:error, :principal_cannot_control_itself}
+
+  defp validate_principal_controller(state, principal) do
+    case get_principal(state, principal.controller_principal_id) do
+      {:ok, %Principal{status: :active, verification_state: :revoked}} ->
+        {:error, :controller_principal_verification_revoked}
+
+      {:ok, %Principal{status: :active}} ->
+        :ok
+
+      {:ok, %Principal{status: status}} ->
+        {:error, {:controller_principal_inactive, status}}
+
+      {:error, :not_found} ->
+        {:error, :controller_principal_not_found}
+
+      {:error, _reason} = error ->
+        error
+    end
+  end
+
+  defp validate_authorization_revision(state, kind, record, identity?) do
+    case fetch_record(state, kind, record.id) do
+      {:error, :not_found} -> RecordRules.authorization_revision(nil, record, identity?)
+      {:ok, stored} -> RecordRules.authorization_revision(stored, record, identity?)
+      {:error, _reason} = error -> error
+    end
+  end
+
+  defp validate_membership_scope(state, membership) do
+    case get_membership_by_scope(state, membership.room_id, membership.principal_id) do
+      {:ok, %{id: id}} when id == membership.id -> :ok
+      {:ok, %{id: id}} -> {:error, {:membership_scope_conflict, id}}
+      {:error, :not_found} -> :ok
+      {:error, _reason} = error -> error
+    end
+  end
+
+  defp validate_policy_scope(state, policy, scope_key) do
+    case get_invocation_policy_by_scope(state, policy.target_principal_id, scope_key) do
+      {:ok, %{id: id}} when id == policy.id -> :ok
+      {:ok, %{id: id}} -> {:error, {:invocation_policy_scope_conflict, id}}
+      {:error, :not_found} -> :ok
+      {:error, _reason} = error -> error
+    end
+  end
+
+  defp filter_authorization_record(records, _field, nil), do: records
+  defp filter_authorization_record(records, field, value), do: Enum.filter(records, &(Map.get(&1, field) == value))
+
+  defp take_authorization_records(records, opts) do
+    limit = Keyword.get(opts, :limit, 100)
+    limit = if is_integer(limit) and limit > 0, do: min(limit, 501), else: 100
+    Enum.take(records, limit)
   end
 
   defp connect(opts, instance_id) do
@@ -867,22 +1232,6 @@ defmodule Jido.Messaging.Persistence.Postgres do
     Migrations.all() |> Enum.map(&elem(&1, 0))
   end
 
-  defp cursor_direction(opts) do
-    case {Keyword.get(opts, :before), Keyword.get(opts, :after)} do
-      {nil, nil} ->
-        {:ok, :none}
-
-      {before, nil} when is_binary(before) and before != "" ->
-        {:ok, {:before, before}}
-
-      {nil, after_cursor} when is_binary(after_cursor) and after_cursor != "" ->
-        {:ok, {:after, after_cursor}}
-
-      {_before, _after_cursor} ->
-        {:error, :invalid_cursor_options}
-    end
-  end
-
   defp message_scope(room_id, thread_id) when is_binary(thread_id) do
     {"kind = $1 AND room_id = $2 AND thread_id = $3", ["message", room_id, thread_id]}
   end
@@ -1043,7 +1392,7 @@ defmodule Jido.Messaging.Persistence.Postgres do
   end
 
   defp participant_cursor_direction(opts) do
-    case cursor_direction(opts) do
+    case RecordRules.cursor_direction(opts) do
       {:ok, direction} -> direction
       {:error, _reason} = error -> error
     end
@@ -1077,16 +1426,8 @@ defmodule Jido.Messaging.Persistence.Postgres do
       [
         state.instance_id,
         kind,
-        id,
-        Keyword.get(opts, :room_id),
-        Keyword.get(opts, :thread_id),
-        Keyword.get(opts, :sender_id),
-        format_datetime(Keyword.get(opts, :inserted_at)),
-        opts |> Keyword.get(:channel) |> normalize_nullable(),
-        opts |> Keyword.get(:bridge_id) |> normalize_nullable(),
-        opts |> Keyword.get(:external_id) |> normalize_nullable(),
-        :erlang.term_to_binary(record)
-      ],
+        id
+      ] ++ RecordRules.index_columns(opts) ++ [Payload.encode(record)],
       :upsert_record
     )
   end
@@ -1206,7 +1547,7 @@ defmodule Jido.Messaging.Persistence.Postgres do
              RETURNING id
              """,
              [
-               :erlang.term_to_binary(updated),
+               Payload.encode(updated),
                state.instance_id,
                message_id,
                old_payload
@@ -1248,6 +1589,10 @@ defmodule Jido.Messaging.Persistence.Postgres do
   defp public_binding_result({:ok, :bound}), do: :ok
   defp public_binding_result({:error, _reason} = error), do: error
 
+  defp resolve_room_binding_conflict({:error, {:room_binding_conflict, _owner}}, state, channel, bridge_id, external_id) do
+    get_room_by_external_binding(state, channel, bridge_id, external_id)
+  end
+
   defp resolve_room_binding_conflict({:error, reason} = error, state, channel, bridge_id, external_id) do
     if unique_constraint_error?(reason) do
       get_room_by_external_binding(state, channel, bridge_id, external_id)
@@ -1266,9 +1611,9 @@ defmodule Jido.Messaging.Persistence.Postgres do
 
   defp find_room_binding(state, channel, bridge_id, external_id) do
     fetch_one(state, "room_binding", [
-      {"channel", normalize_term(channel)},
-      {"bridge_id", normalize_term(bridge_id)},
-      {"external_id", normalize_term(external_id)}
+      {"channel", RecordRules.normalize_term(channel)},
+      {"bridge_id", RecordRules.normalize_term(bridge_id)},
+      {"external_id", RecordRules.normalize_term(external_id)}
     ])
   end
 
@@ -1293,16 +1638,16 @@ defmodule Jido.Messaging.Persistence.Postgres do
 
   defp find_participant_binding_record(state, channel, bridge_id, external_id) do
     fetch_one(state, "participant_binding", [
-      {"channel", normalize_term(channel)},
-      {"bridge_id", normalize_term(bridge_id)},
-      {"external_id", normalize_term(external_id)}
+      {"channel", RecordRules.normalize_term(channel)},
+      {"bridge_id", RecordRules.normalize_term(bridge_id)},
+      {"external_id", RecordRules.normalize_term(external_id)}
     ])
   end
 
   defp find_unclaimed_legacy_participant(state, channel, external_id) do
     case fetch_one(state, "participant_binding", [
-           {"channel", normalize_term(channel)},
-           {"external_id", normalize_term(external_id)}
+           {"channel", RecordRules.normalize_term(channel)},
+           {"external_id", RecordRules.normalize_term(external_id)}
          ]) do
       {:ok, _binding} -> {:error, :not_found}
       {:error, :not_found} -> find_participant_by_external_id(state, channel, external_id)
@@ -1310,9 +1655,9 @@ defmodule Jido.Messaging.Persistence.Postgres do
   end
 
   defp save_participant_binding(state, participant_id, channel, bridge_id, external_id) do
-    normalized_channel = normalize_term(channel)
-    normalized_bridge_id = normalize_term(bridge_id)
-    normalized_external_id = normalize_term(external_id)
+    normalized_channel = RecordRules.normalize_term(channel)
+    normalized_bridge_id = RecordRules.normalize_term(bridge_id)
+    normalized_external_id = RecordRules.normalize_term(external_id)
 
     binding = %{
       participant_id: participant_id,
@@ -1339,7 +1684,7 @@ defmodule Jido.Messaging.Persistence.Postgres do
                normalized_channel,
                normalized_bridge_id,
                normalized_external_id,
-               :erlang.term_to_binary(binding)
+               Payload.encode(binding)
              ],
              :bind_participant
            ),
@@ -1386,7 +1731,11 @@ defmodule Jido.Messaging.Persistence.Postgres do
     delete_record(
       state,
       "participant_binding",
-      participant_binding_id(normalize_term(channel), normalize_term(bridge_id), normalize_term(external_id))
+      participant_binding_id(
+        RecordRules.normalize_term(channel),
+        RecordRules.normalize_term(bridge_id),
+        RecordRules.normalize_term(external_id)
+      )
     )
   end
 
@@ -1395,10 +1744,33 @@ defmodule Jido.Messaging.Persistence.Postgres do
     "participant_binding:" <> Base.url_encode64(digest, padding: false)
   end
 
-  defp participant_matches?(participant, query) do
+  defp participant_matches?(state, participant, query) do
     id_matches?(participant.id, query) and
       name_matches?(participant_name(participant), query) and
-      participant_external_id_matches?(participant, query)
+      participant_scope_matches?(state, participant, query)
+  end
+
+  defp participant_scope_matches?(state, participant, query) do
+    channel = query_value(query, :channel)
+    bridge_id = query_value(query, :bridge_id)
+    external_id = query_value(query, :external_id)
+
+    cond do
+      is_nil(channel) and is_nil(bridge_id) and is_nil(external_id) ->
+        true
+
+      is_nil(channel) or is_nil(external_id) ->
+        false
+
+      not is_nil(bridge_id) ->
+        case find_participant_binding_record(state, channel, bridge_id, external_id) do
+          {:ok, binding} -> binding.participant_id == participant.id
+          {:error, _} -> false
+        end
+
+      true ->
+        participant_external_id_matches?(participant, query)
+    end
   end
 
   defp room_matches?(state, room, query) do
@@ -1419,11 +1791,12 @@ defmodule Jido.Messaging.Persistence.Postgres do
         false
 
       true ->
-        expected_channel = normalize_term(channel)
-        expected_external_id = normalize_term(external_id)
+        expected_channel = RecordRules.normalize_term(channel)
+        expected_external_id = RecordRules.normalize_term(external_id)
 
         Enum.any?(participant.external_ids || %{}, fn {key, value} ->
-          normalize_term(key) == expected_channel and normalize_term(value) == expected_external_id
+          RecordRules.normalize_term(key) == expected_channel and
+            RecordRules.normalize_term(value) == expected_external_id
         end)
     end
   end
@@ -1452,7 +1825,7 @@ defmodule Jido.Messaging.Persistence.Postgres do
   defp id_matches?(id, query) do
     case query_value(query, :id) do
       nil -> true
-      expected_id -> normalize_term(id) == normalize_term(expected_id)
+      expected_id -> RecordRules.normalize_term(id) == RecordRules.normalize_term(expected_id)
     end
   end
 
@@ -1464,7 +1837,7 @@ defmodule Jido.Messaging.Persistence.Postgres do
   end
 
   defp contains_ci?(value, expected) when is_binary(value) do
-    String.contains?(String.downcase(value), String.downcase(normalize_term(expected)))
+    String.contains?(String.downcase(value), String.downcase(RecordRules.normalize_term(expected)))
   end
 
   defp contains_ci?(_value, _expected), do: false
@@ -1512,7 +1885,7 @@ defmodule Jido.Messaging.Persistence.Postgres do
     filters
     |> Enum.with_index(1)
     |> Enum.reduce({[], []}, fn {{column, value}, index}, {clauses, params} ->
-      {["#{column} = $#{index}" | clauses], params ++ [normalize_nullable(value)]}
+      {["#{column} = $#{index}" | clauses], params ++ [RecordRules.normalize_nullable(value)]}
     end)
     |> then(fn {clauses, params} -> {clauses |> Enum.reverse() |> Enum.join(" AND "), params} end)
   end
@@ -1521,7 +1894,7 @@ defmodule Jido.Messaging.Persistence.Postgres do
     Enum.map(rows, fn [payload] -> decode_payload(payload) end)
   end
 
-  defp decode_payload(payload), do: :erlang.binary_to_term(payload, [:safe])
+  defp decode_payload(payload), do: Payload.decode(payload, [:safe])
 
   defp run(state, sql, params, operation) do
     case query(state, sql, params, operation) do
@@ -1582,18 +1955,6 @@ defmodule Jido.Messaging.Persistence.Postgres do
   defp ingress_subscription_key(bridge_id, subscription_id) do
     "#{bridge_id}:#{subscription_id}"
   end
-
-  defp format_datetime(nil), do: nil
-  defp format_datetime(%DateTime{} = value), do: DateTime.to_iso8601(value)
-  defp format_datetime(value), do: to_string(value)
-
-  defp normalize_nullable(nil), do: nil
-  defp normalize_nullable(value), do: normalize_term(value)
-
-  defp normalize_term(value) when is_binary(value), do: value
-  defp normalize_term(value) when is_atom(value), do: Atom.to_string(value)
-  defp normalize_term(value) when is_integer(value), do: Integer.to_string(value)
-  defp normalize_term(value), do: inspect(value)
 
   defp normalize_instance_id(value) do
     case value |> to_string() |> String.trim() do

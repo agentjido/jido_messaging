@@ -1,4 +1,4 @@
-ExUnit.start()
+ExUnit.start(seed: 0, capture_log: true)
 
 unless Code.ensure_loaded?(Jido.AI.Agent) do
   raise "optional jido_ai integration test requires jido_ai"
@@ -21,6 +21,19 @@ defmodule Jido.Messaging.OptionalJidoAIIntegrationTest do
     assert help =~ "Bridge"
     assert {:ok, %{result: time}} = Time.run(%{}, %{})
     assert time =~ "UTC"
+  end
+
+  test "the v3 profile declares the model, tools, result, and bounded execution" do
+    profile = Jido.AI.Agent.profile(Jido.Messaging.Demo.ChatAgent, :chat)
+
+    assert profile.models.default.model == "cerebras:gpt-oss-120b"
+    assert profile.reasoning.method == :react
+    assert profile.controls.timeout == 30_000
+    assert profile.controls.max_iterations == 5
+    assert profile.controls.max_model_calls == 5
+    assert profile.controls.max_tool_calls == 16
+    assert profile.result.into == :answer
+    assert Enum.map(profile.tools, & &1.target) == [Echo, Help, Time]
   end
 
   test "exposes the example through the core AgentRunner handler contract" do

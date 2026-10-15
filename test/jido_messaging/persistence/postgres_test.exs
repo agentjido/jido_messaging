@@ -27,7 +27,7 @@ defmodule Jido.Messaging.Persistence.PostgresTest do
 
     state = start_state()
 
-    assert {:ok, %{database_version: 1, current_version: 1, pending_versions: []}} =
+    assert {:ok, %{database_version: 3, current_version: 3, pending_versions: []}} =
              Postgres.migration_status(state)
   end
 
@@ -49,13 +49,13 @@ defmodule Jido.Messaging.Persistence.PostgresTest do
       )
     end)
 
-    assert {:error, {:unsupported_schema_version, 0, 1}} = Postgres.migration_status(state)
-    assert {:error, {:unsupported_schema_version, 0, 1}} = Postgres.migrate(state)
+    assert {:error, {:unsupported_schema_version, 0, 3}} = Postgres.migration_status(state)
+    assert {:error, {:unsupported_schema_version, 0, 3}} = Postgres.migrate(state)
   end
 
   test "requires migrations and installs them in a host schema" do
     admin = start_state()
-    schema = "jido_messaging_test_#{System.unique_integer([:positive, :monotonic])}"
+    schema = "jido_messaging_test_#{System.system_time(:microsecond)}_#{System.unique_integer([:positive, :monotonic])}"
     assert {:ok, _result} = Postgrex.query(admin.conn, "CREATE SCHEMA #{schema}", [])
 
     {:ok, pool} =
@@ -78,14 +78,78 @@ defmodule Jido.Messaging.Persistence.PostgresTest do
       owned_pool?: false
     }
 
-    assert {:error, {:migration_required, 0, [1]}} = Postgres.health_check(state)
+    assert {:error, {:migration_required, 0, [1, 2, 3]}} = Postgres.health_check(state)
 
-    assert {:error, {:migration_required, 0, [1]}} =
+    assert {:error, {:migration_required, 0, [1, 2, 3]}} =
              Postgres.init(pool: pool, instance_id: "schema-test")
+
+    for {version, name, statements} <- Enum.take(Postgres.Migrations.all(), 2) do
+      for statement <- statements, do: assert({:ok, _} = Postgrex.query(pool, statement, []))
+
+      assert {:ok, _} =
+               Postgrex.query(
+                 pool,
+                 "CREATE TABLE IF NOT EXISTS jido_messaging_schema_migrations (version BIGINT PRIMARY KEY, name TEXT NOT NULL)",
+                 []
+               )
+
+      assert {:ok, _} =
+               Postgrex.query(pool, "INSERT INTO jido_messaging_schema_migrations (version, name) VALUES ($1, $2)", [
+                 version,
+                 name
+               ])
+    end
+
+    participant = Participant.new(%{id: "old-participant", type: :human})
+
+    assert {:ok, _} =
+             Postgrex.query(
+               pool,
+               "INSERT INTO jido_messaging_records (instance_id, kind, id, payload) VALUES ($1, 'participant', $2, $3)",
+               [state.instance_id, participant.id, :erlang.term_to_binary(participant)]
+             )
+
+    assert {:error, {:migration_required, 2, [3]}} = Postgres.health_check(state)
 
     assert :ok = Postgres.migrate(pool: pool)
     assert {:ok, initialized} = Postgres.init(pool: pool, instance_id: "schema-test")
     assert :ok = Postgres.health_check(initialized)
+    assert {:ok, ^participant} = Postgres.get_participant(initialized, participant.id)
+    assert {:ok, principal} = Postgres.get_principal(initialized, participant.id)
+    assert principal.id == participant.id
+  end
+
+  test "history migration normalizes old SQL keys and retains ID cursors and payloads" do
+    state = start_state()
+
+    first =
+      Message.new(%{
+        id: "old-whole",
+        room_id: "migration-room",
+        sender_id: "sender",
+        role: :user,
+        inserted_at: ~U[2026-01-01 00:00:00Z]
+      })
+
+    later = %{first | id: "old-fraction", inserted_at: ~U[2026-01-01 00:00:00.500000Z]}
+
+    for message <- [first, later] do
+      assert {:ok, ^message} = Postgres.save_message(state, message)
+
+      assert {:ok, _} =
+               Postgrex.query(
+                 state.conn,
+                 "UPDATE jido_messaging_records SET inserted_at = $1 WHERE instance_id = $2 AND kind = 'message' AND id = $3",
+                 [DateTime.to_iso8601(message.inserted_at), state.instance_id, message.id]
+               )
+    end
+
+    {2, _name, statements} = Enum.find(Postgres.Migrations.all(), &(elem(&1, 0) == 2))
+    for statement <- statements, do: assert({:ok, _} = Postgrex.query(state.conn, statement, []))
+    assert {:ok, [^first, ^later]} = Postgres.get_messages(state, first.room_id, limit: 10)
+    assert {:ok, [^later]} = Postgres.get_messages(state, first.room_id, after: first.id)
+    assert {:ok, [^first]} = Postgres.get_messages(state, first.room_id, before: later.id)
+    assert {:ok, ^first} = Postgres.get_message(state, first.id)
   end
 
   test "supports connection option boundaries and validates configuration" do
@@ -214,6 +278,53 @@ defmodule Jido.Messaging.Persistence.PostgresTest do
 
     assert {:ok, ^room} = Postgres.get_room(state, room.id)
     assert {:ok, ^participant} = Postgres.get_participant(state, participant.id)
+  end
+
+  test "concurrent same-room binding retries keep outer transactions usable" do
+    state = start_state()
+    room = Room.new(%{id: unique_id("binding-owner"), type: :group})
+    assert {:ok, ^room} = Postgres.save_room(state, room)
+    external = unique_id("same-room-binding")
+    application = unique_id("binding-retry")
+
+    assert {:ok, tasks} =
+             Postgres.transaction(state, fn blocker ->
+               assert {:ok, _} = Postgrex.query(blocker.conn, "LOCK TABLE jido_messaging_records IN SHARE MODE", [])
+
+               tasks =
+                 for index <- 1..3 do
+                   Task.async(fn ->
+                     Postgres.transaction(state, fn pinned ->
+                       assert {:ok, _} =
+                                Postgrex.query(pinned.conn, "SELECT set_config('application_name', $1, true)", [
+                                  application
+                                ])
+
+                       with {:ok, binding} <-
+                              Postgres.create_room_binding(pinned, room.id, :slack, "retry-bridge", external, %{}),
+                            {:ok, _} <-
+                              Postgres.save_room(pinned, Room.new(%{id: "#{external}-marker-#{index}", type: :group})) do
+                         {:ok, binding}
+                       end
+                     end)
+                   end)
+                 end
+
+               :ok = await_blocked_binding_inserts(blocker, application, 3, 200)
+               {:ok, tasks}
+             end)
+
+    bindings =
+      Enum.map(tasks, fn task ->
+        assert {:ok, binding} = Task.await(task, 10_000)
+        binding
+      end)
+
+    assert bindings |> Enum.map(& &1.id) |> Enum.uniq() |> length() == 1
+
+    for index <- 1..3 do
+      assert {:ok, _} = Postgres.get_room(state, "#{external}-marker-#{index}")
+    end
   end
 
   test "keeps two instances isolated in one database" do
@@ -612,6 +723,27 @@ defmodule Jido.Messaging.Persistence.PostgresTest do
     refute Map.has_key?(metadata, :sql)
     refute Map.has_key?(metadata, :params)
     refute Map.has_key?(metadata, :connection_options)
+  end
+
+  defp await_blocked_binding_inserts(_state, _application, _count, 0),
+    do: flunk("binding insert workers did not reach the shared table lock")
+
+  defp await_blocked_binding_inserts(state, application, count, attempts) do
+    assert {:ok, _} = Postgrex.query(state.conn, "SELECT pg_stat_clear_snapshot()", [])
+
+    assert {:ok, %{rows: [[blocked]]}} =
+             Postgrex.query(
+               state.conn,
+               "SELECT count(*) FROM pg_stat_activity WHERE application_name = $1 AND wait_event_type = 'Lock'",
+               [application]
+             )
+
+    if blocked == count do
+      :ok
+    else
+      Process.sleep(10)
+      await_blocked_binding_inserts(state, application, count, attempts - 1)
+    end
   end
 
   defp start_state(instance_id \\ unique_id("postgres")) do

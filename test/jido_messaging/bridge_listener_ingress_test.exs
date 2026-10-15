@@ -1,7 +1,7 @@
 defmodule Jido.Messaging.BridgeListenerIngressTest do
   use ExUnit.Case, async: false
 
-  alias Jido.Chat.{EventEnvelope, Incoming, WebhookRequest}
+  alias Jido.Chat.{AdapterTestKit.Factories, WebhookRequest}
 
   defmodule ListenerEmitWorker do
     use GenServer
@@ -18,6 +18,7 @@ defmodule Jido.Messaging.BridgeListenerIngressTest do
        %{
          sink_mfa: Keyword.fetch!(opts, :sink_mfa),
          payload: Keyword.fetch!(opts, :payload),
+         binding: Keyword.fetch!(opts, :binding),
          mode: Keyword.get(opts, :mode, :payload),
          test_pid: Keyword.get(opts, :test_pid),
          secret: Keyword.get(opts, :secret, "listener-secret")
@@ -26,23 +27,30 @@ defmodule Jido.Messaging.BridgeListenerIngressTest do
 
     @impl true
     def handle_info(:emit_once, state) do
-      emit_opts =
-        case state.mode do
-          :webhook ->
-            [
-              mode: :webhook,
-              headers: %{"x-listener-secret" => state.secret},
-              secret: state.secret,
-              path: "/listener/webhook",
-              method: "POST",
-              raw_body: Jason.encode!(state.payload)
-            ]
-
-          _ ->
-            [mode: :payload, path: "/listener/payload", method: "PAYLOAD"]
+      input =
+        if state.mode == :webhook do
+          WebhookRequest.new(%{
+            payload: state.payload,
+            headers: %{"x-listener-secret" => state.secret},
+            method: "POST",
+            path: "/listener/webhook"
+          })
+        else
+          state.payload
         end
 
-      result = invoke_sink(state.sink_mfa, state.payload, emit_opts)
+      verified =
+        if state.mode == :webhook do
+          state.binding.adapter.verify_webhook(input, state.binding.options)
+        else
+          :ok
+        end
+
+      result =
+        with :ok <- verified,
+             {:ok, delivery} <- Jido.Chat.normalize_event(state.binding, input) do
+          invoke_sink(state.sink_mfa, delivery, [])
+        end
 
       if is_pid(state.test_pid) do
         send(state.test_pid, {:listener_sink_result, state.mode, result})
@@ -57,29 +65,15 @@ defmodule Jido.Messaging.BridgeListenerIngressTest do
   end
 
   defmodule ListenerIngressAdapter do
-    @behaviour Jido.Chat.Adapter
-
+    use Jido.Chat.Adapter
     @impl true
     def channel_type, do: :telegram
-
     @impl true
-    def transform_incoming(%{"kind" => "message"} = payload) do
-      {:ok,
-       Incoming.new(%{
-         external_room_id: payload["room"],
-         external_user_id: payload["user"],
-         external_message_id: payload["id"],
-         text: payload["text"],
-         chat_type: :group,
-         raw: payload
-       })}
-    end
-
-    def transform_incoming(_payload), do: {:error, :unsupported_payload}
-
+    def signal_protocol, do: 1
+    @impl true
+    def configure_binding(opts), do: {:ok, opts}
     @impl true
     def send_message(_external_room_id, _text, _opts), do: {:ok, %{message_id: "ok"}}
-
     @impl true
     def verify_webhook(%WebhookRequest{} = request, opts) do
       expected = Keyword.get(opts, :secret, "listener-secret")
@@ -87,21 +81,24 @@ defmodule Jido.Messaging.BridgeListenerIngressTest do
     end
 
     @impl true
-    def parse_event(%WebhookRequest{payload: payload}, _opts) do
-      with {:ok, incoming} <- transform_incoming(payload) do
-        {:ok,
-         EventEnvelope.new(%{
-           adapter_name: :telegram,
-           event_type: :message,
-           thread_id: "telegram:#{incoming.external_room_id}",
-           channel_id: to_string(incoming.external_room_id),
-           message_id: to_string(incoming.external_message_id),
-           payload: incoming,
-           raw: payload,
-           metadata: %{source: :listener}
-         })}
-      end
+    def normalize_event(binding, %WebhookRequest{payload: payload}), do: normalize_event(binding, payload)
+
+    def normalize_event(binding, %{"kind" => "message"} = payload) do
+      fact =
+        Factories.message_received(binding, %{
+          "delivery_id" => payload["id"],
+          "item_id" => payload["id"],
+          "message_id" => payload["id"],
+          "room_id" => payload["room"],
+          "sender" => %{"id" => payload["user"]},
+          "text" => payload["text"],
+          "conversation_kind" => "group"
+        })
+
+      Jido.Chat.Delivery.new(binding, payload["id"], [fact])
     end
+
+    def normalize_event(_binding, _payload), do: Jido.Chat.Signal.Policy.error(:invalid_delivery)
 
     @impl true
     def listener_child_specs(bridge_id, opts) do
@@ -130,6 +127,7 @@ defmodule Jido.Messaging.BridgeListenerIngressTest do
            {ListenerEmitWorker,
             [
               sink_mfa: sink_mfa,
+              binding: Keyword.fetch!(opts, :binding),
               mode: mode,
               payload: payload,
               secret: "listener-secret",
@@ -150,7 +148,7 @@ defmodule Jido.Messaging.BridgeListenerIngressTest do
     :ok
   end
 
-  test "bridge listener payload mode routes through ingress sink and ingests message" do
+  test "polling listener normalizes a complete delivery before the sink" do
     {:ok, _config} =
       ListenerMessaging.put_bridge_config(%{
         id: "bridge_payload_listener",
@@ -161,13 +159,15 @@ defmodule Jido.Messaging.BridgeListenerIngressTest do
         }
       })
 
-    assert_receive {:listener_sink_result, :payload, {:ok, {:message, message, context, event}}}, 1_500
+    assert_receive {:listener_sink_result, :payload, {:ok, [fact]}}, 1_500
+    assert fact.type == "jido.messaging.message.received"
+    assert fact.data["bridge_id"] == "bridge_payload_listener"
+    assert {:ok, message} = ListenerMessaging.get_message(fact.data["message_id"])
     assert message.external_id == "msg_bridge_payload_listener"
-    assert context.bridge_id == "bridge_payload_listener"
-    assert event.event_type == :message
+    assert Jido.Signal.Context.get(fact, "causationid") != nil
   end
 
-  test "bridge listener webhook mode routes through webhook request path" do
+  test "webhook listener verifies and normalizes before the sink" do
     {:ok, _config} =
       ListenerMessaging.put_bridge_config(%{
         id: "bridge_webhook_listener",
@@ -178,9 +178,11 @@ defmodule Jido.Messaging.BridgeListenerIngressTest do
         }
       })
 
-    assert_receive {:listener_sink_result, :webhook, {:ok, {:message, message, context, event}}}, 1_500
+    assert_receive {:listener_sink_result, :webhook, {:ok, [fact]}}, 1_500
+    assert fact.type == "jido.messaging.message.received"
+    assert fact.data["bridge_id"] == "bridge_webhook_listener"
+    assert {:ok, message} = ListenerMessaging.get_message(fact.data["message_id"])
     assert message.external_id == "msg_bridge_webhook_listener"
-    assert context.bridge_id == "bridge_webhook_listener"
-    assert event.event_type == :message
+    assert Jido.Signal.Context.get(fact, "causationid") != nil
   end
 end

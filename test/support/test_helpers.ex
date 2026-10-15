@@ -3,6 +3,41 @@ defmodule Jido.Messaging.TestHelpers do
   Shared test helpers for Jido.Messaging tests.
   """
 
+  @doc "Counts outer Messaging requests and instance resources, excluding Chat namespaces and the locator."
+  def runtime_entry_count(runtime) do
+    table = Jido.Messaging.Runtime.request_table(runtime)
+    [{Jido.Messaging.RequestStore, store}] = :ets.lookup(table, Jido.Messaging.RequestStore)
+    {:ok, stats} = Jido.Messaging.RequestStore.call(store, :stats)
+    db = :sys.get_state(stats.worker).db
+    resources = Enum.count(:ets.tab2list(table), &match?({{:resource, _}, _, _, _, _, _}, &1))
+    outer_request_count(db, 0, 0) + resources
+  end
+
+  # Test inspection only. Read bounded batches; production does not scan IDs.
+  defp outer_request_count(db, offset, count) do
+    {:ok, statement} = Exqlite.Sqlite3.prepare(db, "SELECT key FROM requests LIMIT 100 OFFSET ?")
+
+    rows =
+      try do
+        :ok = Exqlite.Sqlite3.bind(statement, [offset])
+        {:ok, rows} = Exqlite.Sqlite3.fetch_all(db, statement)
+        rows
+      after
+        Exqlite.Sqlite3.release(db, statement)
+      end
+
+    outer =
+      Enum.count(rows, fn [encoded] ->
+        case :erlang.binary_to_term(encoded) do
+          {:chat, _, _} -> false
+          {:chat_failure, _, _} -> false
+          _ -> true
+        end
+      end)
+
+    if length(rows) < 100, do: count + outer, else: outer_request_count(db, offset + 100, count + outer)
+  end
+
   @doc """
   Asserts that a condition becomes true within a timeout.
 

@@ -12,15 +12,26 @@ defmodule Jido.Messaging.ChatActions.Action do
         name: unquote(name),
         description: unquote(description),
         schema: unquote(schema),
-        output_schema:
-          Zoi.object(%{
-            status: Zoi.atom(),
-            action: Zoi.atom(),
-            code: Zoi.atom() |> Zoi.optional(),
-            data: Zoi.any() |> Zoi.optional(),
-            details: Zoi.map() |> Zoi.optional(),
-            audit: Zoi.map()
-          })
+        output_schema: Zoi.struct(Jido.Signal)
+
+      defoverridable validate_output: 1
+
+      @doc false
+      @impl Jido.Executable
+      def validate_output(%Jido.Signal{} = output) do
+        catalog =
+          Jido.Signal.Catalog.new!([
+            Jido.Messaging.Signal.OperationCompleted,
+            Jido.Messaging.Signal.OperationFailed
+          ])
+
+        with {:ok, ^output} <- output |> Jido.Signal.to_map() |> Jido.Signal.from_map(),
+             {:ok, ^output} <- Jido.Signal.Catalog.validate(catalog, output),
+             {:ok, ^output} <- Jido.Chat.Signal.Policy.validate(output),
+             do: {:ok, output}
+      end
+
+      def validate_output(_output), do: Jido.Chat.Signal.Policy.error(:invalid_request)
 
       @doc false
       def chat_action_operation, do: unquote(operation)

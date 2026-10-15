@@ -45,6 +45,8 @@ defmodule Jido.Messaging.Onboarding.Worker do
       [] ->
         nil
     end
+  rescue
+    ArgumentError -> nil
   end
 
   @spec get_flow(pid(), timeout()) :: {:ok, Flow.t()} | {:error, term()}

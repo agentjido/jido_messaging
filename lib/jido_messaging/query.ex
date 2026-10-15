@@ -18,9 +18,11 @@ defmodule Jido.Messaging.Query do
   @spec room_timeline([Message.t()]) :: room_timeline()
   @doc """
   Groups room messages into top-level timeline messages, thread replies, and reply counts.
+
+  Messages without timestamps come first. Equal timestamps use message ID order.
   """
   def room_timeline(messages) when is_list(messages) do
-    messages = Enum.sort_by(messages, & &1.inserted_at, {:asc, DateTime})
+    messages = Enum.sort_by(messages, &order_key/1)
     {replies, timeline} = Enum.split_with(messages, &is_binary(&1.thread_id))
     threads = Enum.group_by(replies, & &1.thread_id)
 
@@ -31,4 +33,9 @@ defmodule Jido.Messaging.Query do
 
     %{messages: timeline, threads: threads, reply_counts: reply_counts}
   end
+
+  defp order_key(%Message{inserted_at: %DateTime{} = timestamp, id: id}),
+    do: {1, DateTime.to_unix(timestamp, :microsecond), id}
+
+  defp order_key(%Message{inserted_at: nil, id: id}), do: {0, 0, id}
 end

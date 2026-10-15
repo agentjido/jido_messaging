@@ -7,6 +7,7 @@ defmodule Jido.Messaging.Demo.Topology do
   """
 
   alias Jido.Chat.Room
+  alias Jido.Messaging.RoomBinding
 
   @type t :: map()
   @type summary :: %{
@@ -76,7 +77,8 @@ defmodule Jido.Messaging.Demo.Topology do
     room_bindings = list_value(topology, "room_bindings")
     routing_policies = list_value(topology, "routing_policies")
 
-    with :ok <- apply_bridge_rooms(instance_module, bridge_rooms),
+    with :ok <- validate_sections(topology),
+         :ok <- apply_bridge_rooms(instance_module, bridge_rooms),
          :ok <- apply_bridge_configs(instance_module, bridge_configs),
          :ok <- apply_rooms(instance_module, rooms),
          :ok <- apply_room_bindings(instance_module, room_bindings),
@@ -90,6 +92,18 @@ defmodule Jido.Messaging.Demo.Topology do
          routing_policies: length(routing_policies)
        }}
     end
+  end
+
+  defp validate_sections(topology) do
+    Enum.reduce_while(~w(bridge_rooms bridge_configs rooms room_bindings routing_policies), :ok, fn key, :ok ->
+      case get_value(topology, key, []) do
+        entries when is_list(entries) ->
+          if Enum.all?(entries, &is_map/1), do: {:cont, :ok}, else: {:halt, {:error, {:invalid_topology_section, key}}}
+
+        _ ->
+          {:halt, {:error, {:invalid_topology_section, key}}}
+      end
+    end)
   end
 
   defp apply_bridge_rooms(_instance_module, []), do: :ok
@@ -141,7 +155,7 @@ defmodule Jido.Messaging.Demo.Topology do
       room_id = get_value(entry, :id)
 
       with room_id when is_binary(room_id) and room_id != "" <- room_id do
-        case instance_module.get_room(room_id) do
+        case setup_call(fn -> instance_module.get_room(room_id) end, &valid_room?(&1, room_id)) do
           {:ok, _room} ->
             {:cont, :ok}
 
@@ -154,7 +168,9 @@ defmodule Jido.Messaging.Demo.Topology do
               external_bindings: get_value(entry, :external_bindings, %{})
             }
 
-            case instance_module.save_room(Room.new(room_attrs)) do
+            room = Room.new(room_attrs)
+
+            case setup_call(fn -> instance_module.save_room(room) end, &(&1 == room)) do
               {:ok, _room} -> {:cont, :ok}
               {:error, reason} -> {:halt, {:error, {:room_create_failed, reason, room_entry}}}
             end
@@ -181,23 +197,28 @@ defmodule Jido.Messaging.Demo.Topology do
       with room_id when is_binary(room_id) and room_id != "" <- room_id,
            bridge_id when is_binary(bridge_id) and bridge_id != "" <- bridge_id,
            external_room_id when is_binary(external_room_id) and external_room_id != "" <- external_room_id,
-           channel when is_atom(channel) <- channel do
+           channel when channel in [:telegram, :discord] <- channel do
         attrs =
           entry
           |> Map.drop([:room_id, :channel, :bridge_id, :external_room_id])
           |> normalize_room_binding_attrs()
 
-        case instance_module.get_room_by_external_binding(channel, bridge_id, external_room_id) do
-          {:ok, _room} ->
+        case setup_call(
+               fn -> instance_module.get_room_by_external_binding(channel, bridge_id, external_room_id) end,
+               &valid_room?(&1, nil)
+             ) do
+          {:ok, %Room{id: ^room_id}} ->
             {:cont, :ok}
 
+          {:ok, %Room{id: owner_id}} ->
+            {:halt, {:error, {:room_binding_scope_conflict, owner_id, room_id, binding_entry}}}
+
           {:error, :not_found} ->
-            case instance_module.create_room_binding(
-                   room_id,
-                   channel,
-                   bridge_id,
-                   external_room_id,
-                   attrs
+            case setup_call(
+                   fn ->
+                     instance_module.create_room_binding(room_id, channel, bridge_id, external_room_id, attrs)
+                   end,
+                   &valid_binding?(&1, room_id, channel, bridge_id, external_room_id, attrs)
                  ) do
               {:ok, _binding} ->
                 {:cont, :ok}
@@ -214,6 +235,37 @@ defmodule Jido.Messaging.Demo.Topology do
       end
     end)
   end
+
+  defp setup_call(fun, valid?) do
+    case fun.() do
+      {:ok, record} ->
+        if valid?.(record), do: {:ok, record}, else: {:error, :invalid_topology_result}
+
+      {:error, _} = error ->
+        error
+
+      _ ->
+        {:error, :invalid_topology_result}
+    end
+  rescue
+    _ -> {:error, :topology_store_failed}
+  catch
+    _, _ -> {:error, :topology_store_failed}
+  end
+
+  defp valid_room?(%Room{} = room, id),
+    do: (is_nil(id) or room.id == id) and Room.new(Map.from_struct(room)) == room
+
+  defp valid_room?(_room, _id), do: false
+
+  defp valid_binding?(%RoomBinding{} = binding, room, channel, bridge, external, attrs) do
+    binding.room_id == room and binding.channel == channel and binding.bridge_id == bridge and
+      binding.external_room_id == external and binding.direction == attrs.direction and
+      binding.enabled == attrs.enabled and is_binary(binding.id) and binding.id != "" and
+      match?(%DateTime{}, binding.inserted_at)
+  end
+
+  defp valid_binding?(_binding, _room, _channel, _bridge, _external, _attrs), do: false
 
   defp apply_routing_policies(_instance_module, []), do: :ok
 
@@ -323,8 +375,9 @@ defmodule Jido.Messaging.Demo.Topology do
     end
   end
 
-  defp normalize_bridge_configs_for_room(_), do: []
+  defp normalize_bridge_configs_for_room(_), do: {:error, :invalid_bridge_configs}
 
+  defp normalize_id(nil), do: nil
   defp normalize_id(value) when is_binary(value) and value != "", do: value
   defp normalize_id(value) when is_integer(value), do: Integer.to_string(value)
   defp normalize_id(value) when is_atom(value), do: Atom.to_string(value)
@@ -364,7 +417,10 @@ defmodule Jido.Messaging.Demo.Topology do
   defp get_value(map, key, default \\ nil)
 
   defp get_value(map, key, default) when is_map(map) and is_binary(key) do
-    Map.get(map, key, default)
+    case Map.fetch(map, key) do
+      {:ok, value} -> value
+      :error -> if atom = safe_key_to_atom(key), do: Map.get(map, atom, default), else: default
+    end
   end
 
   defp get_value(map, key, default) when is_map(map) and is_atom(key) do
@@ -410,6 +466,11 @@ defmodule Jido.Messaging.Demo.Topology do
   defp resolve_env_placeholders(value), do: value
 
   defp safe_key_to_atom("id"), do: :id
+  defp safe_key_to_atom("mode"), do: :mode
+  defp safe_key_to_atom("bridge"), do: :bridge
+  defp safe_key_to_atom("rooms"), do: :rooms
+  defp safe_key_to_atom("room_bindings"), do: :room_bindings
+  defp safe_key_to_atom("routing_policies"), do: :routing_policies
   defp safe_key_to_atom("room_id"), do: :room_id
   defp safe_key_to_atom("type"), do: :type
   defp safe_key_to_atom("name"), do: :name

@@ -61,6 +61,9 @@ defmodule Jido.Messaging.SecretResolver do
 
       {:error, :not_found} ->
         {:ok, opts}
+
+      {:error, _} = error ->
+        error
     end
   end
 

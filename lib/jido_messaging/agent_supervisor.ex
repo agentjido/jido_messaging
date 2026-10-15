@@ -7,14 +7,16 @@ defmodule Jido.Messaging.AgentSupervisor do
   """
   use DynamicSupervisor
 
-  alias Jido.Messaging.AgentRunner
+  alias Jido.Messaging.{AgentRunner, DesiredWorkers}
 
   def start_link(opts) do
     name = Keyword.fetch!(opts, :name)
 
     case DynamicSupervisor.start_link(__MODULE__, opts, name: name) do
       {:ok, _pid} = ok ->
-        maybe_restore_assigned_runners(Keyword.get(opts, :instance_module))
+        DesiredWorkers.restore(name)
+        instance = Keyword.get(opts, :instance_module)
+        unless DesiredWorkers.managed?(instance), do: maybe_restore_assigned_runners(instance)
         ok
 
       other ->
@@ -55,18 +57,25 @@ defmodule Jido.Messaging.AgentSupervisor do
     }
 
     try do
-      case DynamicSupervisor.start_child(supervisor, child_spec) do
+      case DesiredWorkers.start(instance_module, supervisor, {room_id, thread_id, agent_id}, child_spec) do
         {:ok, pid} ->
           {:ok, pid}
 
         {:error, {:already_started, pid}} ->
-          {:ok, pid}
+          if owned_runner?(supervisor, pid) do
+            {:ok, pid}
+          else
+            await_stale_runner(instance_module, room_id, thread_id, agent_id, agent_config, pid)
+          end
 
         {:error, :already_present} ->
           case AgentRunner.whereis(instance_module, room_id, thread_id, agent_id) do
             pid when is_pid(pid) -> {:ok, pid}
             nil -> {:error, :runner_unavailable}
           end
+
+        {:error, :supervisor_unavailable} ->
+          {:error, {:supervisor_unavailable, :noproc}}
 
         {:error, reason} ->
           {:error, reason}
@@ -85,14 +94,13 @@ defmodule Jido.Messaging.AgentSupervisor do
   def stop_agent(instance_module, room_id, thread_id, agent_id) do
     case AgentRunner.whereis(instance_module, room_id, thread_id, agent_id) do
       nil ->
-        {:error, :not_found}
+        stop_owned_runner(instance_module, room_id, thread_id, agent_id)
 
       pid ->
-        supervisor = Module.concat(instance_module, AgentSupervisor)
         ref = Process.monitor(pid)
 
         try do
-          case DynamicSupervisor.terminate_child(supervisor, pid) do
+          case stop_owned_runner(instance_module, room_id, thread_id, agent_id) do
             :ok ->
               await_agent_stop(pid, ref)
 
@@ -125,6 +133,8 @@ defmodule Jido.Messaging.AgentSupervisor do
   def count_agents(instance_module) do
     supervisor = Module.concat(instance_module, AgentSupervisor)
     DynamicSupervisor.count_children(supervisor).active
+  catch
+    :exit, _reason -> 0
   end
 
   @doc "List all running agents across all rooms"
@@ -140,6 +150,20 @@ defmodule Jido.Messaging.AgentSupervisor do
       end
     end)
     |> Enum.reject(&is_nil/1)
+  rescue
+    ArgumentError -> []
+  catch
+    :exit, _reason -> []
+  end
+
+  defp stop_owned_runner(instance_module, room_id, thread_id, agent_id) do
+    supervisor = Module.concat(instance_module, AgentSupervisor)
+    lookup = fn -> AgentRunner.whereis(instance_module, room_id, thread_id, agent_id) end
+
+    case DesiredWorkers.stop(instance_module, supervisor, {room_id, thread_id, agent_id}, lookup) do
+      {:error, :supervisor_unavailable} -> {:error, {:supervisor_unavailable, :noproc}}
+      result -> result
+    end
   end
 
   defp await_agent_stop(pid, ref, timeout_ms \\ 1_000) do
@@ -158,12 +182,35 @@ defmodule Jido.Messaging.AgentSupervisor do
     end
   end
 
+  defp owned_runner?(supervisor, pid) do
+    Enum.any?(DynamicSupervisor.which_children(supervisor), fn {_, child, _, _} -> child == pid end)
+  end
+
+  defp await_stale_runner(instance_module, room_id, thread_id, agent_id, agent_config, pid) do
+    ref = Process.monitor(pid)
+
+    :telemetry.execute([:jido_messaging, :agent, :stale_runner], %{}, %{
+      instance_module: instance_module,
+      room_id: room_id,
+      thread_id: thread_id,
+      agent_id: agent_id,
+      pid: pid
+    })
+
+    receive do
+      {:DOWN, ^ref, :process, ^pid, _reason} ->
+        start_agent(instance_module, room_id, thread_id, agent_id, agent_config)
+    after
+      1_000 ->
+        Process.demonitor(ref, [:flush])
+        {:error, :stale_runner_timeout}
+    end
+  end
+
   defp maybe_restore_assigned_runners(instance_module) when is_atom(instance_module) do
     Task.start(fn -> retry_restore_assigned_runners(instance_module, 5) end)
     :ok
   end
-
-  defp maybe_restore_assigned_runners(_instance_module), do: :ok
 
   defp retry_restore_assigned_runners(_instance_module, 0), do: :ok
 
@@ -175,6 +222,9 @@ defmodule Jido.Messaging.AgentSupervisor do
       {:error, :runtime_unavailable} ->
         Process.sleep(50)
         retry_restore_assigned_runners(instance_module, attempts_left - 1)
+
+      {:error, _reason} ->
+        :ok
     end
   end
 end

@@ -578,8 +578,12 @@ defmodule Jido.Messaging.BridgeRegistry do
       not Code.ensure_loaded?(adapter_module) ->
         {:error, %{type: :unknown_adapter_module, reason: adapter_module}}
 
-      not function_exported?(adapter_module, :transform_incoming, 1) ->
-        {:error, %{type: :invalid_adapter_module, reason: {:missing_transform_incoming_callback, adapter_module}}}
+      not function_exported?(adapter_module, :signal_protocol, 0) or adapter_module.signal_protocol() != 1 ->
+        {:error, %{type: :invalid_adapter_module, reason: {:incompatible_signal_protocol, adapter_module}}}
+
+      not function_exported?(adapter_module, :configure_binding, 1) or
+          not function_exported?(adapter_module, :normalize_event, 2) ->
+        {:error, %{type: :invalid_adapter_module, reason: {:missing_normalization_callback, adapter_module}}}
 
       not function_exported?(adapter_module, :send_message, 3) ->
         {:error, %{type: :invalid_adapter_module, reason: {:missing_send_message_callback, adapter_module}}}

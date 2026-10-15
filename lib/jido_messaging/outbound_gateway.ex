@@ -5,8 +5,13 @@ defmodule Jido.Messaging.OutboundGateway do
   The gateway enforces:
 
   - Stable partition routing by `bridge_id:external_room_id`
-  - Bounded per-partition queues with pressure transition signals
+  - Bounded internal per-partition queues with pressure transition signals
   - Normalized outbound error categories for retry and terminal handling
+
+  Provider work, pressure delays, and retry waits run in the partition.
+  Calls can accumulate in its mailbox while it is busy. `queue_capacity`
+  bounds the internal queue; it does not bound that mailbox. A caller timeout
+  does not cancel a queued or active send. See `docs/outbound-queue-measurement.md`.
   """
 
   alias Jido.Messaging.AdapterBridge
@@ -270,6 +275,7 @@ defmodule Jido.Messaging.OutboundGateway do
       opts
       |> Keyword.put_new(:external_thread_id, context[:external_thread_id])
       |> Keyword.put_new(:delivery_external_room_id, context[:delivery_external_room_id])
+      |> Keyword.put_new(:parent_signal, context[:parent_signal])
 
     %{
       operation: operation,
@@ -378,7 +384,8 @@ defmodule Jido.Messaging.OutboundGateway do
       is_atom(context[:channel_type]) and not is_nil(context[:channel_type]) ->
         context[:channel_type]
 
-      is_atom(context[:channel]) and function_exported?(context[:channel], :channel_type, 0) ->
+      is_atom(context[:channel]) and Code.ensure_loaded?(context[:channel]) and
+          function_exported?(context[:channel], :channel_type, 0) ->
         context[:channel].channel_type()
 
       true ->

@@ -69,6 +69,8 @@ defmodule Jido.Messaging.InstanceServer do
       [{pid, _}] -> pid
       [] -> nil
     end
+  rescue
+    ArgumentError -> nil
   end
 
   @doc "Get current instance status"

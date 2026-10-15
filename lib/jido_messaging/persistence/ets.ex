@@ -40,7 +40,18 @@ defmodule Jido.Messaging.Persistence.ETS do
   - `:invocation_policies` - Revisioned agent invocation policies
   """
 
-  @behaviour Jido.Messaging.Persistence
+  @behaviour Jido.Messaging.Persistence.Contracts.Lifecycle
+  @behaviour Jido.Messaging.Persistence.Contracts.Records
+  @behaviour Jido.Messaging.Persistence.Contracts.ProviderBindings
+  @behaviour Jido.Messaging.Persistence.Contracts.ControlPlane
+  @behaviour Jido.Messaging.Persistence.Contracts.Authorization
+  @behaviour Jido.Messaging.Persistence.Contracts.ExternalIdentity
+  @behaviour Jido.Messaging.Persistence.Contracts.AgentRouting
+  @behaviour Jido.Messaging.Persistence.Contracts.AgentDirectory
+  @behaviour Jido.Messaging.Persistence.Contracts.Credentials
+  @behaviour Jido.Messaging.Persistence.Contracts.Continuity
+  @behaviour Jido.Messaging.Persistence.Contracts.TrustEvidence
+  @behaviour Jido.Messaging.Persistence.Contracts.Activity
   @behaviour Jido.Messaging.Directory
 
   @schema Zoi.struct(
@@ -97,6 +108,7 @@ defmodule Jido.Messaging.Persistence.ETS do
   def schema, do: @schema
 
   alias Jido.Chat.{Participant, Room}
+  alias Jido.Messaging.Persistence.RecordRules
 
   alias Jido.Messaging.{
     ActivityPage,
@@ -201,7 +213,7 @@ defmodule Jido.Messaging.Persistence.ETS do
     delete_continuity_links(state, &(&1.room_id == room_id))
 
     message_ids = :ets.lookup(state.room_messages, room_id) |> Enum.map(&elem(&1, 1))
-    Enum.each(message_ids, &delete_message(state, &1))
+    Enum.each(message_ids, &delete_room_message(state, room_id, &1))
 
     {:ok, bindings} = list_room_bindings(state, room_id)
     Enum.each(bindings, &delete_room_binding(state, &1.id))
@@ -332,6 +344,15 @@ defmodule Jido.Messaging.Persistence.ETS do
 
   @impl true
   def save_message(state, %Message{} = message) do
+    message_lock(state, message.id, fn -> store_message(state, message) end)
+  end
+
+  defp store_message(state, message) do
+    case get_message(state, message.id) do
+      {:ok, previous} -> delete_message_indexes(state, previous)
+      {:error, :not_found} -> :ok
+    end
+
     true = :ets.insert(state.messages, {message.id, message})
     true = :ets.insert(state.room_messages, {message.room_id, message.id})
     maybe_index_thread_message(state, message)
@@ -348,6 +369,8 @@ defmodule Jido.Messaging.Persistence.ETS do
     if channel && bridge_id do
       key = {channel, bridge_id, message.external_id}
       true = :ets.insert(state.message_external_ids, {key, message.id})
+      scoped_key = {channel, bridge_id, message.external_id, message.room_id}
+      true = :ets.insert(state.message_external_ids, {scoped_key, message.id})
     end
 
     :ok
@@ -363,7 +386,6 @@ defmodule Jido.Messaging.Persistence.ETS do
 
   @impl true
   def get_messages(state, room_id, opts \\ []) do
-    limit = Keyword.get(opts, :limit, 50)
     thread_id = Keyword.get(opts, :thread_id)
 
     message_ids =
@@ -385,69 +407,46 @@ defmodule Jido.Messaging.Persistence.ETS do
       end)
       |> Enum.filter(&(&1.room_id == room_id))
       |> maybe_filter_thread(thread_id)
-      |> Enum.sort_by(&message_order_key/1)
 
-    paginate_messages(messages, opts, limit)
+    Jido.Messaging.Transcript.paginate(messages, opts)
   end
-
-  defp paginate_messages(messages, opts, limit) do
-    case cursor_direction(opts) do
-      :none ->
-        {:ok, Enum.take(messages, -limit)}
-
-      {:before, cursor_id} ->
-        with {:ok, cursor} <- find_cursor(messages, cursor_id) do
-          page = messages |> Enum.filter(&(message_order_key(&1) < message_order_key(cursor))) |> Enum.take(-limit)
-          {:ok, page}
-        end
-
-      {:after, cursor_id} ->
-        with {:ok, cursor} <- find_cursor(messages, cursor_id) do
-          page = messages |> Enum.filter(&(message_order_key(&1) > message_order_key(cursor))) |> Enum.take(limit)
-          {:ok, page}
-        end
-
-      {:error, reason} ->
-        {:error, reason}
-    end
-  end
-
-  defp cursor_direction(opts) do
-    case {Keyword.get(opts, :before), Keyword.get(opts, :after)} do
-      {nil, nil} -> :none
-      {before, nil} when is_binary(before) and before != "" -> {:before, before}
-      {nil, after_cursor} when is_binary(after_cursor) and after_cursor != "" -> {:after, after_cursor}
-      {_before, _after_cursor} -> {:error, :invalid_cursor_options}
-    end
-  end
-
-  defp find_cursor(messages, cursor_id) do
-    case Enum.find(messages, &(&1.id == cursor_id)) do
-      nil -> {:error, :cursor_not_found}
-      cursor -> {:ok, cursor}
-    end
-  end
-
-  defp message_order_key(message) do
-    {message_timestamp_key(message.inserted_at), message.id}
-  end
-
-  defp message_timestamp_key(%DateTime{} = inserted_at), do: DateTime.to_iso8601(inserted_at)
-  defp message_timestamp_key(nil), do: ""
 
   @impl true
   def delete_message(state, message_id) do
+    message_lock(state, message_id, fn -> delete_message_record(state, message_id) end)
+  end
+
+  defp delete_room_message(state, room_id, message_id) do
+    message_lock(state, message_id, fn ->
+      case get_message(state, message_id) do
+        {:ok, %Message{room_id: ^room_id}} -> delete_message_record(state, message_id)
+        _ -> :ets.delete_object(state.room_messages, {room_id, message_id})
+      end
+    end)
+  end
+
+  defp delete_message_record(state, message_id) do
     case :ets.lookup(state.messages, message_id) do
       [{^message_id, message}] ->
-        delete_external_id_index(state, message)
+        delete_message_indexes(state, message)
         true = :ets.delete(state.messages, message_id)
-        # Remove from room_messages index (bag table - need to delete specific object)
-        true = :ets.delete_object(state.room_messages, {message.room_id, message_id})
-        maybe_delete_thread_message(state, message)
         :ok
 
       [] ->
         :ok
+    end
+  end
+
+  defp delete_message_indexes(state, message) do
+    delete_external_id_index(state, message)
+    true = :ets.delete_object(state.room_messages, {message.room_id, message.id})
+    maybe_delete_thread_message(state, message)
+  end
+
+  defp message_lock(state, message_id, fun) do
+    case :global.trans({{__MODULE__, state.messages, message_id}, self()}, fun) do
+      :aborted -> {:error, :message_lock_aborted}
+      result -> result
     end
   end
 
@@ -551,10 +550,7 @@ defmodule Jido.Messaging.Persistence.ETS do
 
   @impl true
   def mark_message_read(state, message_id, participant_id, receipt) do
-    # Global lock IDs are {resource, requester}; the shared resource serializes callers.
-    lock_id = {{__MODULE__, state.messages, message_id}, self()}
-
-    :global.trans(lock_id, fn ->
+    message_lock(state, message_id, fn ->
       update_message_receipt(state.messages, message_id, participant_id, receipt)
     end)
   end
@@ -581,7 +577,7 @@ defmodule Jido.Messaging.Persistence.ETS do
 
   @impl true
   def get_thread_by_external_id(state, room_id, external_thread_id) do
-    key = {room_id, normalize_term(external_thread_id)}
+    key = {room_id, RecordRules.normalize_term(external_thread_id)}
 
     case :ets.lookup(state.thread_external_ids, key) do
       [{^key, thread_id}] -> get_thread(state, thread_id)
@@ -671,7 +667,7 @@ defmodule Jido.Messaging.Persistence.ETS do
     scope = {membership.room_id, membership.principal_id}
 
     authorization_lock(state.memberships, :memberships, fn ->
-      with :ok <- validate_revisioned_record(state.memberships, membership, &membership_identity?/2),
+      with :ok <- validate_revisioned_record(state.memberships, membership, &RecordRules.membership_identity?/2),
            :ok <- validate_scope_index(state.memberships_by_scope, state.memberships, scope, membership.id) do
         true = :ets.insert(state.memberships, {membership.id, membership})
         true = :ets.insert(state.memberships_by_scope, {scope, membership.id})
@@ -796,7 +792,7 @@ defmodule Jido.Messaging.Persistence.ETS do
   @impl true
   def save_principal_grant(state, %Grant{} = grant) do
     authorization_lock(state.principal_grants, grant.id, fn ->
-      with :ok <- validate_revisioned_record(state.principal_grants, grant, &grant_identity?/2) do
+      with :ok <- validate_revisioned_record(state.principal_grants, grant, &RecordRules.grant_identity?/2) do
         true = :ets.insert(state.principal_grants, {grant.id, grant})
         {:ok, grant}
       end
@@ -837,9 +833,13 @@ defmodule Jido.Messaging.Persistence.ETS do
           true = :ets.insert(state.agent_thread_routes, {route.thread_id, route})
           {:ok, route}
 
-        [{_thread_id, %AgentThreadRoute{id: route_id}}] when route_id == route.id ->
+        [{_thread_id, %AgentThreadRoute{id: route_id, room_id: room_id}}]
+        when route_id == route.id and room_id == route.room_id ->
           true = :ets.insert(state.agent_thread_routes, {route.thread_id, route})
           {:ok, route}
+
+        [{_thread_id, %AgentThreadRoute{id: route_id}}] when route_id == route.id ->
+          {:error, :agent_thread_route_identity_immutable}
 
         [{_thread_id, existing}] ->
           {:error, {:agent_thread_route_conflict, existing.id}}
@@ -870,7 +870,7 @@ defmodule Jido.Messaging.Persistence.ETS do
     scope = {policy.target_principal_id, AuthorizationScope.key(policy.scope)}
 
     authorization_lock(state.invocation_policies, :policies, fn ->
-      with :ok <- validate_revisioned_record(state.invocation_policies, policy, &policy_identity?/2),
+      with :ok <- validate_revisioned_record(state.invocation_policies, policy, &RecordRules.policy_identity?/2),
            :ok <-
              validate_scope_index(
                state.invocation_policies_by_scope,
@@ -950,7 +950,7 @@ defmodule Jido.Messaging.Persistence.ETS do
 
           {:error, :not_found} ->
             # Remove stale binding only if it still points at the missing room.
-            true = :ets.delete_object(state.room_bindings, {binding_key, room_id})
+            :ok = delete_stale_room_binding(state, binding_key, room_id)
             get_or_create_room_by_external_binding(state, channel, bridge_id, external_id, attrs)
         end
 
@@ -1062,26 +1062,22 @@ defmodule Jido.Messaging.Persistence.ETS do
   end
 
   @impl true
-  def update_message_external_id(state, message_id, external_id) do
-    case get_message(state, message_id) do
-      {:ok, message} ->
-        channel = get_in(message.metadata, [:channel])
-        bridge_id = get_in(message.metadata, [:bridge_id])
+  def get_message_by_external_id(state, channel, bridge_id, external_id, room_id) do
+    key = {channel, bridge_id, external_id, room_id}
 
-        delete_external_id_index(state, message)
-        updated_message = %{message | external_id: external_id}
-        true = :ets.insert(state.messages, {message_id, updated_message})
-
-        if channel && bridge_id do
-          key = {channel, bridge_id, external_id}
-          true = :ets.insert(state.message_external_ids, {key, message_id})
-        end
-
-        {:ok, updated_message}
-
-      {:error, :not_found} = error ->
-        error
+    case :ets.lookup(state.message_external_ids, key) do
+      [{^key, message_id}] -> get_message(state, message_id)
+      [] -> {:error, :not_found}
     end
+  end
+
+  @impl true
+  def update_message_external_id(state, message_id, external_id) do
+    message_lock(state, message_id, fn ->
+      with {:ok, message} <- get_message(state, message_id) do
+        store_message(state, %{message | external_id: external_id})
+      end
+    end)
   end
 
   # Room binding operations
@@ -1098,22 +1094,56 @@ defmodule Jido.Messaging.Persistence.ETS do
 
   @impl true
   def create_room_binding(state, room_id, channel, bridge_id, external_id, attrs) do
+    key = binding_key(channel, bridge_id, external_id)
+
+    case :global.trans({{__MODULE__, state.room_bindings, key}, self()}, fn ->
+           case :ets.lookup(state.room_bindings, key) do
+             [{^key, owner}] when owner != room_id ->
+               {:error, {:room_binding_conflict, owner}}
+
+             _ ->
+               {:ok, bindings} = list_room_bindings(state, room_id)
+
+               case Enum.find(bindings, &(binding_key(&1.channel, &1.bridge_id, &1.external_room_id) == key)) do
+                 nil -> store_room_binding(state, room_id, channel, bridge_id, external_id, attrs)
+                 binding -> {:ok, binding}
+               end
+           end
+         end) do
+      :aborted -> {:error, :room_binding_lock_aborted}
+      result -> result
+    end
+  end
+
+  defp store_room_binding(state, room_id, channel, bridge_id, external_id, attrs) do
     binding =
       RoomBinding.new(
         Map.merge(attrs, %{
           room_id: room_id,
           channel: channel,
-          bridge_id: normalize_term(bridge_id),
-          external_room_id: normalize_term(external_id)
+          bridge_id: RecordRules.normalize_term(bridge_id),
+          external_room_id: RecordRules.normalize_term(external_id)
         })
       )
 
     key = binding_key(channel, binding.bridge_id, external_id)
-    true = :ets.insert(state.room_bindings, {key, room_id})
 
+    case :ets.insert_new(state.room_bindings, {key, room_id}) do
+      true ->
+        persist_room_binding(state, binding)
+
+      false ->
+        case :ets.lookup(state.room_bindings, key) do
+          [{^key, ^room_id}] -> persist_room_binding(state, binding)
+          [{^key, owner}] -> {:error, {:room_binding_conflict, owner}}
+          [] -> store_room_binding(state, room_id, channel, bridge_id, external_id, attrs)
+        end
+    end
+  end
+
+  defp persist_room_binding(state, binding) do
     true = :ets.insert(state.room_bindings_by_id, {binding.id, binding})
-    true = :ets.insert(state.room_bindings_by_room, {room_id, binding.id})
-
+    true = :ets.insert(state.room_bindings_by_room, {binding.room_id, binding.id})
     {:ok, binding}
   end
 
@@ -1164,7 +1194,7 @@ defmodule Jido.Messaging.Persistence.ETS do
 
   @impl true
   def directory_lookup(state, target, query, opts \\ []) when is_map(query) do
-    case directory_search(state, target, query, opts) do
+    case directory_search(state, target, query, Keyword.delete(opts, :limit)) do
       {:ok, [entry]} ->
         {:ok, entry}
 
@@ -1180,24 +1210,24 @@ defmodule Jido.Messaging.Persistence.ETS do
   end
 
   @impl true
-  def directory_search(state, :participant, query, _opts) when is_map(query) do
+  def directory_search(state, :participant, query, opts) when is_map(query) do
     participants =
       :ets.tab2list(state.participants)
       |> Enum.map(&elem(&1, 1))
       |> Enum.filter(&participant_matches?(&1, state, query))
       |> Enum.sort_by(& &1.id)
 
-    {:ok, participants}
+    directory_page(participants, opts)
   end
 
-  def directory_search(state, :room, query, _opts) when is_map(query) do
+  def directory_search(state, :room, query, opts) when is_map(query) do
     rooms =
       :ets.tab2list(state.rooms)
       |> Enum.map(&elem(&1, 1))
       |> Enum.filter(&room_matches?(&1, state, query))
       |> Enum.sort_by(& &1.id)
 
-    {:ok, rooms}
+    directory_page(rooms, opts)
   end
 
   def directory_search(state, :agent, query, opts) when is_map(query) do
@@ -1223,6 +1253,13 @@ defmodule Jido.Messaging.Persistence.ETS do
 
   def directory_search(_state, target, _query, _opts) do
     {:error, {:invalid_directory_target, target}}
+  end
+
+  defp directory_page(records, opts) do
+    case Keyword.get(opts, :limit, 500) do
+      limit when is_integer(limit) and limit >= 0 -> {:ok, Enum.take(records, limit)}
+      _ -> {:error, :invalid_directory_limit}
+    end
   end
 
   # Jidoka agent directory projection operations
@@ -1475,24 +1512,13 @@ defmodule Jido.Messaging.Persistence.ETS do
   end
 
   defp revise_messaging_activity(state, stored, incoming) do
-    cond do
-      incoming.source_revision < stored.source_revision ->
-        {:error, {:stale_activity_revision, stored.source_revision}}
+    case RecordRules.activity_revision(stored, incoming) do
+      {:store, accepted} ->
+        true = :ets.insert(state.messaging_activities, {accepted.id, accepted})
+        {:ok, accepted}
 
-      incoming.source_revision == stored.source_revision and
-          MessagingActivityEntry.equivalent?(stored, incoming) ->
-        {:ok, stored}
-
-      incoming.source_revision == stored.source_revision ->
-        {:error, :activity_projection_conflict}
-
-      not MessagingActivityEntry.same_correlation?(stored, incoming) ->
-        {:error, :activity_correlation_immutable}
-
-      true ->
-        incoming = MessagingActivityEntry.preserve_insertion(incoming, stored)
-        true = :ets.insert(state.messaging_activities, {incoming.id, incoming})
-        {:ok, incoming}
+      other ->
+        other
     end
   end
 
@@ -1547,34 +1573,13 @@ defmodule Jido.Messaging.Persistence.ETS do
   end
 
   defp validate_identity_credential_revision(table, credential) do
-    case :ets.lookup(table, credential.id) do
-      [] when credential.revision == 1 and credential.status == :active ->
-        :ok
+    stored =
+      case :ets.lookup(table, credential.id) do
+        [] -> nil
+        [{_id, stored}] -> stored
+      end
 
-      [] when credential.revision != 1 ->
-        {:error, {:invalid_initial_revision, credential.revision}}
-
-      [] ->
-        {:error, {:invalid_initial_status, credential.status}}
-
-      [{_id, stored}] when stored == credential ->
-        :ok
-
-      [{_id, stored}] ->
-        cond do
-          not identity_credential_identity?(stored, credential) ->
-            {:error, :identity_credential_identity_immutable}
-
-          stored.status == :revoked ->
-            {:error, :identity_credential_revocation_terminal}
-
-          credential.revision != stored.revision + 1 ->
-            {:error, {:stale_revision, stored.revision}}
-
-          true ->
-            :ok
-        end
-    end
+    RecordRules.credential_revision(stored, credential)
   end
 
   defp validate_identity_replacement(table, revoked, replacement) do
@@ -1588,7 +1593,7 @@ defmodule Jido.Messaging.Persistence.ETS do
       replacement.rotated_from_credential_id != revoked.id ->
         {:error, :invalid_identity_rotation_lineage}
 
-      not identity_credential_relation?(revoked, replacement) ->
+      not RecordRules.credential_relation?(revoked, replacement) ->
         {:error, :identity_credential_identity_immutable}
 
       :ets.member(table, replacement.id) ->
@@ -1597,28 +1602,6 @@ defmodule Jido.Messaging.Persistence.ETS do
       true ->
         :ok
     end
-  end
-
-  defp identity_credential_identity?(left, right) do
-    left.id == right.id and
-      identity_credential_relation?(left, right) and
-      left.provider_id == right.provider_id and
-      left.proof_type == right.proof_type and
-      left.proof_ref == right.proof_ref and
-      left.key_version_ref == right.key_version_ref and
-      left.rotated_from_credential_id == right.rotated_from_credential_id and
-      left.issued_at == right.issued_at and
-      left.not_before == right.not_before and
-      left.expires_at == right.expires_at and
-      left.inserted_at == right.inserted_at and
-      left.metadata == right.metadata
-  end
-
-  defp identity_credential_relation?(left, right) do
-    left.issuer_principal_id == right.issuer_principal_id and
-      left.subject_principal_id == right.subject_principal_id and
-      left.purpose == right.purpose and
-      left.conditions == right.conditions
   end
 
   defp store_identity_assertion(state, credential_id, assertion_key, expires_at) do
@@ -1710,11 +1693,12 @@ defmodule Jido.Messaging.Persistence.ETS do
         end
 
       true ->
-        expected_channel = normalize_term(channel)
-        expected_external_id = normalize_term(external_id)
+        expected_channel = RecordRules.normalize_term(channel)
+        expected_external_id = RecordRules.normalize_term(external_id)
 
         Enum.any?(participant.external_ids, fn {key, value} ->
-          normalize_term(key) == expected_channel and normalize_term(value) == expected_external_id
+          RecordRules.normalize_term(key) == expected_channel and
+            RecordRules.normalize_term(value) == expected_external_id
         end)
     end
   end
@@ -1732,16 +1716,16 @@ defmodule Jido.Messaging.Persistence.ETS do
         false
 
       true ->
-        expected_channel = normalize_term(channel)
-        expected_bridge_id = normalize_term(bridge_id)
-        expected_external_id = normalize_term(external_id)
+        expected_channel = RecordRules.normalize_term(channel)
+        expected_bridge_id = RecordRules.normalize_term(bridge_id)
+        expected_external_id = RecordRules.normalize_term(external_id)
 
         :ets.tab2list(state.room_bindings)
         |> Enum.any?(fn {{binding_channel, binding_bridge_id, binding_external_id}, binding_room_id} ->
           binding_room_id == room_id and
-            normalize_term(binding_channel) == expected_channel and
-            normalize_term(binding_bridge_id) == expected_bridge_id and
-            normalize_term(binding_external_id) == expected_external_id
+            RecordRules.normalize_term(binding_channel) == expected_channel and
+            RecordRules.normalize_term(binding_bridge_id) == expected_bridge_id and
+            RecordRules.normalize_term(binding_external_id) == expected_external_id
         end)
     end
   end
@@ -1749,7 +1733,7 @@ defmodule Jido.Messaging.Persistence.ETS do
   defp id_matches?(id, query) do
     case query_value(query, :id) do
       nil -> true
-      expected_id -> normalize_term(id) == normalize_term(expected_id)
+      expected_id -> RecordRules.normalize_term(id) == RecordRules.normalize_term(expected_id)
     end
   end
 
@@ -1761,7 +1745,7 @@ defmodule Jido.Messaging.Persistence.ETS do
   end
 
   defp contains_ci?(value, expected) when is_binary(value) do
-    String.contains?(String.downcase(value), String.downcase(normalize_term(expected)))
+    String.contains?(String.downcase(value), String.downcase(RecordRules.normalize_term(expected)))
   end
 
   defp contains_ci?(_value, _expected), do: false
@@ -1775,7 +1759,7 @@ defmodule Jido.Messaging.Persistence.ETS do
   end
 
   defp binding_key(channel, bridge_id, external_id) do
-    {channel, normalize_term(bridge_id), normalize_term(external_id)}
+    {channel, RecordRules.normalize_term(bridge_id), RecordRules.normalize_term(external_id)}
   end
 
   defp ingress_subscription_key(bridge_id, subscription_id) do
@@ -1824,6 +1808,8 @@ defmodule Jido.Messaging.Persistence.ETS do
     if channel && bridge_id do
       key = {channel, bridge_id, message.external_id}
       true = :ets.delete_object(state.message_external_ids, {key, message.id})
+      scoped_key = {channel, bridge_id, message.external_id, message.room_id}
+      true = :ets.delete_object(state.message_external_ids, {scoped_key, message.id})
     end
 
     :ok
@@ -1841,7 +1827,7 @@ defmodule Jido.Messaging.Persistence.ETS do
     true =
       :ets.insert(
         state.thread_external_ids,
-        {{room_id, normalize_term(external_thread_id)}, thread_id}
+        {{room_id, RecordRules.normalize_term(external_thread_id)}, thread_id}
       )
 
     :ok
@@ -1866,7 +1852,7 @@ defmodule Jido.Messaging.Persistence.ETS do
           true =
             :ets.delete_object(
               state.thread_external_ids,
-              {{existing_thread.room_id, normalize_term(existing_thread.external_thread_id)}, thread_id}
+              {{existing_thread.room_id, RecordRules.normalize_term(existing_thread.external_thread_id)}, thread_id}
             )
         end
 
@@ -2031,34 +2017,13 @@ defmodule Jido.Messaging.Persistence.ETS do
   end
 
   defp validate_agent_directory_revision(table, projection) do
-    case :ets.lookup(table, projection.id) do
-      [] when projection.source_revision == 1 ->
-        {:store, projection}
+    stored =
+      case :ets.lookup(table, projection.id) do
+        [] -> nil
+        [{_id, stored}] -> stored
+      end
 
-      [] ->
-        {:error, {:invalid_initial_revision, projection.source_revision}}
-
-      [{_id, stored}] ->
-        cond do
-          AgentDirectoryProjection.equivalent?(stored, projection) ->
-            {:ok, stored}
-
-          not AgentDirectoryProjection.same_identity?(stored, projection) ->
-            {:error, :agent_directory_identity_immutable}
-
-          projection.source_revision == stored.source_revision ->
-            {:error, :agent_directory_revision_conflict}
-
-          projection.source_revision < stored.source_revision ->
-            {:error, {:stale_revision, stored.source_revision}}
-
-          projection.source_revision != stored.source_revision + 1 ->
-            {:error, {:revision_gap, stored.source_revision, projection.source_revision}}
-
-          true ->
-            {:store, AgentDirectoryProjection.preserve_insertion(projection, stored)}
-        end
-    end
+    RecordRules.agent_directory_revision(stored, projection)
   end
 
   defp delete_participant_agent_projections(state, participant_id) do
@@ -2093,13 +2058,9 @@ defmodule Jido.Messaging.Persistence.ETS do
     MapSet.member?(endpoint_ids, projection.endpoint_ref.id)
   end
 
-  defp normalize_term(value) when is_binary(value), do: value
-  defp normalize_term(value) when is_atom(value), do: Atom.to_string(value)
-  defp normalize_term(value) when is_integer(value), do: Integer.to_string(value)
-  defp normalize_term(value), do: inspect(value)
-
   defp participant_binding_key(channel, bridge_id, external_id) do
-    {normalize_term(channel), normalize_term(bridge_id), normalize_term(external_id)}
+    {RecordRules.normalize_term(channel), RecordRules.normalize_term(bridge_id),
+     RecordRules.normalize_term(external_id)}
   end
 
   defp build_bound_room(channel, bridge_id, external_id, attrs) do
@@ -2110,6 +2071,25 @@ defmodule Jido.Messaging.Persistence.ETS do
         }
       })
     )
+  end
+
+  defp delete_stale_room_binding(state, key, room_id) do
+    true = :ets.delete_object(state.room_bindings, {key, room_id})
+
+    state.room_bindings_by_id
+    |> :ets.tab2list()
+    |> Enum.each(fn
+      {id, %RoomBinding{room_id: ^room_id} = binding} ->
+        if binding_key(binding.channel, binding.bridge_id, binding.external_room_id) == key do
+          true = :ets.delete_object(state.room_bindings_by_id, {id, binding})
+          true = :ets.delete_object(state.room_bindings_by_room, {room_id, id})
+        end
+
+      _ ->
+        :ok
+    end)
+
+    :ok
   end
 
   defp build_bound_participant(channel, external_id, attrs) do
@@ -2170,31 +2150,13 @@ defmodule Jido.Messaging.Persistence.ETS do
   end
 
   defp validate_revisioned_record(table, record, identity?) do
-    case :ets.lookup(table, record.id) do
-      [] when record.revision == 1 ->
-        :ok
+    stored =
+      case :ets.lookup(table, record.id) do
+        [] -> nil
+        [{_id, stored}] -> stored
+      end
 
-      [] ->
-        {:error, {:invalid_initial_revision, record.revision}}
-
-      [{_id, stored}] when stored == record ->
-        :ok
-
-      [{_id, stored}] ->
-        cond do
-          not identity?.(stored, record) ->
-            {:error, :authorization_identity_immutable}
-
-          stored.status == :revoked and record.status != :revoked ->
-            {:error, :authorization_revocation_terminal}
-
-          record.revision == stored.revision + 1 ->
-            :ok
-
-          true ->
-            {:error, {:stale_revision, stored.revision}}
-        end
-    end
+    RecordRules.authorization_revision(stored, record, identity?)
   end
 
   defp validate_endpoint_identity(state, endpoint) do
@@ -2311,21 +2273,6 @@ defmodule Jido.Messaging.Persistence.ETS do
             :ok
         end
     end
-  end
-
-  defp membership_identity?(stored, record) do
-    stored.principal_id == record.principal_id and stored.room_id == record.room_id and
-      stored.issuer_principal_id == record.issuer_principal_id
-  end
-
-  defp grant_identity?(stored, record) do
-    stored.principal_id == record.principal_id and
-      stored.issuer_principal_id == record.issuer_principal_id
-  end
-
-  defp policy_identity?(stored, record) do
-    stored.target_principal_id == record.target_principal_id and
-      stored.issuer_principal_id == record.issuer_principal_id and stored.scope == record.scope
   end
 
   defp fetch_authorization_record(table, record_id) do

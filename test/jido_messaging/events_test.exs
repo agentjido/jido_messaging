@@ -1,217 +1,160 @@
 defmodule Jido.Messaging.EventsTest do
   use ExUnit.Case, async: false
-
-  alias Jido.Messaging.CommandResult
-  alias Jido.Messaging.TestMessaging
+  alias Jido.Messaging.{AuthorizationScope, Events, TestMessaging}
+  alias Jido.Messaging.Signal.{Identity, PostMessage}
 
   setup do
     start_supervised!(TestMessaging)
-    :ok
-  end
-
-  test "post_message persists and dispatches a message_added signal" do
     {:ok, room} = TestMessaging.create_room(%{type: :group, name: "Signals"})
-    {:ok, subscription_id} = TestMessaging.subscribe_signals("jido.messaging.room.message_added")
+    {:ok, participant} = TestMessaging.create_participant(%{type: :human})
 
-    assert {:ok, %CommandResult{record: message, signals: [signal]}} =
-             TestMessaging.post_message(%{
-               room_id: room.id,
-               sender_id: "user:1",
-               role: :user,
-               content: [%{type: "text", text: "Hello from signals"}],
-               status: :sent
-             })
+    {:ok, _} =
+      TestMessaging.create_membership(%{principal_id: participant.id, room_id: room.id, issuer_principal_id: "host"})
 
-    assert message.content == [%{type: "text", text: "Hello from signals"}]
-    assert signal.type == "jido.messaging.room.message_added"
-    assert signal.subject == room.id
-    assert signal.data["message_id"] == message.id
-    assert signal.data["target"]["external_id"] == room.id
-    assert signal.data["payload"]["text"] == "Hello from signals"
+    scope = AuthorizationScope.new(%{kind: :room, room_id: room.id})
 
-    assert_receive {:signal, received_signal}, 1_000
-    assert received_signal.type == signal.type
-    assert received_signal.data["message_id"] == message.id
-
-    :ok = TestMessaging.unsubscribe_signals(subscription_id)
-  end
-
-  test "save_message remains a persistence primitive without signal side effects" do
-    {:ok, room} = TestMessaging.create_room(%{type: :group, name: "Quiet persistence"})
-    {:ok, subscription_id} = TestMessaging.subscribe_signals("jido.messaging.room.message_added")
-
-    assert {:ok, _message} =
-             TestMessaging.save_message(%{
-               room_id: room.id,
-               sender_id: "user:1",
-               role: :user,
-               content: [%{type: "text", text: "No event"}],
-               status: :sent
-             })
-
-    refute_receive {:signal, _signal}, 100
-
-    :ok = TestMessaging.unsubscribe_signals(subscription_id)
-  end
-
-  test "event metadata is CloudEvents-friendly plain data" do
-    {:ok, room} = TestMessaging.create_room(%{type: :group, name: "Plain signals"})
-
-    assert {:ok, %CommandResult{signals: [signal]}} =
-             TestMessaging.post_message(
-               %{
-                 room_id: room.id,
-                 sender_id: "user:1",
-                 role: :user,
-                 content: [%{type: "text", text: "Plain metadata"}],
-                 status: :sent
-               },
-               channel_type: :campfire,
-               instance_id: :demo_workspace,
-               external_room_id: :general,
-               payload_kind: :text,
-               target_kind: :room
-             )
-
-    assert signal.data["platform"]["channel_type"] == "campfire"
-    assert signal.data["platform"]["external_room_id"] == "general"
-    assert signal.data["target"]["channel_type"] == "campfire"
-    assert signal.data["target"]["instance_id"] == "demo_workspace"
-    assert signal.data["target"]["external_id"] == "general"
-    assert signal.data["payload"]["kind"] == "text"
-  end
-
-  test "event constructors normalize string option keys without creating atoms" do
-    {:ok, room} = TestMessaging.create_room(%{type: :group, name: "String options"})
-
-    assert {:ok, %CommandResult{signals: [signal]}} =
-             TestMessaging.post_message(
-               %{
-                 room_id: room.id,
-                 sender_id: "user:1",
-                 role: :user,
-                 content: [%{type: "text", text: "String-key options"}],
-                 status: :sent
-               },
-               %{
-                 "channel_type" => "campfire",
-                 "instance_id" => "demo",
-                 "external_room_id" => "general",
-                 "target_kind" => "room"
-               }
-             )
-
-    assert signal.data["platform"]["channel_type"] == "campfire"
-    assert signal.data["platform"]["external_room_id"] == "general"
-    assert signal.data["target"]["instance_id"] == "demo"
-    assert signal.data["target"]["external_id"] == "general"
-
-    assert Jido.Messaging.Events.telemetry_event_for("jido.messaging.participant.presence_changed") ==
-             [:jido_messaging, :participant, :presence_changed]
-
-    assert Jido.Messaging.Events.telemetry_event_for("third.party.untrusted_event") ==
-             [:jido_messaging, :signal, :custom]
-  end
-
-  test "reaction commands persist and dispatch reaction signals" do
-    {:ok, room} = TestMessaging.create_room(%{type: :group, name: "Reactions"})
-
-    {:ok, %CommandResult{record: message}} =
-      TestMessaging.post_message(%{
-        room_id: room.id,
-        sender_id: "user:1",
-        role: :user,
-        content: [%{type: "text", text: "React here"}],
-        status: :sent
+    {:ok, _} =
+      TestMessaging.create_principal_grant(%{
+        principal_id: participant.id,
+        issuer_principal_id: "host",
+        actions: [:post_message, :receive_message, :add_reaction, :remove_reaction],
+        scope: scope
       })
 
-    {:ok, subscription_id} = TestMessaging.subscribe_signals("jido.messaging.message.**")
-
-    assert {:ok, %CommandResult{record: reacted, signals: [added_signal]}} =
-             TestMessaging.add_reaction(message.id, "user:2", "+1")
-
-    assert reacted.reactions["+1"] == ["user:2"]
-    assert added_signal.type == "jido.messaging.message.reaction_added"
-    assert added_signal.data["participant_id"] == "user:2"
-    assert added_signal.data["reaction"] == "+1"
-
-    assert_receive {:signal, received_added}, 1_000
-    assert received_added.type == "jido.messaging.message.reaction_added"
-
-    assert {:ok, %CommandResult{record: unchanged_reacted, signals: []}} =
-             TestMessaging.add_reaction(message.id, "user:2", "+1")
-
-    assert unchanged_reacted.reactions["+1"] == ["user:2"]
-    refute_receive {:signal, _signal}, 100
-
-    assert {:ok, %CommandResult{record: unreacted, signals: [removed_signal]}} =
-             TestMessaging.remove_reaction(message.id, "user:2", "+1")
-
-    assert unreacted.reactions == %{}
-    assert removed_signal.type == "jido.messaging.message.reaction_removed"
-
-    assert_receive {:signal, received_removed}, 1_000
-    assert received_removed.type == "jido.messaging.message.reaction_removed"
-
-    assert {:ok, %CommandResult{record: unchanged, signals: []}} =
-             TestMessaging.remove_reaction(message.id, "user:2", "+1")
-
-    assert unchanged.reactions == %{}
-    refute_receive {:signal, _signal}, 100
-
-    :ok = TestMessaging.unsubscribe_signals(subscription_id)
+    {:ok, room: room, participant: participant, actor: [principal_id: participant.id, authorization_scope: scope]}
   end
 
-  test "participant activity helpers dispatch canonical signals" do
-    {:ok, room} = TestMessaging.create_room(%{type: :group, name: "Presence"})
-    {:ok, subscription_id} = TestMessaging.subscribe_signals("jido.messaging.**")
+  defp post(context, text) do
+    request =
+      PostMessage.new!(%{
+        "request_id" => Jido.Chat.ID.generate!(),
+        "room_id" => context.room.id,
+        "sender_id" => context.participant.id,
+        "text" => text
+      })
 
-    assert {:ok, joined} =
-             TestMessaging.participant_joined(room.id, "user:1",
-               session_id: "session-1",
-               presence: :online,
-               source: "test"
-             )
+    {:ok, result} = TestMessaging.execute(request, context.actor)
+    {:ok, message} = TestMessaging.get_message(result.data["result"]["id"])
+    {request, message}
+  end
 
-    assert joined.type == "jido.messaging.room.participant_joined"
-    assert joined.subject == room.id
-    assert joined.data["participant_id"] == "user:1"
-    assert joined.data["presence"] == :online
-    assert joined.data["source"] == "test"
+  test "post_message persists and dispatches a message_added signal", context do
+    {:ok, subscription} = TestMessaging.subscribe_signals("jido.messaging.room.message_added")
+    {request, message} = post(context, "Hello from signals")
+    assert message.content == [Jido.Chat.Content.Text.new("Hello from signals")]
+    assert_receive {:signal, fact}
+    assert fact.type == "jido.messaging.room.message_added"
+    assert fact.subject == Identity.room_subject(context.room.id)
+    assert fact.data["message_id"] == message.id
+    assert fact.data["text"] == "Hello from signals"
+    assert Jido.Signal.Context.get(fact, "causationid") == request.id
+    :ok = TestMessaging.unsubscribe_signals(subscription)
+  end
 
-    assert_receive {:signal, received_joined}, 1_000
-    assert received_joined.type == joined.type
+  test "save_message remains a persistence primitive without signal side effects", context do
+    {:ok, subscription} = TestMessaging.subscribe_signals("jido.messaging.room.message_added")
 
-    assert {:ok, changed} =
-             TestMessaging.participant_presence_changed(room.id, "user:1", :offline, :online,
-               session_id: "session-1",
-               source: "test"
-             )
+    assert {:ok, _} =
+             TestMessaging.save_message(%{
+               room_id: context.room.id,
+               sender_id: context.participant.id,
+               role: :user,
+               content: [Jido.Chat.Content.Text.new("No event")],
+               status: :sent
+             })
 
-    assert changed.type == "jido.messaging.participant.presence_changed"
-    assert changed.data["from"] == :offline
-    assert changed.data["to"] == :online
+    refute_receive {:signal, _}
+    :ok = TestMessaging.unsubscribe_signals(subscription)
+  end
 
-    assert {:ok, typing} =
-             TestMessaging.participant_typing(room.id, "user:1", true,
-               thread_id: "thread:1",
-               source: "test"
-             )
+  test "event metadata is CloudEvents-friendly plain data", context do
+    {:ok, _} = TestMessaging.subscribe_signals("jido.messaging.room.message_added")
+    {_request, _message} = post(context, "Plain metadata")
+    assert_receive {:signal, fact}
+    assert fact.source == Events.source(TestMessaging)
+    assert fact.subject == Identity.room_subject(context.room.id)
+    assert {:ok, encoded} = Jido.Signal.Serialization.serialize(fact)
+    assert {:ok, ^fact} = Jido.Signal.Serialization.deserialize(encoded)
+    assert Enum.all?(Map.keys(fact.data), &is_binary/1)
+    refute Map.has_key?(fact.data, "context")
+    refute Map.has_key?(fact.data, "raw")
+  end
 
-    assert typing.type == "jido.messaging.participant.typing"
-    assert typing.data["thread_id"] == "thread:1"
-    assert typing.data["is_typing"] == true
+  test "event constructors normalize string option keys without creating atoms", context do
+    {_request, message} = post(context, "String options")
+    unknown = "untrusted_option_#{System.unique_integer([:positive])}"
+    opts = %{"instance_id" => "demo", "bridge_id" => "bridge", "external_room_id" => "general", unknown => "ignored"}
+    assert {:ok, fact} = Events.message_added(TestMessaging, message, opts)
+    assert fact.source == Identity.instance_source("demo")
+    assert fact.data["external_room_id"] == "general"
+    assert fact.data["bridge_id"] == "bridge"
+    assert_raise ArgumentError, fn -> String.to_existing_atom(unknown) end
 
-    assert {:ok, left} =
-             TestMessaging.participant_left(room.id, "user:1",
-               session_id: "session-1",
-               reason: :expired,
-               source: "test"
-             )
+    assert Events.telemetry_event_for("jido.messaging.participant.presence_changed") == [
+             :jido_messaging,
+             :participant,
+             :presence_changed
+           ]
 
-    assert left.type == "jido.messaging.room.participant_left"
-    assert left.data["reason"] == :expired
+    assert Events.telemetry_event_for("third.party.untrusted_event") == [:jido_messaging, :signal, :custom]
+  end
 
-    :ok = TestMessaging.unsubscribe_signals(subscription_id)
+  test "reaction commands persist and dispatch reaction signals", context do
+    {_request, message} = post(context, "React here")
+    {:ok, subscription} = TestMessaging.subscribe_signals("jido.messaging.message.**")
+
+    data = %{
+      "room_id" => context.room.id,
+      "message_id" => message.id,
+      "participant_id" => context.participant.id,
+      "reaction" => "+1"
+    }
+
+    for {definition, id, expected_type} <- [
+          {Jido.Messaging.Signal.AddRoomReaction, "add", "jido.messaging.message.reaction_added"},
+          {Jido.Messaging.Signal.RemoveRoomReaction, "remove", "jido.messaging.message.reaction_removed"}
+        ] do
+      request = definition.new!(Map.put(data, "request_id", id))
+      assert {:ok, _} = TestMessaging.execute(request, context.actor)
+      assert_receive {:signal, fact}
+      assert fact.type == expected_type
+      assert fact.data["participant_id"] == context.participant.id
+      assert fact.data["reaction"] == "+1"
+      assert {:ok, changed} = TestMessaging.get_message(message.id)
+
+      if id == "add",
+        do: assert(changed.reactions["+1"] == [context.participant.id]),
+        else: assert(changed.reactions == %{})
+
+      assert {:ok, _} =
+               TestMessaging.execute(definition.new!(Map.put(data, "request_id", id <> "-again")), context.actor)
+
+      refute_receive {:signal, _}
+    end
+
+    :ok = TestMessaging.unsubscribe_signals(subscription)
+  end
+
+  test "participant activity helpers dispatch canonical signals", context do
+    {:ok, subscription} = TestMessaging.subscribe_signals("jido.messaging.**")
+    data = %{"room_id" => context.room.id, "participant_id" => context.participant.id}
+
+    for {definition, extra, type} <- [
+          {Jido.Messaging.Signal.ParticipantJoinedRequest, %{}, "jido.messaging.room.participant_joined"},
+          {Jido.Messaging.Signal.SetPresence, %{"presence" => "online"}, "jido.messaging.participant.presence_changed"},
+          {Jido.Messaging.Signal.SetTyping, %{"typing" => true}, "jido.messaging.participant.typing"},
+          {Jido.Messaging.Signal.ParticipantLeftRequest, %{}, "jido.messaging.room.participant_left"}
+        ] do
+      request = definition.new!(data |> Map.merge(extra) |> Map.put("request_id", type))
+      assert {:ok, _} = TestMessaging.execute(request, context.actor)
+      assert_receive {:signal, fact}
+      assert fact.type == type
+      assert fact.subject == Identity.room_subject(context.room.id)
+      assert fact.data["participant_id"] == context.participant.id
+      assert Jido.Signal.Context.get(fact, "causationid") == request.id
+      assert_receive {:signal, %{type: "jido.messaging.operation.completed"}}
+    end
+
+    :ok = TestMessaging.unsubscribe_signals(subscription)
   end
 end

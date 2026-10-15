@@ -3,7 +3,7 @@ defmodule Jido.Messaging.Persistence.SQLiteTest do
 
   alias Exqlite.Sqlite3
   alias Jido.Chat.{Participant, Room}
-  alias Jido.Messaging.{CommandResult, Message, Persistence.SQLite, RoomBinding, Thread}
+  alias Jido.Messaging.{Message, Persistence.SQLite, RoomBinding, Thread}
 
   defmodule SQLiteMessaging do
     use Jido.Messaging, persistence: SQLite
@@ -244,6 +244,31 @@ defmodule Jido.Messaging.Persistence.SQLiteTest do
     :ok = Sqlite3.close(state.db)
   end
 
+  test "releases a binding lock after room construction fails" do
+    path = tmp_path("sqlite-binding-failure-release")
+    {:ok, state} = SQLite.init(path: path)
+
+    assert {:error, _reason} =
+             SQLite.get_or_create_room_by_external_binding(state, :slack, "workspace-failure", "channel-failure", nil)
+
+    result =
+      Task.async(fn ->
+        SQLite.get_or_create_room_by_external_binding(
+          state,
+          :slack,
+          "workspace-failure",
+          "channel-failure",
+          %{type: :channel, name: "recovered"}
+        )
+      end)
+      |> Task.await(5_000)
+
+    assert {:ok, room} = result
+    assert {:ok, ^room} = SQLite.get_room_by_external_binding(state, :slack, "workspace-failure", "channel-failure")
+    assert {:ok, [^room]} = SQLite.list_rooms(state)
+    :ok = Sqlite3.close(state.db)
+  end
+
   test "scopes provider identities by bridge and supports explicit links" do
     path = tmp_path("sqlite-participant-scope")
     {:ok, state} = SQLite.init(path: path)
@@ -450,7 +475,8 @@ defmodule Jido.Messaging.Persistence.SQLiteTest do
     assert {:ok, ^room} = SQLite.save_room(state, room)
     assert {:ok, ^message} = SQLite.save_message(state, message)
 
-    assert {:error, %ArgumentError{}} = SQLite.get_messages(state, room.id, limit: %{bad: true})
+    assert {:error, :invalid_limit} = SQLite.get_messages(state, room.id, limit: %{bad: true})
+    assert {:error, %ArgumentError{}} = SQLite.get_messages(state, %{bad: true}, limit: 10)
     assert {:ok, [^message]} = SQLite.get_messages(state, room.id, limit: 10)
 
     :ok = Sqlite3.close(state.db)
@@ -610,8 +636,8 @@ defmodule Jido.Messaging.Persistence.SQLiteTest do
 
     assert {:ok, room} = SQLiteMessaging.create_room(%{id: "room:timeline", type: :group, name: "timeline"})
 
-    assert {:ok, %CommandResult{record: root}} =
-             SQLiteMessaging.post_message(%{
+    assert {:ok, root} =
+             SQLiteMessaging.save_message(%{
                room_id: room.id,
                sender_id: "user:1",
                role: :user,
@@ -619,8 +645,8 @@ defmodule Jido.Messaging.Persistence.SQLiteTest do
                status: :sent
              })
 
-    assert {:ok, %CommandResult{record: reply}} =
-             SQLiteMessaging.post_message(%{
+    assert {:ok, reply} =
+             SQLiteMessaging.save_message(%{
                room_id: room.id,
                sender_id: "user:2",
                role: :user,
@@ -640,9 +666,10 @@ defmodule Jido.Messaging.Persistence.SQLiteTest do
   end
 
   defp tmp_path(prefix) do
-    path = Path.join(["tmp", "#{prefix}-#{System.unique_integer([:positive])}.sqlite3"])
+    suffix = :crypto.strong_rand_bytes(16) |> Base.url_encode64(padding: false)
+    path = Path.join(["tmp", "#{prefix}-#{suffix}.sqlite3"])
     File.mkdir_p!(Path.dirname(path))
-    File.rm(path)
+    on_exit(fn -> Enum.each([path, path <> "-wal", path <> "-shm"], &File.rm/1) end)
     path
   end
 

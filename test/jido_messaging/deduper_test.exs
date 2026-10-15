@@ -50,6 +50,27 @@ defmodule Jido.Messaging.DeduperTest do
   end
 
   describe "claim lifecycle" do
+    test "an uncertain outcome stays an error across claim expiry and a sweep" do
+      key = {:claim, "unknown"}
+      assert {:ok, token} = Deduper.claim(TestMessaging, key, 0)
+      assert :ok = Deduper.retain_unknown(TestMessaging, key, token)
+      send(Module.concat(TestMessaging, "Deduper"), :sweep)
+      assert {:error, :outcome_unknown} = Deduper.claim(TestMessaging, key)
+      assert Deduper.count(TestMessaging) == 1
+      assert {:error, :stale_claim} = Deduper.release(TestMessaging, key, token)
+      assert :ok = Deduper.clear(TestMessaging)
+      assert {:ok, _} = Deduper.claim(TestMessaging, key)
+    end
+
+    test "an old token cannot hold a newer claim as uncertain" do
+      key = {:claim, "unknown-stale"}
+      assert {:ok, old} = Deduper.claim(TestMessaging, key, 0)
+      assert {:ok, current} = Deduper.claim(TestMessaging, key)
+      assert {:error, :stale_claim} = Deduper.retain_unknown(TestMessaging, key, old)
+      assert :ok = Deduper.commit(TestMessaging, key, current)
+      assert :duplicate = Deduper.claim(TestMessaging, key)
+    end
+
     test "blocks a concurrent claim until the first claim is released" do
       key = {:claim, "release"}
 
@@ -116,16 +137,28 @@ defmodule Jido.Messaging.DeduperTest do
   describe "TTL expiration" do
     test "keys expire after TTL" do
       key = {:expire, "test"}
-      # Use minimal TTL to speed up test
-      ttl_ms = 20
+      ttl_ms = 60_000
+
+      assert :new = Deduper.check_and_mark(TestMessaging, key, ttl_ms)
+      deduper = Module.concat(TestMessaging, "Deduper")
+      owner = self()
+
+      :sys.replace_state(deduper, fn state ->
+        [{^key, :seen, expires_at}] = :ets.lookup(state.table, key)
+        send(owner, {:deadline_in_future, expires_at > System.monotonic_time(:millisecond)})
+        state
+      end)
+
+      assert_receive {:deadline_in_future, true}
+      assert :duplicate = Deduper.check_and_mark(TestMessaging, key, ttl_ms)
+
+      :sys.replace_state(deduper, fn state ->
+        true = :ets.insert(state.table, {key, :seen, System.monotonic_time(:millisecond) - 1})
+        state
+      end)
 
       assert :new = Deduper.check_and_mark(TestMessaging, key, ttl_ms)
       assert :duplicate = Deduper.check_and_mark(TestMessaging, key, ttl_ms)
-
-      # Wait for TTL expiration - this sleep is necessary for time-based testing
-      Process.sleep(ttl_ms + 10)
-
-      assert :new = Deduper.check_and_mark(TestMessaging, key, ttl_ms)
     end
   end
 end

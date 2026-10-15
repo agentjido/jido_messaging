@@ -16,6 +16,10 @@ defmodule Jido.Messaging.Persistence do
   pools or nodes can write safely. These capabilities do not imply RFC 0001's
   broader `:transactional_delivery` guarantee.
 
+  Feature contracts are defined in `Jido.Messaging.Persistence.Contracts`.
+  Built-in adapters declare each complete feature group. This aggregate keeps
+  all existing callback signatures and optional callbacks for compatibility.
+
   ## Implementing an Adapter
 
       defmodule MyApp.CustomAdapter do
@@ -351,6 +355,10 @@ defmodule Jido.Messaging.Persistence do
   Used for resolving reply_to references from external platforms.
   """
   @callback get_message_by_external_id(state, channel, bridge_id, external_id) ::
+              {:ok, Message.t()} | {:error, :not_found}
+
+  @doc "Get a provider message within its canonical room, channel, and bridge."
+  @callback get_message_by_external_id(state, channel, bridge_id, external_id, room_id) ::
               {:ok, Message.t()} | {:error, :not_found}
 
   @doc """

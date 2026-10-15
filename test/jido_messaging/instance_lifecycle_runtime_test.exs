@@ -39,7 +39,11 @@ defmodule Jido.Messaging.InstanceLifecycleRuntimeTest do
     def channel_type, do: :internal
 
     @impl true
-    def transform_incoming(_payload), do: {:error, :unsupported}
+    def signal_protocol, do: 1
+    @impl true
+    def configure_binding(opts), do: {:ok, opts}
+    @impl true
+    def normalize_event(_binding, _payload), do: Jido.Chat.Signal.Policy.error(:invalid_delivery)
 
     @impl true
     def send_message(_chat_id, _text, _opts), do: {:ok, %{message_id: "deterministic"}}
@@ -80,7 +84,11 @@ defmodule Jido.Messaging.InstanceLifecycleRuntimeTest do
     def channel_type, do: :internal
 
     @impl true
-    def transform_incoming(_payload), do: {:error, :unsupported}
+    def signal_protocol, do: 1
+    @impl true
+    def configure_binding(opts), do: {:ok, opts}
+    @impl true
+    def normalize_event(_binding, _payload), do: Jido.Chat.Signal.Policy.error(:invalid_delivery)
 
     @impl true
     def send_message(_chat_id, _text, _opts), do: {:ok, %{message_id: "recoverable"}}
@@ -134,7 +142,11 @@ defmodule Jido.Messaging.InstanceLifecycleRuntimeTest do
     def channel_type, do: :internal
 
     @impl true
-    def transform_incoming(_payload), do: {:error, :unsupported}
+    def signal_protocol, do: 1
+    @impl true
+    def configure_binding(opts), do: {:ok, opts}
+    @impl true
+    def normalize_event(_binding, _payload), do: Jido.Chat.Signal.Policy.error(:invalid_delivery)
 
     @impl true
     def send_message(_chat_id, _text, _opts), do: {:ok, %{message_id: "crash_loop"}}
@@ -210,7 +222,11 @@ defmodule Jido.Messaging.InstanceLifecycleRuntimeTest do
     def channel_type, do: :internal
 
     @impl true
-    def transform_incoming(_payload), do: {:error, :unsupported}
+    def signal_protocol, do: 1
+    @impl true
+    def configure_binding(opts), do: {:ok, opts}
+    @impl true
+    def normalize_event(_binding, _payload), do: Jido.Chat.Signal.Policy.error(:invalid_delivery)
 
     @impl true
     def send_message(_chat_id, _text, _opts), do: {:ok, %{message_id: "isolated"}}

@@ -1,590 +1,104 @@
 defmodule Jido.Messaging.InboundRouter do
-  @moduledoc """
-  Inbound routing boundary from raw adapter payloads into runtime ingest.
+  @moduledoc false
+  alias Jido.Chat.{WebhookRequest, WebhookResponse}
+  alias Jido.Messaging.{ConfigStore, IngressSink, Runtime}
 
-  This module resolves adapter modules from bridge configuration, then:
-  1. verifies/parses webhook requests via `Jido.Chat.Adapter`
-  2. canonicalizes routing via `Jido.Chat.process_event/4`
-  3. persists new messages through `Jido.Messaging.Ingest`
-  4. applies update and delete events to existing persisted messages
-
-  Lifecycle results use `:message_updated` and `:message_deleted` tuples. If
-  the provider message ID is unknown, routing returns `:message_not_found`
-  without creating a message or failing ingress.
-  """
-
-  alias Jido.Chat
-  alias Jido.Chat.{Adapter, EventEnvelope, Incoming, WebhookRequest, WebhookResponse}
-
-  alias Jido.Messaging.{
-    BridgeConfig,
-    BridgeServer,
-    ConfigStore,
-    Ingest,
-    IngressOutcome,
-    MessageLifecycle,
-    SecretResolver
-  }
-
-  @type ingest_result ::
-          {:ok, {:message, Jido.Messaging.Message.t(), Ingest.context(), EventEnvelope.t()}}
-          | {:ok, {:message_updated, Jido.Messaging.Message.t(), EventEnvelope.t()}}
-          | {:ok, {:message_deleted, Jido.Messaging.Message.t(), EventEnvelope.t()}}
-          | {:ok, {:message_not_found, EventEnvelope.t()}}
-          | {:ok, {:duplicate, EventEnvelope.t()}}
-          | {:ok, {:event, EventEnvelope.t()}}
-          | {:ok, :noop}
-          | {:error, term()}
-
-  @type webhook_result ::
-          {:ok, WebhookResponse.t(), ingest_result()} | {:error, term()}
-
-  @type route_ingress_result :: {:ok, IngressOutcome.t()} | {:error, term()}
-
-  @doc """
-  Routes a webhook payload through bridge-config verification + event parsing.
-
-  ## Options
-
-    * `:headers` - request headers map
-    * `:path` - request path
-    * `:method` - HTTP method
-    * `:raw_body` - raw body used by signature verification
-    * `:ingest_opts` - options passed to `Jido.Messaging.Ingest.ingest_incoming/5`
-  """
-  @spec route_webhook(module(), String.t(), map(), keyword()) :: ingest_result()
-  def route_webhook(instance_module, bridge_id, payload, opts \\ [])
-      when is_atom(instance_module) and is_binary(bridge_id) and is_map(payload) and is_list(opts) do
-    request_meta = %{
-      headers: Keyword.get(opts, :headers, %{}),
-      path: Keyword.get(opts, :path, "/"),
-      method: Keyword.get(opts, :method, "POST"),
-      raw_body: Keyword.get(opts, :raw_body)
-    }
-
-    with {:ok, %IngressOutcome{} = routed} <-
-           route_ingress(instance_module, bridge_id, :webhook, request_meta, payload, opts) do
-      ingest_result_from_outcome(routed)
+  @doc false
+  def route_payload(instance, bridge, payload, opts \\ []) do
+    with {:ok, binding} <- binding(instance, bridge),
+         {:ok, delivery} <- Jido.Chat.normalize_event(binding, payload) do
+      IngressSink.emit(instance, bridge, delivery, opts)
     end
   end
 
-  @doc """
-  Routes a webhook request and returns both typed HTTP response and ingest outcome.
-
-  `request_meta` accepts:
-    * `:headers` - request headers map
-    * `:path` - request path
-    * `:method` - HTTP method
-    * `:raw_body` - raw body used by signature verification
-  """
-  @spec route_webhook_request(module(), String.t(), map(), map(), keyword()) :: webhook_result()
-  def route_webhook_request(instance_module, bridge_id, request_meta, payload, opts \\ [])
-      when is_atom(instance_module) and is_binary(bridge_id) and is_map(request_meta) and is_map(payload) and
-             is_list(opts) do
-    with {:ok, %IngressOutcome{} = routed} <-
-           route_ingress(instance_module, bridge_id, :webhook, request_meta, payload, opts) do
-      {:ok, routed.response, ingest_result_from_outcome(routed)}
-    end
+  @doc false
+  def route_webhook(instance, bridge, payload, opts \\ []) do
+    meta = Map.new(Keyword.take(opts, [:headers, :path, :method, :raw_body]))
+    with {:ok, _response, result} <- route_webhook_request(instance, bridge, meta, payload, opts), do: result
   end
 
-  @doc """
-  Routes ingress through a canonical normalized outcome.
+  @doc false
+  def route_webhook_request(instance, bridge, meta, payload, opts \\ []) do
+    with {:ok, binding} <- binding(instance, bridge) do
+      request =
+        WebhookRequest.new(%{
+          adapter_name: binding.adapter.channel_type(),
+          payload: payload,
+          headers: meta[:headers] || %{},
+          method: meta[:method] || "POST",
+          path: meta[:path] || "/",
+          raw: meta[:raw_body]
+        })
 
-  Supported modes:
-    * `:webhook` - verifies/parses request, dispatches event, formats webhook response
-    * `:payload` - normalizes payload events for listener-driven ingress
-  """
-  @spec route_ingress(module(), String.t(), :webhook | :payload, map(), map(), keyword()) :: route_ingress_result()
-  def route_ingress(instance_module, bridge_id, :webhook, request_meta, payload, opts)
-      when is_atom(instance_module) and is_binary(bridge_id) and is_map(request_meta) and is_map(payload) and
-             is_list(opts) do
-    ingest_opts = Keyword.get(opts, :ingest_opts, [])
-
-    with {:ok, config} <- fetch_bridge(instance_module, bridge_id),
-         :ok <- ensure_enabled(config),
-         {:ok, adapter_module} <- ensure_adapter_module(config),
-         {:ok, adapter_opts} <- SecretResolver.adapter_opts_for_config(instance_module, config, :webhook, opts) do
-      request = build_webhook_request(adapter_module, payload, request_meta)
-      format_opts = Keyword.put(adapter_opts, :request, request)
-
-      outcome =
-        with :ok <- Adapter.verify_webhook(adapter_module, request, adapter_opts),
-             {:ok, event} <- Adapter.parse_event(adapter_module, request, adapter_opts) do
-          dispatch_event(instance_module, adapter_module, bridge_id, event, ingest_opts, adapter_opts)
+      result =
+        with :ok <- verify(binding, request),
+             {:ok, delivery} <- Jido.Chat.normalize_event(binding, request) do
+          IngressSink.emit(instance, bridge, delivery, opts)
         end
 
-      response =
-        outcome
-        |> webhook_format_result()
-        |> format_response(adapter_module, format_opts)
-
-      record_ingress(instance_module, bridge_id, outcome)
-      {:ok, normalize_outcome(:webhook, bridge_id, outcome, response)}
-    else
-      {:error, _reason} = error ->
-        response = default_response(error)
-        BridgeServer.mark_error(instance_module, bridge_id, error)
-        {:ok, normalize_outcome(:webhook, bridge_id, error, response)}
-    end
-  end
-
-  def route_ingress(instance_module, bridge_id, :payload, _request_meta, payload, opts)
-      when is_atom(instance_module) and is_binary(bridge_id) and is_map(payload) and is_list(opts) do
-    ingest_opts = Keyword.get(opts, :ingest_opts, [])
-    payload = normalize_payload_input(payload)
-
-    with {:ok, config} <- fetch_bridge(instance_module, bridge_id),
-         :ok <- ensure_enabled(config),
-         {:ok, adapter_module} <- ensure_adapter_module(config),
-         {:ok, adapter_opts} <- SecretResolver.adapter_opts_for_config(instance_module, config, :payload, opts) do
-      outcome =
-        case normalize_payload_event(adapter_module, payload, adapter_opts) do
-          {:ok, :noop} ->
-            {:ok, :noop}
-
-          {:ok, %EventEnvelope{} = event} ->
-            dispatch_event(instance_module, adapter_module, bridge_id, event, ingest_opts, adapter_opts)
-
-          :fallback ->
-            with {:ok, incoming} <- Adapter.transform_incoming(adapter_module, payload) do
-              event =
-                EventEnvelope.new(%{
-                  adapter_name: adapter_type(adapter_module),
-                  event_type: :message,
-                  thread_id: Keyword.get(opts, :thread_id, "adapter:#{stringify(incoming.external_room_id)}"),
-                  channel_id: stringify(incoming.external_room_id),
-                  message_id: stringify(incoming.external_message_id),
-                  payload: incoming,
-                  raw: payload,
-                  metadata: %{source: :payload, bridge_id: bridge_id}
-                })
-
-              dispatch_event(instance_module, adapter_module, bridge_id, event, ingest_opts, adapter_opts)
-            end
-        end
-
-      record_ingress(instance_module, bridge_id, outcome)
-      {:ok, normalize_outcome(:payload, bridge_id, outcome, nil)}
-    end
-  end
-
-  def route_ingress(_instance_module, _bridge_id, _mode, _request_meta, _payload, _opts),
-    do: {:error, :invalid_ingress_request}
-
-  @doc """
-  Routes a non-webhook payload through canonical event normalization.
-
-  For transport listeners (polling, gateways, queues), this path supports:
-    * direct `EventEnvelope` payloads
-    * adapter `parse_event/2` normalization when available
-    * `transform_incoming/1` fallback for message payloads
-  """
-  @spec route_payload(module(), String.t(), map(), keyword()) :: ingest_result()
-  def route_payload(instance_module, bridge_id, payload, opts \\ [])
-      when is_atom(instance_module) and is_binary(bridge_id) and is_map(payload) and is_list(opts) do
-    with {:ok, %IngressOutcome{} = routed} <-
-           route_ingress(instance_module, bridge_id, :payload, %{}, payload, opts) do
-      ingest_result_from_outcome(routed)
-    end
-  end
-
-  defp normalize_outcome(mode, bridge_id, {:ok, :noop}, response) do
-    IngressOutcome.new(%{
-      mode: mode,
-      bridge_id: bridge_id,
-      status: :noop,
-      envelope: nil,
-      message: nil,
-      context: nil,
-      response: response,
-      error: nil
-    })
-  end
-
-  defp normalize_outcome(mode, bridge_id, {:ok, {:event, %EventEnvelope{} = event}}, response) do
-    IngressOutcome.new(%{
-      mode: mode,
-      bridge_id: bridge_id,
-      status: :event,
-      envelope: event,
-      message: nil,
-      context: nil,
-      response: response,
-      error: nil
-    })
-  end
-
-  defp normalize_outcome(
-         mode,
-         bridge_id,
-         {:ok, {:message_updated, message, %EventEnvelope{} = event}},
-         response
-       ) do
-    lifecycle_outcome(mode, bridge_id, :message_updated, message, event, response)
-  end
-
-  defp normalize_outcome(
-         mode,
-         bridge_id,
-         {:ok, {:message_deleted, message, %EventEnvelope{} = event}},
-         response
-       ) do
-    lifecycle_outcome(mode, bridge_id, :message_deleted, message, event, response)
-  end
-
-  defp normalize_outcome(
-         mode,
-         bridge_id,
-         {:ok, {:message_not_found, %EventEnvelope{} = event}},
-         response
-       ) do
-    lifecycle_outcome(mode, bridge_id, :message_not_found, nil, event, response)
-  end
-
-  defp normalize_outcome(mode, bridge_id, {:ok, {:duplicate, %EventEnvelope{} = event}}, response) do
-    IngressOutcome.new(%{
-      mode: mode,
-      bridge_id: bridge_id,
-      status: :duplicate,
-      envelope: event,
-      message: nil,
-      context: nil,
-      response: response,
-      error: nil
-    })
-  end
-
-  defp normalize_outcome(mode, bridge_id, {:ok, {:message, message, context, %EventEnvelope{} = event}}, response) do
-    IngressOutcome.new(%{
-      mode: mode,
-      bridge_id: bridge_id,
-      status: :message,
-      envelope: event,
-      message: message,
-      context: context,
-      response: response,
-      error: nil
-    })
-  end
-
-  defp normalize_outcome(mode, bridge_id, {:error, reason}, response) do
-    IngressOutcome.new(%{
-      mode: mode,
-      bridge_id: bridge_id,
-      status: :error,
-      envelope: nil,
-      message: nil,
-      context: nil,
-      response: response,
-      error: reason
-    })
-  end
-
-  defp ingest_result_from_outcome(%IngressOutcome{status: :noop}), do: {:ok, :noop}
-
-  defp ingest_result_from_outcome(%IngressOutcome{status: :event, envelope: %EventEnvelope{} = event}),
-    do: {:ok, {:event, event}}
-
-  defp ingest_result_from_outcome(%IngressOutcome{
-         status: :message_updated,
-         message: message,
-         envelope: %EventEnvelope{} = event
-       }),
-       do: {:ok, {:message_updated, message, event}}
-
-  defp ingest_result_from_outcome(%IngressOutcome{
-         status: :message_deleted,
-         message: message,
-         envelope: %EventEnvelope{} = event
-       }),
-       do: {:ok, {:message_deleted, message, event}}
-
-  defp ingest_result_from_outcome(%IngressOutcome{
-         status: :message_not_found,
-         envelope: %EventEnvelope{} = event
-       }),
-       do: {:ok, {:message_not_found, event}}
-
-  defp ingest_result_from_outcome(%IngressOutcome{status: :duplicate, envelope: %EventEnvelope{} = event}),
-    do: {:ok, {:duplicate, event}}
-
-  defp ingest_result_from_outcome(%IngressOutcome{
-         status: :message,
-         message: message,
-         context: context,
-         envelope: %EventEnvelope{} = event
-       }),
-       do: {:ok, {:message, message, context, event}}
-
-  defp ingest_result_from_outcome(%IngressOutcome{status: :error, error: reason}), do: {:error, reason}
-
-  defp record_ingress(instance_module, bridge_id, {:ok, _}) do
-    BridgeServer.mark_ingress(instance_module, bridge_id)
-    :ok
-  end
-
-  defp record_ingress(instance_module, bridge_id, {:error, reason}) do
-    BridgeServer.mark_error(instance_module, bridge_id, reason)
-    :ok
-  end
-
-  defp dispatch_event(_instance_module, _adapter_module, _bridge_id, :noop, _ingest_opts, _opts),
-    do: {:ok, :noop}
-
-  defp dispatch_event(instance_module, adapter_module, bridge_id, %EventEnvelope{} = event, ingest_opts, opts) do
-    adapter_name = adapter_type(adapter_module)
-
-    with {:ok, _chat, routed_event} <- process_event(adapter_name, adapter_module, event, opts) do
-      dispatch_routed_event(instance_module, adapter_module, bridge_id, routed_event, ingest_opts)
-    end
-  end
-
-  defp process_event(adapter_name, adapter_module, event, opts) do
-    chat =
-      Chat.new(%{
-        id: "messaging-inbound:#{adapter_name}",
-        adapters: %{adapter_name => adapter_module},
-        metadata: %{
-          source: :jido_messaging_inbound_router
-        }
-      })
-
-    Chat.process_event(chat, adapter_name, event, opts)
-  end
-
-  defp dispatch_routed_event(instance_module, adapter_module, bridge_id, %EventEnvelope{} = routed_event, ingest_opts) do
-    case routed_event.event_type do
-      :message ->
-        with {:ok, incoming} <- to_incoming(routed_event.payload),
-             ingest_result <-
-               Ingest.ingest_incoming(
-                 instance_module,
-                 adapter_module,
-                 bridge_id,
-                 normalize_incoming_for_ingest(incoming),
-                 ingest_opts
-               ) do
-          case ingest_result do
-            {:ok, message, context} ->
-              {:ok, {:message, message, context, routed_event}}
-
-            {:ok, :duplicate} ->
-              {:ok, {:duplicate, routed_event}}
-
-            {:error, _reason} = error ->
-              error
-          end
-        end
-
-      event_type when event_type in [:message_updated, :message_deleted] ->
-        apply_message_lifecycle(instance_module, adapter_module, bridge_id, routed_event)
-
-      _other ->
-        {:ok, {:event, routed_event}}
-    end
-  end
-
-  defp apply_message_lifecycle(instance_module, adapter_module, bridge_id, %EventEnvelope{} = event) do
-    channel_type = Jido.Messaging.AdapterBridge.channel_type(adapter_module)
-
-    case MessageLifecycle.apply(instance_module, channel_type, bridge_id, event.payload) do
-      {:ok, {:updated, message}} -> {:ok, {:message_updated, message, event}}
-      {:ok, {:deleted, message}} -> {:ok, {:message_deleted, message, event}}
-      {:ok, :not_found} -> {:ok, {:message_not_found, event}}
-      {:error, _reason} = error -> error
-    end
-  end
-
-  defp lifecycle_outcome(mode, bridge_id, status, message, event, response) do
-    IngressOutcome.new(%{
-      mode: mode,
-      bridge_id: bridge_id,
-      status: status,
-      envelope: event,
-      message: message,
-      context: nil,
-      response: response,
-      error: nil
-    })
-  end
-
-  defp to_incoming(%Incoming{} = incoming), do: {:ok, incoming}
-
-  defp to_incoming(payload) when is_map(payload) do
-    try do
-      {:ok, Incoming.new(payload)}
-    rescue
-      _exception -> {:error, :invalid_message_event_payload}
-    end
-  end
-
-  defp to_incoming(_payload), do: {:error, :invalid_message_event_payload}
-
-  defp fetch_bridge(instance_module, bridge_id) do
-    case ConfigStore.get_bridge_config(instance_module, bridge_id) do
-      {:ok, %BridgeConfig{} = config} -> {:ok, config}
-      {:error, :not_found} -> {:error, :bridge_not_found}
-    end
-  end
-
-  defp ensure_enabled(%BridgeConfig{enabled: true}), do: :ok
-  defp ensure_enabled(%BridgeConfig{enabled: false}), do: {:error, :bridge_disabled}
-
-  defp ensure_adapter_module(%BridgeConfig{adapter_module: adapter_module}) when is_atom(adapter_module) do
-    if Code.ensure_loaded?(adapter_module) do
-      {:ok, adapter_module}
-    else
-      {:error, :invalid_bridge_adapter}
-    end
-  end
-
-  defp build_webhook_request(adapter_module, payload, request_meta) do
-    WebhookRequest.new(%{
-      adapter_name: adapter_type(adapter_module),
-      headers: Map.get(request_meta, :headers, %{}),
-      path: Map.get(request_meta, :path, "/"),
-      method: Map.get(request_meta, :method, "POST"),
-      payload: payload,
-      raw: Map.get(request_meta, :raw_body, payload),
-      metadata: Map.get(request_meta, :request_metadata, %{})
-    })
-  end
-
-  defp stringify(nil), do: nil
-  defp stringify(value) when is_binary(value), do: value
-  defp stringify(value), do: to_string(value)
-
-  defp normalize_incoming_for_ingest(%Incoming{} = incoming), do: Map.from_struct(incoming)
-
-  defp normalize_payload_event(_adapter_module, %EventEnvelope{} = envelope, _opts),
-    do: {:ok, envelope}
-
-  defp normalize_payload_event(adapter_module, payload, opts) when is_map(payload) do
-    cond do
-      event_envelope_shape?(payload) ->
-        payload
-        |> map_to_envelope(adapter_module)
-        |> case do
-          {:ok, envelope} -> {:ok, envelope}
-          {:error, _reason} -> :fallback
-        end
-
-      function_exported?(adapter_module, :parse_event, 2) ->
-        request = build_webhook_request(adapter_module, payload, payload_request_meta(opts))
-
-        case Adapter.parse_event(adapter_module, request, opts) do
-          {:ok, :noop} ->
-            {:ok, :noop}
-
-          {:ok, event} ->
-            event
-            |> map_to_envelope(adapter_module)
-            |> case do
-              {:ok, envelope} -> {:ok, envelope}
-              {:error, _reason} -> :fallback
-            end
-
-          {:error, _reason} ->
-            :fallback
-        end
-
-      true ->
-        :fallback
-    end
-  end
-
-  defp payload_request_meta(opts) do
-    %{
-      headers: Keyword.get(opts, :headers, %{}),
-      path: Keyword.get(opts, :path, "/payload"),
-      method: Keyword.get(opts, :method, "PAYLOAD"),
-      raw_body: Keyword.get(opts, :raw_body),
-      request_metadata: Keyword.get(opts, :request_metadata, %{})
-    }
-  end
-
-  defp map_to_envelope(%EventEnvelope{} = envelope, _adapter_module), do: {:ok, envelope}
-
-  defp map_to_envelope(event, adapter_module) when is_map(event) do
-    defaults = %{adapter_name: adapter_type(adapter_module)}
-
-    try do
-      {:ok, EventEnvelope.new(Map.merge(defaults, event))}
-    rescue
-      _exception -> {:error, :invalid_event_envelope}
-    end
-  end
-
-  defp event_envelope_shape?(map) when is_map(map) do
-    Map.has_key?(map, :event_type) or Map.has_key?(map, "event_type")
-  end
-
-  defp normalize_payload_input(%_{} = struct),
-    do: struct |> Map.from_struct() |> normalize_payload_input()
-
-  defp normalize_payload_input(map) when is_map(map) do
-    Map.new(map, fn {key, value} -> {key, normalize_payload_input(value)} end)
-  end
-
-  defp normalize_payload_input(list) when is_list(list),
-    do: Enum.map(list, &normalize_payload_input/1)
-
-  defp normalize_payload_input(other), do: other
-
-  defp webhook_format_result({:ok, :noop}), do: {:ok, nil, :noop}
-  defp webhook_format_result({:ok, {:event, event}}), do: {:ok, nil, event}
-  defp webhook_format_result({:ok, {:message_updated, _message, event}}), do: {:ok, nil, event}
-  defp webhook_format_result({:ok, {:message_deleted, _message, event}}), do: {:ok, nil, event}
-  defp webhook_format_result({:ok, {:message_not_found, event}}), do: {:ok, nil, event}
-  defp webhook_format_result({:ok, {:message, _message, _context, event}}), do: {:ok, nil, event}
-  defp webhook_format_result({:ok, {:duplicate, event}}), do: {:ok, nil, event}
-  defp webhook_format_result({:error, _reason} = error), do: error
-
-  defp format_response(format_result, adapter_module, opts) do
-    if prefer_default_response?(format_result) do
-      default_response(format_result)
-    else
-      case Adapter.format_webhook_response(adapter_module, format_result, opts) do
-        {:ok, %WebhookResponse{} = response} -> response
-        {:error, _reason} -> default_response(format_result)
+      case result do
+        {:error, reason} -> Jido.Messaging.BridgeServer.mark_error(instance, bridge, reason)
+        _ -> :ok
       end
-    end
-  end
 
-  defp prefer_default_response?({:error, :bridge_not_found}), do: true
-  defp prefer_default_response?({:error, :bridge_disabled}), do: true
-  defp prefer_default_response?({:error, :invalid_bridge_adapter}), do: true
-  defp prefer_default_response?({:error, :invalid_signature}), do: true
-  defp prefer_default_response?({:error, :invalid_webhook_secret}), do: true
-  defp prefer_default_response?(_), do: false
-
-  defp default_response({:error, :bridge_not_found}), do: WebhookResponse.error(404, %{error: "bridge_not_found"})
-  defp default_response({:error, :bridge_disabled}), do: WebhookResponse.error(409, %{error: "bridge_disabled"})
-
-  defp default_response({:error, :invalid_bridge_adapter}),
-    do: WebhookResponse.error(500, %{error: "invalid_bridge_adapter"})
-
-  defp default_response({:error, :invalid_signature}), do: WebhookResponse.error(401, %{error: "invalid_signature"})
-
-  defp default_response({:error, :invalid_webhook_secret}),
-    do: WebhookResponse.error(401, %{error: "invalid_webhook_secret"})
-
-  defp default_response({:error, reason}), do: WebhookResponse.error(400, %{error: normalize_error_reason(reason)})
-  defp default_response(_result), do: WebhookResponse.accepted(%{ok: true})
-
-  defp normalize_error_reason(reason) when is_binary(reason), do: reason
-  defp normalize_error_reason(reason) when is_atom(reason), do: Atom.to_string(reason)
-  defp normalize_error_reason(reason), do: inspect(reason)
-
-  defp adapter_type(adapter_module) do
-    if function_exported?(adapter_module, :channel_type, 0) do
-      adapter_module.channel_type()
+      {:ok, format(binding, request, result), result}
     else
-      adapter_module
-      |> Module.split()
-      |> List.last()
-      |> Macro.underscore()
-      |> String.to_atom()
+      {:error, reason} = error -> {:ok, WebhookResponse.error(status(reason), %{error: "ingress_rejected"}), error}
     end
   end
+
+  defp binding(instance, id) do
+    with {:ok, config} <- ConfigStore.get_bridge_config(instance, id),
+         true <- config.enabled,
+         {:ok, binding} <-
+           Runtime.ensure_binding(instance.__jido_messaging__(:runtime), config.adapter_module, id,
+             bridge_config: config
+           ) do
+      {:ok, binding}
+    else
+      false -> {:error, :bridge_disabled}
+      {:error, :not_found} -> {:error, :bridge_not_found}
+      error -> error
+    end
+  end
+
+  defp verify(binding, request) do
+    if function_exported?(binding.adapter, :verify_webhook, 2) do
+      case binding.adapter.verify_webhook(request, binding.options) do
+        :ok -> :ok
+        {:error, _reason} = error -> error
+        _ -> {:error, :webhook_verification_failed}
+      end
+    else
+      {:error, :unsupported}
+    end
+  rescue
+    _ -> {:error, :webhook_verification_failed}
+  catch
+    _, _ -> {:error, :webhook_verification_failed}
+  end
+
+  defp format(binding, request, result) do
+    if function_exported?(binding.adapter, :format_webhook_response, 2) do
+      case binding.adapter.format_webhook_response(result, Keyword.put(binding.options, :request, request)) do
+        %WebhookResponse{} = response -> response
+        {:ok, %WebhookResponse{} = response} -> response
+        map when is_map(map) -> WebhookResponse.new(map)
+        _ -> default(result)
+      end
+    else
+      default(result)
+    end
+  rescue
+    _ -> default(result)
+  catch
+    _, _ -> default(result)
+  end
+
+  defp default({:ok, _}), do: WebhookResponse.accepted()
+  defp default({:error, :invalid_signature}), do: WebhookResponse.error(401, %{error: "invalid_signature"})
+  defp default({:error, _}), do: WebhookResponse.error(400, %{error: "ingress_rejected"})
+  defp status(:bridge_not_found), do: 404
+  defp status(:bridge_disabled), do: 409
+  defp status(_), do: 400
 end

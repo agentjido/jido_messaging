@@ -2,8 +2,9 @@ defmodule Jido.Messaging.Specs.Story00RuntimeTopologyAndSLOsTest do
   use ExUnit.Case, async: true
   @moduletag :story
 
-  @story_file "specs/stories/00-runtime-topology-and-slos.md"
-  @traceability_file "specs/stories/00_traceability_matrix.md"
+  @project_root Path.expand("../..", __DIR__)
+  @story_file Path.join(@project_root, "specs/stories/00-runtime-topology-and-slos.md")
+  @traceability_file Path.join(@project_root, "specs/stories/00_traceability_matrix.md")
   @topology_headers [
     "Subsystem",
     "Owner Process",
@@ -34,19 +35,22 @@ defmodule Jido.Messaging.Specs.Story00RuntimeTopologyAndSLOsTest do
     "Baseline Partitioning Rule",
     "Notes"
   ]
-  @downstream_story_files [
-    "specs/stories/01-channel-contract-v2.md",
-    "specs/stories/02-instance-lifecycle-runtime.md",
-    "specs/stories/03-outbound-gateway.md",
-    "specs/stories/04-ingest-policy-pipeline.md",
-    "specs/stories/05-security-boundary.md",
-    "specs/stories/06-session-routing-manager.md",
-    "specs/stories/07-media-pipeline.md",
-    "specs/stories/08-command-mention-normalization.md",
-    "specs/stories/09-directory-onboarding.md",
-    "specs/stories/10-plugin-manifest-discovery.md",
-    "specs/stories/11-resilience-ops.md"
-  ]
+  @downstream_story_files Enum.map(
+                            [
+                              "specs/stories/01-channel-contract-v2.md",
+                              "specs/stories/02-instance-lifecycle-runtime.md",
+                              "specs/stories/03-outbound-gateway.md",
+                              "specs/stories/04-ingest-policy-pipeline.md",
+                              "specs/stories/05-security-boundary.md",
+                              "specs/stories/06-session-routing-manager.md",
+                              "specs/stories/07-media-pipeline.md",
+                              "specs/stories/08-command-mention-normalization.md",
+                              "specs/stories/09-directory-onboarding.md",
+                              "specs/stories/10-plugin-manifest-discovery.md",
+                              "specs/stories/11-resilience-ops.md"
+                            ],
+                            &Path.join(@project_root, &1)
+                          )
 
   test "canonical topology matrix defines owner process, strategy, and restart intensity per subsystem" do
     story = File.read!(@story_file)

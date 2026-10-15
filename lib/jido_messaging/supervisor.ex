@@ -4,6 +4,11 @@ defmodule Jido.Messaging.Supervisor do
 
   Started by the host application's messaging module (defined with `use Jido.Messaging`).
   Each instance has its own isolated supervision tree.
+
+  The existing `:core` profile starts the canonical store and all runtime
+  integration groups. The `:full` profile also starts onboarding. These names
+  do not select a minimal store-only runtime. See `docs/runtime-ownership.md`
+  for owners, dependencies, and restart limits.
   """
   use Supervisor
 
@@ -16,9 +21,6 @@ defmodule Jido.Messaging.Supervisor do
 
   @impl true
   def init(opts) do
-    # Ensure Jido.Messaging signal extensions are registered
-    Jido.Messaging.Signal.Ext.CorrelationId.ensure_registered()
-
     instance_module = Keyword.fetch!(opts, :instance_module)
     persistence = Keyword.fetch!(opts, :persistence)
     persistence_opts = Keyword.get(opts, :persistence_opts, [])
@@ -34,6 +36,7 @@ defmodule Jido.Messaging.Supervisor do
            collision_policy: bridge_collision_policy
          ) do
       {:ok, _bootstrap_result} ->
+        desired_workers = Jido.Messaging.DesiredWorkers.new(instance_module)
         runtime_name = Module.concat(instance_module, Runtime)
         room_registry_name = Module.concat(instance_module, Registry.Rooms)
         room_supervisor_name = Module.concat(instance_module, RoomSupervisor)
@@ -54,36 +57,52 @@ defmodule Jido.Messaging.Supervisor do
         signal_bus_name = Module.concat(instance_module, SignalBus)
 
         base_children = [
-          {Registry, keys: :unique, name: room_registry_name},
-          {Registry, keys: :unique, name: agent_registry_name},
-          {Registry, keys: :unique, name: instance_registry_name},
-          {Registry, keys: :unique, name: bridge_registry_name},
           {Jido.Signal.Bus, name: signal_bus_name},
           {Jido.Messaging.Runtime,
            name: runtime_name,
            instance_module: instance_module,
            persistence: persistence,
            persistence_opts: persistence_opts},
-          {Jido.Messaging.RoomSupervisor, name: room_supervisor_name, instance_module: instance_module},
-          {Jido.Messaging.AgentSupervisor, name: agent_supervisor_name, instance_module: instance_module},
-          {Jido.Messaging.SessionManager.Supervisor,
-           name: session_manager_supervisor_name, instance_module: instance_module},
+          {Jido.Messaging.SubscriptionSupervisor, instance_module: instance_module},
+          {Jido.Messaging.DesiredWorkers, supervisor: room_supervisor_name, table: desired_workers},
+          {Jido.Messaging.RegistryDomain,
+           registry: room_registry_name,
+           children: [{Jido.Messaging.RoomSupervisor, name: room_supervisor_name, instance_module: instance_module}]},
+          {Jido.Messaging.DesiredWorkers, supervisor: agent_supervisor_name, table: desired_workers},
+          {Jido.Messaging.RegistryDomain,
+           registry: agent_registry_name,
+           children: [{Jido.Messaging.AgentSupervisor, name: agent_supervisor_name, instance_module: instance_module}]},
           {Jido.Messaging.DeadLetter, name: dead_letter_name, instance_module: instance_module},
           {Jido.Messaging.DeadLetter.ReplaySupervisor,
            name: dead_letter_replay_supervisor_name, instance_module: instance_module},
-          {Jido.Messaging.OutboundGateway.Supervisor,
-           name: outbound_gateway_supervisor_name, instance_module: instance_module},
           {Jido.Messaging.ConfigStore, name: config_store_name, instance_module: instance_module},
           {Jido.Messaging.Deduper, name: deduper_name, instance_module: instance_module},
-          {Jido.Messaging.InstanceSupervisor, name: instance_supervisor_name, instance_module: instance_module},
-          {Jido.Messaging.BridgeSupervisor, name: bridge_supervisor_name, instance_module: instance_module}
+          {Jido.Messaging.DesiredWorkers, supervisor: instance_supervisor_name, table: desired_workers},
+          {Jido.Messaging.RegistryDomain,
+           registry: instance_registry_name,
+           children: [
+             {Jido.Messaging.SessionManager.Supervisor,
+              name: session_manager_supervisor_name, instance_module: instance_module},
+             {Jido.Messaging.OutboundGateway.Supervisor,
+              name: outbound_gateway_supervisor_name, instance_module: instance_module},
+             {Jido.Messaging.InstanceSupervisor, name: instance_supervisor_name, instance_module: instance_module}
+           ]},
+          {Jido.Messaging.DesiredWorkers, supervisor: bridge_supervisor_name, table: desired_workers},
+          {Jido.Messaging.RegistryDomain,
+           registry: bridge_registry_name,
+           children: [{Jido.Messaging.BridgeSupervisor, name: bridge_supervisor_name, instance_module: instance_module}]}
         ]
 
         onboarding_children =
           if :onboarding in runtime_features do
             [
-              {Registry, keys: :unique, name: onboarding_registry_name},
-              {Jido.Messaging.Onboarding.Supervisor, name: onboarding_supervisor_name, instance_module: instance_module}
+              {Jido.Messaging.DesiredWorkers, supervisor: onboarding_supervisor_name, table: desired_workers},
+              {Jido.Messaging.RegistryDomain,
+               registry: onboarding_registry_name,
+               children: [
+                 {Jido.Messaging.Onboarding.Supervisor,
+                  name: onboarding_supervisor_name, instance_module: instance_module}
+               ]}
             ]
           else
             []

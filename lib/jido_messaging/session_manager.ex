@@ -110,10 +110,18 @@ defmodule Jido.Messaging.SessionManager do
 
   @doc """
   Resolve the partition index for a session key.
+
+  Room and thread keys share an owner within the same channel and bridge.
   """
   @spec route_partition(module(), session_key()) :: non_neg_integer()
   def route_partition(instance_module, session_key) when is_atom(instance_module) do
-    :erlang.phash2(session_key, partition_count(instance_module))
+    partition_key =
+      case session_key do
+        {channel, bridge_id, room_id, _thread_id} -> {channel, bridge_id, room_id, nil}
+        other -> other
+      end
+
+    :erlang.phash2(partition_key, partition_count(instance_module))
   end
 
   @doc """

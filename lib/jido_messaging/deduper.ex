@@ -67,9 +67,11 @@ defmodule Jido.Messaging.Deduper do
 
   Claims and completed marks are process-local ETS data. They are lost when
   the messaging runtime restarts, so this module does not provide durable or
-  cross-node deduplication.
+  cross-node deduplication. An uncertain store outcome returns an error on later
+  claims and remains held until explicit clearing or runtime shutdown.
   """
-  @spec claim(module(), key(), non_neg_integer() | nil) :: {:ok, claim_token()} | :duplicate
+  @spec claim(module(), key(), non_neg_integer() | nil) ::
+          {:ok, claim_token()} | :duplicate | {:error, :outcome_unknown}
   def claim(messaging_module, key, ttl_ms \\ nil) do
     deduper = deduper_name(messaging_module)
     GenServer.call(deduper, {:claim, key, ttl_ms})
@@ -88,6 +90,11 @@ defmodule Jido.Messaging.Deduper do
     deduper = deduper_name(messaging_module)
     GenServer.call(deduper, {:release, key, token})
   end
+
+  @doc false
+  @spec retain_unknown(module(), key(), claim_token()) :: :ok | {:error, :stale_claim}
+  def retain_unknown(messaging_module, key, token) when is_reference(token),
+    do: GenServer.call(deduper_name(messaging_module), {:retain_unknown, key, token})
 
   @doc """
   Check if a key has been seen (without marking).
@@ -172,6 +179,9 @@ defmodule Jido.Messaging.Deduper do
     ttl = custom_ttl || state.ttl_ms
 
     case lookup_current(state.table, key, now) do
+      {:current, {^key, :unknown}} ->
+        {:reply, {:error, :outcome_unknown}, state}
+
       {:current, _entry} ->
         {:reply, :duplicate, state}
 
@@ -179,6 +189,18 @@ defmodule Jido.Messaging.Deduper do
         token = make_ref()
         :ets.insert(state.table, {key, :claimed, token, now + ttl})
         {:reply, {:ok, token}, state}
+    end
+  end
+
+  @impl true
+  def handle_call({:retain_unknown, key, token}, _from, state) do
+    case :ets.lookup(state.table, key) do
+      [{^key, :claimed, ^token, _expires_at}] ->
+        :ets.insert(state.table, {key, :unknown})
+        {:reply, :ok, state}
+
+      _ ->
+        {:reply, {:error, :stale_claim}, state}
     end
   end
 
@@ -268,6 +290,7 @@ defmodule Jido.Messaging.Deduper do
 
   defp lookup_current(table, key, now) do
     case :ets.lookup(table, key) do
+      [{^key, :unknown} = entry] -> {:current, entry}
       [{^key, :seen, expires_at} = entry] when expires_at > now -> {:current, entry}
       [{^key, :claimed, _token, expires_at} = entry] when expires_at > now -> {:current, entry}
       _ -> :expired_or_missing
@@ -276,4 +299,5 @@ defmodule Jido.Messaging.Deduper do
 
   defp entry_expires_at({_key, :seen, expires_at}), do: expires_at
   defp entry_expires_at({_key, :claimed, _token, expires_at}), do: expires_at
+  defp entry_expires_at({_key, :unknown}), do: :infinity
 end

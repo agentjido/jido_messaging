@@ -10,6 +10,10 @@ defmodule Jido.Messaging.Presence do
   * Phoenix Presence `track/update/untrack` calls
   * normalized `jido.messaging.*` participant signals
 
+  A session can move to a new transport PID. The adapter attaches the new
+  target before it removes the old target. Failed attachment keeps the old
+  session state, and an unchanged room does not emit another join fact.
+
   Applications still own product policy and read models. A small app module can
   wrap the adapter with:
 
@@ -285,9 +289,7 @@ defmodule Jido.Messaging.Presence do
   defp validate_config!(config) do
     ensure_module!(config.messaging, :messaging)
     ensure_module!(config.presence, :presence)
-    ensure_exported!(config.messaging, :participant_joined, 3)
-    ensure_exported!(config.messaging, :participant_left, 3)
-    ensure_exported!(config.messaging, :participant_presence_changed, 5)
+    ensure_exported!(config.messaging, :subscribe_signals, 2)
     ensure_exported!(config.presence, :track, 4)
     ensure_exported!(config.presence, :update, 4)
     ensure_exported!(config.presence, :untrack, 3)
@@ -417,30 +419,40 @@ defmodule Jido.Messaging.Presence do
     |> successful_signals()
   end
 
-  defp joined_signal(config, room_id, participant_id, meta) do
-    apply(config.messaging, :participant_joined, [
-      room_id,
-      participant_id,
-      event_opts(config, room_id, meta, presence: :online)
-    ])
+  defp joined_signal(config, room, participant, meta) do
+    emit_fact(
+      config,
+      :participant_joined,
+      room,
+      %{participant_id: participant, reason: "presence"},
+      event_opts(config, room, meta)
+    )
   end
 
-  defp left_signal(config, room_id, participant_id, meta, reason) do
-    apply(config.messaging, :participant_left, [
-      room_id,
-      participant_id,
-      event_opts(config, room_id, meta, reason: reason)
-    ])
+  defp left_signal(config, room, participant, meta, reason) do
+    emit_fact(
+      config,
+      :participant_left,
+      room,
+      %{participant_id: participant, reason: reason},
+      event_opts(config, room, meta)
+    )
   end
 
-  defp presence_changed_signal(config, room_id, participant_id, from, to, meta) do
-    apply(config.messaging, :participant_presence_changed, [
-      room_id,
-      participant_id,
-      from,
-      to,
-      event_opts(config, room_id, meta)
-    ])
+  defp presence_changed_signal(config, room, participant, _from, to, meta) do
+    emit_fact(
+      config,
+      :presence_changed,
+      room,
+      %{participant_id: participant, presence: to},
+      event_opts(config, room, meta)
+    )
+  end
+
+  defp emit_fact(config, event, room, data, opts) do
+    with {:ok, signal} <- Jido.Messaging.Events.room_event(config.messaging, event, room, data, opts),
+         {:ok, signal} <- Jido.Messaging.Dispatch.emit(config.messaging, signal),
+         do: {:ok, signal}
   end
 
   defp event_opts(config, room_id, meta, extra \\ []) do
@@ -499,6 +511,25 @@ defmodule Jido.Messaging.Presence do
   end
 
   defp track_or_update(config, nil, meta), do: track(config, meta)
+
+  defp track_or_update(config, previous, meta) when previous.track_pid != meta.track_pid do
+    with :ok <- track(config, meta) do
+      case untrack(config, previous) do
+        :ok ->
+          :ok
+
+        {:error, reason} ->
+          case untrack(config, meta) do
+            :ok ->
+              {:error, reason}
+
+            {:error, cleanup_reason} ->
+              {:error, {:presence_move_cleanup_failed, reason, cleanup_reason}}
+          end
+      end
+    end
+  end
+
   defp track_or_update(config, _existing_session, meta), do: update(config, meta)
 
   defp track(config, meta) do
@@ -514,7 +545,7 @@ defmodule Jido.Messaging.Presence do
     case apply(config.presence, :update, [meta.track_pid, topic(config), presence_key(meta), meta]) do
       {:ok, _ref} -> :ok
       :ok -> :ok
-      {:error, :not_found} -> track(config, meta)
+      {:error, reason} when reason in [:not_found, :nopresence] -> track(config, meta)
       {:error, reason} -> {:error, reason}
     end
   end
@@ -545,6 +576,7 @@ defmodule Jido.Messaging.Presence do
 
         other ->
           Logger.debug("[Jido.Messaging.Presence] Ignoring invalid notify callback: #{inspect(other)}")
+
           :ok
       end
     rescue
@@ -558,6 +590,7 @@ defmodule Jido.Messaging.Presence do
     catch
       kind, reason ->
         Logger.debug("[Jido.Messaging.Presence] Notify callback failed: #{inspect({kind, reason})}")
+
         :ok
     end
   end

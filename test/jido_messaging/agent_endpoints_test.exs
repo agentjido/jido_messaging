@@ -52,6 +52,44 @@ defmodule Jido.Messaging.AgentEndpointsTest do
     def deliver(_delivery, _opts), do: raise("provider failure")
   end
 
+  defmodule BlockingProvider do
+    def deliver(_, opts) do
+      send(opts[:notify], {:provider_worker, self()})
+      receive do: (:release -> :ok)
+    end
+  end
+
+  test "endpoint provider stops when the delivery caller dies" do
+    endpoint = endpoint("agent", "jidoka", :available)
+
+    membership =
+      RoomMembership.new(%{room_id: "room", principal_id: "agent", endpoint_id: endpoint.id})
+
+    route =
+      AgentThreadRoute.new(%{room_id: "room", thread_id: "thread", endpoint_id: endpoint.id})
+
+    assert {:ok, target} = AgentEndpointTarget.new(endpoint, membership, route)
+
+    message =
+      Message.new(%{room_id: "room", thread_id: "thread", sender_id: "human", role: :user})
+
+    notify = self()
+
+    caller =
+      spawn(fn ->
+        AgentEndpointDelivery.deliver(BlockingProvider, target, message,
+          notify: notify,
+          timeout: 5_000
+        )
+      end)
+
+    assert_receive {:provider_worker, worker}
+    monitor = Process.monitor(worker)
+    on_exit(fn -> if Process.alive?(worker), do: Process.exit(worker, :kill) end)
+    Process.exit(caller, :kill)
+    assert_receive {:DOWN, ^monitor, :process, ^worker, _}, 500
+  end
+
   setup do
     path = Path.join(System.tmp_dir!(), "jido-messaging-agent-endpoint-#{System.unique_integer([:positive])}.sqlite3")
 
@@ -229,7 +267,10 @@ defmodule Jido.Messaging.AgentEndpointsTest do
           max_concurrency: 20,
           timeout: 15_000
         )
-        |> Enum.map(fn {:ok, {:ok, membership}} -> membership end)
+        |> Enum.map(fn {:ok, result} ->
+          assert {:ok, membership} = result, "Membership failure for #{inspect(messaging)}: #{inspect(result)}"
+          membership
+        end)
 
       assert membership_results |> Enum.map(& &1.id) |> Enum.uniq() |> length() == 1
 
@@ -246,6 +287,45 @@ defmodule Jido.Messaging.AgentEndpointsTest do
       assert {:ok, [^endpoint]} = messaging.list_agent_messaging_endpoints()
       assert {:ok, [_membership]} = messaging.list_agent_room_memberships(room.id)
       assert {:ok, [_route]} = messaging.list_agent_thread_routes(endpoint.id)
+    end
+  end
+
+  test "conflict recovery reads committed endpoint, membership, and route state" do
+    {participant, room, thread} = create_agent_thread(SQLiteMessaging, "snapshot")
+    runtime = SQLiteMessaging.__jido_messaging__(:runtime)
+    {SQLite, state} = Jido.Messaging.Runtime.get_persistence(runtime)
+    attrs = %{principal_id: participant.id, jidoka_agent_ref: %{system: "jidoka", id: "snapshot-jidoka"}}
+
+    endpoint =
+      with_read_snapshot(state.db, fn ->
+        assert {:ok, endpoint} = SQLiteMessaging.create_agent_messaging_endpoint(attrs)
+        assert {:ok, ^endpoint} = SQLiteMessaging.create_agent_messaging_endpoint(attrs)
+        endpoint
+      end)
+
+    with_read_snapshot(state.db, fn ->
+      assert {:ok, membership} = SQLiteMessaging.add_agent_endpoint_to_room(endpoint.id, room.id)
+      assert {:ok, ^membership} = SQLiteMessaging.add_agent_endpoint_to_room(endpoint.id, room.id)
+    end)
+
+    assert {:ok, _} = SQLiteMessaging.add_agent_endpoint_to_room(endpoint.id, room.id)
+
+    with_read_snapshot(state.db, fn ->
+      assert {:ok, route} = SQLiteMessaging.route_thread_to_agent_endpoint(thread.id, endpoint.id)
+      assert {:ok, updated} = SQLiteMessaging.route_thread_to_agent_endpoint(thread.id, endpoint.id)
+      assert updated.id == route.id
+      assert updated.delivery_revision == route.delivery_revision + 1
+    end)
+  end
+
+  defp with_read_snapshot(db, operation) do
+    {:ok, statement} = Sqlite3.prepare(db, "SELECT payload FROM jido_messaging_records")
+
+    try do
+      assert {:row, _} = Sqlite3.step(db, statement)
+      operation.()
+    after
+      Sqlite3.release(db, statement)
     end
   end
 

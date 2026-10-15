@@ -8,11 +8,19 @@ defmodule Jido.Messaging.RoomSupervisor do
   use DynamicSupervisor
 
   alias Jido.Chat.Room
-  alias Jido.Messaging.RoomServer
+  alias Jido.Messaging.{DesiredWorkers, RoomServer}
 
   def start_link(opts) do
     name = Keyword.fetch!(opts, :name)
-    DynamicSupervisor.start_link(__MODULE__, opts, name: name)
+
+    case DynamicSupervisor.start_link(__MODULE__, opts, name: name) do
+      {:ok, _pid} = ok ->
+        DesiredWorkers.restore(name)
+        ok
+
+      result ->
+        result
+    end
   end
 
   @impl true
@@ -38,9 +46,11 @@ defmodule Jido.Messaging.RoomSupervisor do
       [room: room, instance_module: instance_module] ++ opts
     }
 
-    case DynamicSupervisor.start_child(supervisor, child_spec) do
+    {RoomServer, child_opts} = child_spec
+    restore_spec = {RoomServer, Keyword.put(child_opts, :restore_from_persistence, true)}
+
+    case DesiredWorkers.start(instance_module, supervisor, room.id, child_spec, restore_spec) do
       {:ok, pid} ->
-        Jido.Messaging.restore_room_server_state(instance_module, room.id, pid)
         {:ok, pid}
 
       {:error, {:already_started, pid}} ->
@@ -78,7 +88,7 @@ defmodule Jido.Messaging.RoomSupervisor do
 
       pid ->
         supervisor = Module.concat(instance_module, RoomSupervisor)
-        DynamicSupervisor.terminate_child(supervisor, pid)
+        DesiredWorkers.stop(instance_module, supervisor, room_id, pid)
     end
   end
 
@@ -95,11 +105,17 @@ defmodule Jido.Messaging.RoomSupervisor do
       end
     end)
     |> Enum.reject(&is_nil/1)
+  rescue
+    ArgumentError -> []
+  catch
+    :exit, _reason -> []
   end
 
   @doc "Count running room servers"
   def count_rooms(instance_module) do
     supervisor = Module.concat(instance_module, RoomSupervisor)
     DynamicSupervisor.count_children(supervisor).active
+  catch
+    :exit, _reason -> 0
   end
 end

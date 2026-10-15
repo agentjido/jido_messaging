@@ -1,378 +1,107 @@
 defmodule Jido.Messaging.Signal do
-  @moduledoc """
-  Signal emission for messaging events using dual-emission pattern.
+  @moduledoc "One typed emission path for Messaging facts and telemetry."
+  alias Jido.Messaging.{Dispatch, Events, Message}
 
-  Emits both:
-  - `:telemetry` events for metrics and instrumentation
-  - `Jido.Signal` CloudEvents for domain events with causality tracking
-
-  ## Telemetry Events
-
-  - `[:jido_messaging, :message, :received]` - when a message is ingested
-  - `[:jido_messaging, :message, :sent]` - when a message is delivered successfully
-  - `[:jido_messaging, :message, :failed]` - when delivery fails
-
-  ## Jido.Signal CloudEvents
-
-  - `jido.messaging.message.received` - message ingested
-  - `jido.messaging.message.sent` - message delivered
-  - `jido.messaging.message.failed` - delivery failed
-  - `jido.messaging.agent.triggered` - agent trigger detected
-  - `jido.messaging.agent.started` - agent execution started
-  - `jido.messaging.agent.completed` - agent execution completed
-  - `jido.messaging.agent.failed` - agent execution failed
-  - `jido.messaging.instance.*` - instance lifecycle events
-
-  ## Usage
-
-  To attach a telemetry handler:
-
-      :telemetry.attach(
-        "my-handler",
-        [:jido_messaging, :message, :received],
-        &MyHandler.handle_event/4,
-        nil
-      )
-
-  To subscribe to Jido.Signal events:
-
-      Jido.Signal.Bus.subscribe(MyApp.Messaging.SignalBus, "jido.messaging.message.*")
-
-  ## Standard Metadata Keys
-
-  All signals include a consistent set of metadata keys for correlation and tracing.
-  See `@metadata_keys` for the standard keys included in all events.
-  """
-
-  require Logger
-
-  @metadata_keys [
-    :instance_module,
-    :room_id,
-    :bridge_id,
-    :timestamp,
-    :correlation_id
-  ]
-
-  @doc """
-  Returns the list of standard metadata keys included in all signals.
-  """
+  @doc "Returns the standard private telemetry keys."
   @spec metadata_keys() :: [atom()]
-  def metadata_keys, do: @metadata_keys
+  def metadata_keys, do: [:instance_module, :room_id, :bridge_id, :timestamp]
 
-  @doc """
-  Emits a `:received` signal when a message has been ingested.
-
-  ## Metadata
-  - `:message` - the ingested `Jido.Messaging.Message` struct
-  - `:room_id` - the room ID where the message was received
-  - `:participant_id` - the sender's participant ID
-  - `:channel` - the channel module that received the message
-  - `:bridge_id` - the bridge ID of the channel
-  - `:instance_module` - the messaging module
-  - `:timestamp` - when the event occurred
-  - `:correlation_id` - message ID or generated ID for tracing
-  """
-  @spec emit_received(Jido.Messaging.Message.t(), map()) :: :ok
+  @doc "Emits a fact after an inbound message is committed."
+  @spec emit_received(Message.t(), map()) :: :ok
   def emit_received(message, context) do
-    timestamp = DateTime.utc_now()
-    correlation_id = message.id || generate_correlation_id()
-
-    metadata = %{
-      message: message,
-      room_id: message.room_id,
-      participant_id: message.sender_id,
-      channel: context[:channel],
-      bridge_id: context[:bridge_id],
-      instance_module: context[:instance_module],
-      timestamp: timestamp,
-      correlation_id: correlation_id
-    }
-
-    emit_telemetry([:jido_messaging, :message, :received], %{timestamp: timestamp}, metadata)
-
-    emit_jido_signal(
-      "jido.messaging.message.received",
-      message_to_data(message, metadata),
+    emit_built(
       context[:instance_module],
-      message.room_id,
-      correlation_id: correlation_id
+      Events.message_received(context[:instance_module], message, context_options(context)),
+      :message_received,
+      context |> Map.put(:message, message) |> Map.put_new(:participant_id, message.sender_id)
     )
   end
 
-  @doc """
-  Emits a `:sent` signal when a message has been delivered successfully.
-
-  ## Metadata
-  - `:message` - the sent `Jido.Messaging.Message` struct
-  - `:room_id` - the room ID where the message was sent
-  - `:channel` - the channel module used for delivery
-  - `:external_room_id` - the external room identifier
-  - `:instance_module` - the messaging module
-  - `:bridge_id` - the bridge ID
-  - `:timestamp` - when the event occurred
-  - `:correlation_id` - message ID or generated ID for tracing
-  """
-  @spec emit_sent(Jido.Messaging.Message.t(), map()) :: :ok
+  @doc "Emits a fact after outbound delivery is committed."
+  @spec emit_sent(Message.t(), map()) :: :ok
   def emit_sent(message, context) do
-    timestamp = DateTime.utc_now()
-    correlation_id = message.id || generate_correlation_id()
-
-    metadata = %{
-      message: message,
-      room_id: message.room_id,
-      channel: context[:channel],
-      external_room_id: context[:external_room_id],
-      bridge_id: context[:bridge_id],
-      instance_module: context[:instance_module],
-      timestamp: timestamp,
-      correlation_id: correlation_id
-    }
-
-    emit_telemetry([:jido_messaging, :message, :sent], %{timestamp: timestamp}, metadata)
-
-    emit_jido_signal(
-      "jido.messaging.message.sent",
-      message_to_data(message, metadata),
+    emit_built(
       context[:instance_module],
-      message.room_id,
-      correlation_id: correlation_id
+      Events.message_sent(context[:instance_module], message, context_options(context)),
+      :message_sent,
+      context |> Map.put(:message, message) |> Map.put_new(:participant_id, message.sender_id)
     )
   end
 
-  @doc """
-  Emits a `:failed` signal when message delivery has failed.
-
-  ## Metadata
-  - `:room_id` - the room ID where delivery was attempted
-  - `:reason` - the failure reason
-  - `:channel` - the channel module used for delivery attempt
-  - `:external_room_id` - the external room identifier
-  - `:instance_module` - the messaging module
-  - `:bridge_id` - the bridge ID
-  - `:timestamp` - when the event occurred
-  - `:correlation_id` - message ID or generated ID for tracing
-  """
+  @doc "Emits a typed delivery failure without a private error value."
   @spec emit_failed(String.t(), term(), map()) :: :ok
-  def emit_failed(room_id, reason, context) do
-    timestamp = DateTime.utc_now()
-    correlation_id = context[:message_id] || generate_correlation_id()
-
-    metadata = %{
-      room_id: room_id,
-      reason: reason,
-      channel: context[:channel],
-      external_room_id: context[:external_room_id],
-      bridge_id: context[:bridge_id],
-      instance_module: context[:instance_module],
-      timestamp: timestamp,
-      correlation_id: correlation_id
-    }
-
-    emit_telemetry([:jido_messaging, :message, :failed], %{timestamp: timestamp}, metadata)
-
-    emit_jido_signal(
-      "jido.messaging.message.failed",
-      %{
-        room_id: room_id,
-        reason: inspect(reason),
-        channel: channel_name(context[:channel]),
-        external_room_id: context[:external_room_id],
-        bridge_id: context[:bridge_id]
-      },
+  def emit_failed(room, reason, context) do
+    emit_built(
       context[:instance_module],
-      room_id,
-      correlation_id: correlation_id
+      Events.message_failed(context[:instance_module], room, reason, context_options(context)),
+      :message_failed,
+      Map.put(context, :reason, reason)
     )
   end
 
-  @doc """
-  Emits an agent lifecycle signal.
-
-  ## Events
-  - `:triggered` - agent trigger condition matched
-  - `:started` - agent execution began
-  - `:completed` - agent execution finished successfully
-  - `:failed` - agent execution failed
-  """
+  @doc "Emits one registered agent lifecycle fact."
   @spec emit_agent(atom(), module(), String.t(), String.t(), map()) :: :ok
-  def emit_agent(event_type, instance_module, room_id, agent_id, data \\ %{}) do
-    timestamp = DateTime.utc_now()
-    correlation_id = data[:message_id] || generate_correlation_id()
+  def emit_agent(event, instance, room, agent, data \\ %{}) do
+    data = data |> Map.put(:agent_id, agent) |> Map.put(:room_id, room)
+    data = if event == :failed, do: Map.put(data, :code, "agent_failure"), else: data
 
-    metadata =
-      Map.merge(data, %{
-        room_id: room_id,
-        agent_id: agent_id,
-        instance_module: instance_module,
-        timestamp: timestamp,
-        correlation_id: correlation_id
-      })
-
-    telemetry_event = [:jido_messaging, :agent, event_type]
-    emit_telemetry(telemetry_event, %{timestamp: timestamp}, metadata)
-
-    signal_type = "jido.messaging.agent.#{event_type}"
-
-    emit_jido_signal(
-      signal_type,
-      Map.merge(data, %{agent_id: agent_id, room_id: room_id}),
-      instance_module,
-      room_id,
-      correlation_id: correlation_id,
-      causation_id: data[:causation_id]
+    emit_built(
+      instance,
+      Events.new("jido.messaging.agent.#{event}", instance, room, data, context_options(data)),
+      "jido.messaging.agent.#{event}",
+      data
     )
   end
 
-  @doc """
-  Emits an instance lifecycle signal.
-
-  ## Events
-  - `:started` - instance started
-  - `:connecting` - instance connecting to external service
-  - `:connected` - instance connected
-  - `:disconnected` - instance disconnected
-  - `:stopped` - instance stopped
-  - `:error` - instance error
-  """
+  @doc "Emits one registered instance lifecycle fact."
   @spec emit_instance(atom(), module(), String.t(), map()) :: :ok
-  def emit_instance(event_type, instance_module, instance_id, data \\ %{}) do
-    timestamp = DateTime.utc_now()
-    correlation_id = data[:correlation_id] || generate_correlation_id()
+  def emit_instance(event, instance, id, data \\ %{}) do
+    data = Map.put(data, :instance_id, id)
+    data = if event == :error, do: Map.put(data, :code, "instance_failure"), else: data
 
-    metadata =
-      Map.merge(data, %{
-        instance_id: instance_id,
-        instance_module: instance_module,
-        timestamp: timestamp,
-        correlation_id: correlation_id
-      })
-
-    telemetry_event = [:jido_messaging, :instance, event_type]
-    emit_telemetry(telemetry_event, %{timestamp: timestamp}, metadata)
-
-    signal_type = "jido.messaging.instance.#{event_type}"
-
-    emit_jido_signal(
-      signal_type,
-      Map.merge(data, %{instance_id: instance_id}),
-      instance_module,
-      nil,
-      correlation_id: correlation_id
+    emit_built(
+      instance,
+      Events.new("jido.messaging.instance.#{event}", instance, nil, data),
+      "jido.messaging.instance.#{event}",
+      data
     )
   end
 
-  @doc """
-  Generic emit function for room-level events.
-
-  Used by RoomServer to emit signals for various events like:
-  - `:presence_changed` - participant presence updated
-  - `:typing` - typing indicator changed
-  - `:reaction_added` - reaction added to message
-  - `:reaction_removed` - reaction removed from message
-  - `:message_delivered` - message marked as delivered
-  - `:message_read` - message marked as read
-  - `:thread_created` - thread created from message
-  - `:thread_reply_added` - reply added to thread
-  """
+  @doc "Emits one registered room fact from private runtime state."
   @spec emit(atom(), module(), String.t(), map()) :: :ok
-  def emit(event_type, instance_module, room_id, data) do
-    timestamp = DateTime.utc_now()
-    correlation_id = data[:message_id] || data[:participant_id] || generate_correlation_id()
-
-    event_name = event_name_for(event_type)
-
-    metadata =
-      Map.merge(data, %{
-        room_id: room_id,
-        instance_module: instance_module,
-        timestamp: timestamp,
-        correlation_id: correlation_id
-      })
-
-    emit_telemetry(event_name, %{timestamp: timestamp}, metadata)
-
-    signal_type = signal_type_for(event_type)
-
-    emit_jido_signal(
-      signal_type,
-      Map.merge(data, %{room_id: room_id}),
-      instance_module,
-      room_id,
-      correlation_id: correlation_id
-    )
+  def emit(event, instance, room, data) do
+    emit_built(instance, Events.room_event(instance, event, room, data, context_options(data)), event, data)
   end
 
-  defp event_name_for(:message_added), do: [:jido_messaging, :room, :message_added]
-  defp event_name_for(:participant_joined), do: [:jido_messaging, :room, :participant_joined]
-  defp event_name_for(:participant_left), do: [:jido_messaging, :room, :participant_left]
-  defp event_name_for(:presence_changed), do: [:jido_messaging, :participant, :presence_changed]
-  defp event_name_for(:typing), do: [:jido_messaging, :participant, :typing]
-  defp event_name_for(:reaction_added), do: [:jido_messaging, :message, :reaction_added]
-  defp event_name_for(:reaction_removed), do: [:jido_messaging, :message, :reaction_removed]
-  defp event_name_for(:message_delivered), do: [:jido_messaging, :message, :delivered]
-  defp event_name_for(:message_read), do: [:jido_messaging, :message, :read]
-  defp event_name_for(:thread_created), do: [:jido_messaging, :thread, :created]
-  defp event_name_for(:thread_reply_added), do: [:jido_messaging, :thread, :reply_added]
-  defp event_name_for(event_type), do: [:jido_messaging, :room, event_type]
-
-  defp signal_type_for(:message_added), do: "jido.messaging.room.message_added"
-  defp signal_type_for(:participant_joined), do: "jido.messaging.room.participant_joined"
-  defp signal_type_for(:participant_left), do: "jido.messaging.room.participant_left"
-  defp signal_type_for(:presence_changed), do: "jido.messaging.participant.presence_changed"
-  defp signal_type_for(:typing), do: "jido.messaging.participant.typing"
-  defp signal_type_for(:reaction_added), do: "jido.messaging.message.reaction_added"
-  defp signal_type_for(:reaction_removed), do: "jido.messaging.message.reaction_removed"
-  defp signal_type_for(:message_delivered), do: "jido.messaging.message.delivered"
-  defp signal_type_for(:message_read), do: "jido.messaging.message.read"
-  defp signal_type_for(:thread_created), do: "jido.messaging.thread.created"
-  defp signal_type_for(:thread_reply_added), do: "jido.messaging.thread.reply_added"
-  defp signal_type_for(event_type), do: "jido.messaging.room.#{event_type}"
-
-  defp emit_telemetry(event_name, measurements, metadata) do
-    :telemetry.execute(event_name, measurements, metadata)
-  end
-
-  defp emit_jido_signal(type, data, instance_module, subject, opts) do
-    case Jido.Messaging.Events.new(type, instance_module, subject, data, opts) do
-      {:ok, signal} ->
-        corr_id = get_in(signal.extensions, ["correlationid", :id])
-        Logger.debug("[signal] type=#{type} correlation_id=#{corr_id || "none"}")
-
-        case Jido.Messaging.Dispatch.emit(instance_module, signal) do
-          {:ok, _signal} ->
-            :ok
-
-          {:error, reason} ->
-            Logger.debug("[Jido.Messaging.Signal] Failed to publish signal #{type}: #{inspect(reason)}")
-        end
-
-      {:error, reason} ->
-        Logger.warning("[Jido.Messaging.Signal] Failed to create signal #{type}: #{inspect(reason)}")
-    end
+  defp emit_built(instance, {:ok, signal}, event, data) do
+    _ =
+      Dispatch.emit(instance, signal,
+        telemetry_event: Events.telemetry_event_for(event),
+        telemetry_metadata:
+          Map.merge(data, %{
+            instance_module: instance,
+            room_id: signal.data["room_id"],
+            bridge_id: data[:bridge_id],
+            signal_id: signal.id,
+            causation_id: Jido.Signal.Context.get(signal, "causationid"),
+            code: signal.data["code"]
+          }),
+        telemetry_measurements: %{timestamp: DateTime.utc_now()}
+      )
 
     :ok
   end
 
-  defp message_to_data(message, metadata) do
-    %{
-      message_id: message.id,
-      room_id: message.room_id,
-      thread_id: Map.get(message, :thread_id),
-      sender_id: message.sender_id,
-      role: message.role,
-      status: message.status,
-      channel: channel_name(metadata[:channel]),
-      bridge_id: metadata[:bridge_id],
-      external_room_id: metadata[:external_room_id]
-    }
-  end
+  defp emit_built(_instance, {:error, _}, _event, _data), do: :ok
 
-  defp channel_name(nil), do: nil
-  defp channel_name(module) when is_atom(module), do: to_string(module)
-  defp channel_name(other), do: inspect(other)
+  defp context_options(context) do
+    parent = context[:parent_signal] || get_in(context, [:context, :parent_signal])
 
-  defp generate_correlation_id do
-    "corr_" <> Base.encode16(:crypto.strong_rand_bytes(8), case: :lower)
+    [
+      bridge_id: context[:bridge_id],
+      external_room_id: context[:external_room_id],
+      parent_signal: parent,
+      message_id: context[:message_id]
+    ]
   end
 end

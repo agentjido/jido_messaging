@@ -249,7 +249,7 @@ defmodule Jido.Messaging.Sender do
       attempt: attempt
     })
 
-    case state.channel.send_message(job.external_room_id, job.payload, []) do
+    case Jido.Messaging.ProviderCall.legacy_send(state.channel, job.external_room_id, job.payload, []) do
       {:ok, result} ->
         external_message_id = extract_external_message_id(result)
 

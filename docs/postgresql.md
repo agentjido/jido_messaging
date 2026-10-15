@@ -28,6 +28,28 @@ and participant binding constraints also start with `instance_id`.
 The package does not use dynamic table names. This prevents unsafe identifier
 construction and keeps migration ownership clear.
 
+## Feature support
+
+| Storage feature | ETS | SQLite | PostgreSQL |
+| --- | --- | --- | --- |
+| Rooms, participants, messages, threads, and provider bindings | Yes | Yes | Yes |
+| Bridge configuration, subscriptions, routing, and onboarding | Yes | Yes | Yes |
+| Principals, memberships, grants, and invocation policies | Yes | Yes | Yes |
+| External identity lifecycle and revocation | Yes | Yes | Unsupported |
+| Credentials, rotation, and assertion replay | Yes | Yes | Unsupported |
+| Agent endpoints, room assignment, and thread routes | Yes | Yes | Unsupported |
+| Agent directory projections | Yes | Yes | Unsupported |
+| Delegation and continuity records | Yes | Yes | Unsupported |
+| Trust evidence and activity projections | Yes | Yes | Unsupported |
+
+PostgreSQL supports authorized messaging and typed commands that use the
+supported storage groups. Membership alone does not grant permission. A grant
+is required. Agent invocation also requires a current invocation policy.
+
+Optional feature operations return `{:error, :unsupported}` when their storage
+callbacks are absent. Check the selected backend before enabling those features.
+The current public behaviour keeps these callbacks optional for custom adapters.
+
 ## Install migrations
 
 Run migrations before the application starts:
@@ -52,6 +74,14 @@ in the package migration table. Runtime initialization fails with
 `{:migration_required, database_version, pending_versions}` when migrations are
 not current. Set `migrate: true` only for a demo or a host that explicitly lets
 the runtime own schema changes.
+
+Migration 2 converts stored message order keys to UTC with six decimal places.
+This gives the same order for equal instants with different offsets or precision.
+The migration keeps record payloads and message IDs. Existing message ID cursors
+remain valid.
+
+Migration 3 adds membership and invocation-policy unique indexes and an
+authorization lookup index. It keeps stored record payloads unchanged.
 
 This release does not move SQLite data into PostgreSQL. Plan an application
 export and import when you change adapters. Keep the same `instance_id` if the
@@ -135,6 +165,16 @@ Room and participant get-or-create operations use transactions and partial
 unique indexes. The database selects one winner when writers on different
 nodes claim the same external identity. A losing writer reads the committed
 winner. It does not leave its candidate record behind.
+
+Principal and authorization writes use a database transaction lock per instance.
+The same lock protects room and participant cleanup. It applies across pools
+and nodes. Exact revisions and terminal revocation rules match ETS and SQLite.
+Concurrent changed writes with the same expected revision have one winner.
+
+New participants acquire a principal projection in the same transaction. A
+principal lookup for an old participant creates the missing projection without
+changing the participant payload. An existing principal keeps its controller,
+verification state, and other lifecycle fields when the participant is saved.
 
 The adapter reports these capabilities:
 

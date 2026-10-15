@@ -28,6 +28,8 @@ defmodule Jido.Messaging.DeadLetter.ReplayWorker do
       [{pid, _value}] -> pid
       [] -> nil
     end
+  rescue
+    ArgumentError -> nil
   end
 
   @doc """

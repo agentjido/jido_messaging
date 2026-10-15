@@ -1,7 +1,7 @@
 defmodule Jido.Messaging.BridgeStatusTest do
   use ExUnit.Case, async: false
 
-  alias Jido.Chat.{Incoming, WebhookRequest}
+  alias Jido.Chat.{AdapterTestKit.Factories, WebhookRequest}
   alias Jido.Messaging.{InboundRouter, OutboundGateway}
 
   defmodule StatusAdapter do
@@ -11,19 +11,27 @@ defmodule Jido.Messaging.BridgeStatusTest do
     def channel_type, do: :telegram
 
     @impl true
-    def transform_incoming(%{"kind" => "message"} = payload) do
-      {:ok,
-       Incoming.new(%{
-         external_room_id: payload["room"],
-         external_user_id: payload["user"],
-         external_message_id: payload["id"],
-         text: payload["text"],
-         chat_type: :group,
-         raw: payload
-       })}
+    def signal_protocol, do: 1
+    @impl true
+    def configure_binding(opts),
+      do: {:ok, Keyword.put(opts, :reject_signature, opts[:settings][:reject_signature] || false)}
+
+    @impl true
+    def normalize_event(binding, %{"kind" => "message"} = payload) do
+      fact =
+        Factories.message_received(binding, %{
+          "delivery_id" => payload["id"],
+          "item_id" => payload["id"],
+          "message_id" => payload["id"],
+          "room_id" => payload["room"],
+          "sender" => %{"id" => payload["user"]},
+          "text" => payload["text"]
+        })
+
+      Jido.Chat.Delivery.new(binding, payload["id"], [fact])
     end
 
-    def transform_incoming(_payload), do: {:error, :unsupported_payload}
+    def normalize_event(_binding, _payload), do: Jido.Chat.Signal.Policy.error(:invalid_delivery)
 
     @impl true
     def send_message(_room_id, _text, _opts), do: {:ok, %{message_id: "ok"}}
@@ -47,7 +55,7 @@ defmodule Jido.Messaging.BridgeStatusTest do
   end
 
   test "updates ingress and outbound timestamps" do
-    assert {:ok, {:message, _message, _context, _event}} =
+    assert {:ok, [_fact]} =
              InboundRouter.route_payload(
                TestMessaging,
                "bridge_status",
@@ -67,12 +75,23 @@ defmodule Jido.Messaging.BridgeStatusTest do
   end
 
   test "tracks last error" do
+    {:ok, config} = TestMessaging.get_bridge_config("bridge_status")
+
+    {:ok, _} =
+      TestMessaging.put_bridge_config(%{
+        id: config.id,
+        adapter_module: StatusAdapter,
+        revision: config.revision,
+        opts: %{reject_signature: true}
+      })
+
+    :ok = Jido.Messaging.BridgeSupervisor.reconcile(TestMessaging)
+
     assert {:error, :invalid_signature} =
              InboundRouter.route_webhook(
                TestMessaging,
                "bridge_status",
-               %{"kind" => "message", "room" => "chat_1", "user" => "u1", "id" => "m1", "text" => "x"},
-               reject_signature: true
+               %{"kind" => "message", "room" => "chat_1", "user" => "u1", "id" => "m1", "text" => "x"}
              )
 
     {:ok, status} = TestMessaging.bridge_status("bridge_status")

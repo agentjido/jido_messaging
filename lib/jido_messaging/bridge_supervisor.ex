@@ -7,7 +7,7 @@ defmodule Jido.Messaging.BridgeSupervisor do
 
   use DynamicSupervisor
 
-  alias Jido.Messaging.{BridgeServer, ConfigStore}
+  alias Jido.Messaging.{BridgeServer, ConfigStore, DesiredWorkers}
 
   @spec start_link(keyword()) :: Supervisor.on_start()
   @doc """
@@ -19,8 +19,9 @@ defmodule Jido.Messaging.BridgeSupervisor do
 
     case DynamicSupervisor.start_link(__MODULE__, opts, name: name) do
       {:ok, supervisor} ->
-        case reconcile(instance_module) do
+        case initialize_workers(instance_module, name) do
           :ok ->
+            DesiredWorkers.restore(name)
             {:ok, supervisor}
 
           {:error, _reason} = error ->
@@ -43,9 +44,22 @@ defmodule Jido.Messaging.BridgeSupervisor do
   Reconciles running bridge workers against enabled bridge configs.
   """
   def reconcile(instance_module) when is_atom(instance_module) do
-    desired =
-      ConfigStore.list_bridge_configs(instance_module, enabled: true)
-      |> Map.new(fn config -> {config.id, config} end)
+    case :global.trans({{__MODULE__, instance_module}, self()}, fn -> do_reconcile(instance_module) end) do
+      :aborted -> {:error, :reconcile_lock_failed}
+      {:aborted, _} -> {:error, :reconcile_lock_failed}
+      result -> result
+    end
+  end
+
+  defp do_reconcile(instance_module) do
+    case ConfigStore.list_bridge_configs(instance_module, enabled: true) do
+      configs when is_list(configs) -> reconcile_configs(instance_module, configs)
+      {:error, _} = error -> error
+    end
+  end
+
+  defp reconcile_configs(instance_module, configs) do
+    desired = Map.new(configs, fn config -> {config.id, config} end)
 
     running = Map.new(list_running(instance_module), fn {bridge_id, pid} -> {bridge_id, pid} end)
 
@@ -67,7 +81,7 @@ defmodule Jido.Messaging.BridgeSupervisor do
       type: :worker
     }
 
-    DynamicSupervisor.start_child(supervisor_name(instance_module), child_spec)
+    DesiredWorkers.start(instance_module, supervisor_name(instance_module), config.id, child_spec)
   end
 
   @spec stop_bridge(module(), String.t()) :: :ok | {:error, :not_found | term()}
@@ -75,13 +89,9 @@ defmodule Jido.Messaging.BridgeSupervisor do
   Stops the running bridge worker for `bridge_id`.
   """
   def stop_bridge(instance_module, bridge_id) when is_binary(bridge_id) do
-    case BridgeServer.whereis(instance_module, bridge_id) do
-      nil ->
-        {:error, :not_found}
-
-      pid ->
-        DynamicSupervisor.terminate_child(supervisor_name(instance_module), pid)
-    end
+    DesiredWorkers.stop(instance_module, supervisor_name(instance_module), bridge_id, fn ->
+      BridgeServer.whereis(instance_module, bridge_id)
+    end)
   end
 
   @spec list_bridges(module()) :: [Jido.Messaging.BridgeStatus.t()]
@@ -101,6 +111,8 @@ defmodule Jido.Messaging.BridgeSupervisor do
     registry = Module.concat(instance_module, Registry.Bridges)
 
     Registry.select(registry, [{{{:bridge, :"$1"}, :"$2", :"$3"}, [], [{{:"$1", :"$2"}}]}])
+  rescue
+    ArgumentError -> []
   end
 
   defp stop_removed_bridges(instance_module, desired, running) do
@@ -140,6 +152,16 @@ defmodule Jido.Messaging.BridgeSupervisor do
              {:ok, _pid} <- start_bridge(instance_module, config) do
           :ok
         end
+      end
+    end
+  end
+
+  defp initialize_workers(instance, supervisor) do
+    if DesiredWorkers.initialized?(instance, supervisor) do
+      :ok
+    else
+      with :ok <- reconcile(instance) do
+        DesiredWorkers.mark_initialized(instance, supervisor)
       end
     end
   end

@@ -1,21 +1,39 @@
 defmodule Jido.Messaging.ChatActionsTest do
   use ExUnit.Case, async: false
-
-  alias Jido.Chat.{Message, MessagePage, MessagingTarget, Response, Thread, ThreadPage}
+  alias Jido.Chat.MessagingTarget
   alias Jido.Messaging.ChatActions
   alias Jido.Messaging.ChatActions.{Policy, Scope}
-  alias Jido.Messaging.ChatActions.Reader.{FetchChannelMessages, FetchMessage, FetchThreadMessages}
+
+  alias Jido.Messaging.ChatActions.Reader.{
+    FetchChannelMessages,
+    FetchMessage,
+    FetchThreadMessages
+  }
+
   alias Jido.Messaging.ChatActions.Messenger.{PostMessage, SendDirectMessage}
   alias Jido.Messaging.ChatActions.Moderator.{DeleteMessage, EnsureSubscription}
 
   defmodule FullAdapter do
     @behaviour Jido.Chat.Adapter
+    @impl true
+    def channel_type do
+      :full
+    end
 
     @impl true
-    def channel_type, do: :full
+    def signal_protocol do
+      1
+    end
 
     @impl true
-    def transform_incoming(_raw), do: {:error, :not_implemented}
+    def configure_binding(opts) do
+      {:ok, opts}
+    end
+
+    @impl true
+    def normalize_event(_binding, _payload) do
+      Jido.Chat.Signal.Policy.error(:invalid_delivery)
+    end
 
     @impl true
     def capabilities do
@@ -86,11 +104,11 @@ defmodule Jido.Messaging.ChatActionsTest do
 
       {:ok,
        %{
-         id: "full:#{room_id}:#{opts[:external_thread_id]}",
+         id: "full:#{room_id}:#{opts[:thread_id]}",
          adapter_name: :full,
          adapter: __MODULE__,
          external_room_id: room_id,
-         external_thread_id: opts[:external_thread_id]
+         external_thread_id: opts[:thread_id]
        }}
     end
 
@@ -190,15 +208,30 @@ defmodule Jido.Messaging.ChatActionsTest do
 
   defmodule ReadOnlyAdapter do
     @behaviour Jido.Chat.Adapter
+    @impl true
+    def channel_type do
+      :read_only
+    end
 
     @impl true
-    def channel_type, do: :read_only
+    def signal_protocol do
+      1
+    end
 
     @impl true
-    def transform_incoming(_raw), do: {:error, :not_implemented}
+    def configure_binding(opts) do
+      {:ok, opts}
+    end
 
     @impl true
-    def capabilities, do: %{send_message: :native, fetch_message: :native}
+    def normalize_event(_binding, _payload) do
+      Jido.Chat.Signal.Policy.error(:invalid_delivery)
+    end
+
+    @impl true
+    def capabilities do
+      %{send_message: :native, fetch_message: :native}
+    end
 
     @impl true
     def send_message(room_id, text, opts) do
@@ -226,6 +259,20 @@ defmodule Jido.Messaging.ChatActionsTest do
   setup do
     Application.put_env(:jido_messaging, :chat_actions_test_pid, self())
     start_supervised!(TestMessaging)
+    {:ok, _} = TestMessaging.create_participant(%{id: "actor-1", type: :human})
+
+    for bridge <- ["full-main", "read-main"] do
+      scope = Jido.Messaging.AuthorizationScope.new(%{kind: :bridge, bridge_id: bridge})
+
+      {:ok, _} =
+        TestMessaging.create_principal_grant(%{
+          principal_id: "actor-1",
+          issuer_principal_id: "host",
+          actions: Jido.Messaging.AuthorizationAction.all(),
+          scope: scope,
+          constraints: %{requires_membership: false}
+        })
+    end
 
     {:ok, _} =
       TestMessaging.put_bridge_config(%{
@@ -248,21 +295,19 @@ defmodule Jido.Messaging.ChatActionsTest do
     :ok
   end
 
-  describe "capability-first action sets" do
+  describe("capability-first action sets") do
     test "builds presets and custom lists from two adapters" do
       full = target("full-main", :full, "room-1")
       read_only = target("read-main", :read_only, "room-1")
-
       assert {:ok, full_reader} = ChatActions.actions_for(TestMessaging, full, :reader)
       assert FetchMessage in full_reader
       assert FetchChannelMessages in full_reader
-
       assert {:ok, full_actions} = ChatActions.actions_for(TestMessaging, full, :all)
       assert length(full_actions) == length(ChatActions.preset(:all))
 
-      for action <- ChatActions.preset(:all), prohibited <- [:credentials, :adapter_module, :client] do
+      for action <- ChatActions.preset(:all),
+          prohibited <- [:credentials, :adapter_module, :client] do
         refute Keyword.has_key?(action.schema().fields, prohibited)
-
         target_schema = Keyword.fetch!(action.schema().fields, :target)
         refute Keyword.has_key?(target_schema.fields, prohibited)
       end
@@ -271,7 +316,9 @@ defmodule Jido.Messaging.ChatActionsTest do
       assert FetchMessage in read_only_reader
       refute FetchChannelMessages in read_only_reader
 
-      assert {:ok, read_only_messenger} = ChatActions.actions_for(TestMessaging, read_only, :messenger)
+      assert {:ok, read_only_messenger} =
+               ChatActions.actions_for(TestMessaging, read_only, :messenger)
+
       assert PostMessage in read_only_messenger
 
       assert {:ok, [FetchMessage]} =
@@ -281,7 +328,11 @@ defmodule Jido.Messaging.ChatActionsTest do
     test "rejects unsupported work before a provider call" do
       context = action_context(channel_scope("read-main", :read_only, "room-1"))
 
-      assert {:ok, %{status: :error, code: :unsupported_operation}} =
+      assert {:ok,
+              %Jido.Signal{
+                type: "jido.messaging.operation.failed",
+                data: %{"code" => "unsupported_operation"}
+              }} =
                Jido.Exec.run(
                  DeleteMessage,
                  %{target: target_map("read-main", :read_only, "room-1"), message_id: "m-1"},
@@ -292,11 +343,15 @@ defmodule Jido.Messaging.ChatActionsTest do
     end
   end
 
-  describe "reader operations and scope" do
+  describe("reader operations and scope") do
     test "returns canonical normalized models from adapter reads" do
       context = action_context(channel_scope("full-main", :full, "room-1"))
 
-      assert {:ok, %{status: :ok, data: %Message{id: "m-1"}}} =
+      assert {:ok,
+              %Jido.Signal{
+                type: "jido.messaging.operation.completed",
+                data: %{"result" => %{"id" => "m-1"}}
+              }} =
                Jido.Exec.run(
                  FetchMessage,
                  %{target: target_map("full-main", :full, "room-1"), message_id: "m-1"},
@@ -307,21 +362,37 @@ defmodule Jido.Messaging.ChatActionsTest do
       assert opts[:credentials] == %{}
       refute Keyword.has_key?(FetchMessage.schema().fields, :credentials)
 
-      assert {:ok, %{status: :ok, data: %MessagePage{}}} =
-               Jido.Exec.run(FetchChannelMessages, %{target: target_map("full-main", :full, "room-1")}, context)
+      assert {:ok,
+              %Jido.Signal{
+                type: "jido.messaging.operation.completed",
+                data: %{"result" => %{"messages" => _messages}}
+              }} =
+               Jido.Exec.run(
+                 FetchChannelMessages,
+                 %{target: target_map("full-main", :full, "room-1")},
+                 context
+               )
     end
 
     test "blocks cross-channel and spoofed adapter reads before provider access" do
       context = action_context(channel_scope("full-main", :full, "room-1"))
 
-      assert {:ok, %{status: :denied, code: :out_of_scope}} =
+      assert {:ok,
+              %Jido.Signal{
+                type: "jido.messaging.operation.failed",
+                data: %{"code" => "out_of_scope"}
+              }} =
                Jido.Exec.run(
                  FetchMessage,
                  %{target: target_map("full-main", :full, "room-2"), message_id: "m-1"},
                  context
                )
 
-      assert {:ok, %{status: :error, code: :target_mismatch}} =
+      assert {:ok,
+              %Jido.Signal{
+                type: "jido.messaging.operation.failed",
+                data: %{"code" => "target_mismatch"}
+              }} =
                Jido.Exec.run(
                  FetchMessage,
                  %{target: target_map("full-main", :read_only, "room-1"), message_id: "m-1"},
@@ -335,15 +406,27 @@ defmodule Jido.Messaging.ChatActionsTest do
       scope = Scope.strict_thread("full-main", :full, "room-1", "thread-1", actor_id: "actor-1")
       context = action_context(scope)
 
-      assert {:ok, %{status: :denied, code: :out_of_scope}} =
+      assert {:ok,
+              %Jido.Signal{
+                type: "jido.messaging.operation.failed",
+                data: %{"code" => "out_of_scope"}
+              }} =
                Jido.Exec.run(
                  FetchThreadMessages,
                  %{target: target_map("full-main", :full, "room-1", "thread-2")},
                  context
                )
 
-      assert {:ok, %{status: :denied, code: :out_of_scope}} =
-               Jido.Exec.run(FetchChannelMessages, %{target: target_map("full-main", :full, "room-1")}, context)
+      assert {:ok,
+              %Jido.Signal{
+                type: "jido.messaging.operation.failed",
+                data: %{"code" => "out_of_scope"}
+              }} =
+               Jido.Exec.run(
+                 FetchChannelMessages,
+                 %{target: target_map("full-main", :full, "room-1")},
+                 context
+               )
 
       refute_receive {:provider_call, FullAdapter, _, _}
     end
@@ -354,7 +437,11 @@ defmodule Jido.Messaging.ChatActionsTest do
       context = action_context(scope, policy)
       target = target_map("full-main", :full, "room-1", "thread-1")
 
-      assert {:ok, %{status: :denied, code: :out_of_scope}} =
+      assert {:ok,
+              %Jido.Signal{
+                type: "jido.messaging.operation.failed",
+                data: %{"code" => "out_of_scope"}
+              }} =
                Jido.Exec.run(
                  Jido.Messaging.ChatActions.Messenger.PostChannelMessage,
                  %{target: target, text: "escape"},
@@ -383,10 +470,14 @@ defmodule Jido.Messaging.ChatActionsTest do
       target = target_map("full-main", :full, "room-1", "thread-1")
 
       for {action, provider_operation, params} <- operations do
-        assert {:ok, %{status: :denied, code: :out_of_scope}} =
-                 Jido.Exec.run(action, Map.put(params, :target, target), context)
+        assert {:ok,
+                %Jido.Signal{
+                  type: "jido.messaging.operation.failed",
+                  data: %{"code" => "out_of_scope"}
+                }} = Jido.Exec.run(action, Map.put(params, :target, target), context)
 
         assert_receive {:provider_call, FullAdapter, :fetch_message, ["room-1", "sibling-message", opts]}
+
         refute Keyword.has_key?(opts, :thread_id)
         refute Keyword.has_key?(opts, :external_thread_id)
 
@@ -395,7 +486,11 @@ defmodule Jido.Messaging.ChatActionsTest do
         end
       end
 
-      assert {:ok, %{status: :ok, data: %Message{id: "thread-message"}}} =
+      assert {:ok,
+              %Jido.Signal{
+                type: "jido.messaging.operation.completed",
+                data: %{"result" => %{"id" => "thread-message"}}
+              }} =
                Jido.Exec.run(
                  FetchMessage,
                  %{target: target, message_id: "thread-message"},
@@ -403,9 +498,10 @@ defmodule Jido.Messaging.ChatActionsTest do
                )
 
       assert_receive {:provider_call, FullAdapter, :fetch_message, ["room-1", "thread-message", _opts]}
+
       refute_receive {:provider_call, FullAdapter, :fetch_message, ["room-1", "thread-message", _opts]}
 
-      assert {:ok, %{status: :ok}} =
+      assert {:ok, %Jido.Signal{type: "jido.messaging.operation.completed", data: %{}}} =
                Jido.Exec.run(
                  Jido.Messaging.ChatActions.Moderator.EditMessage,
                  %{target: target, message_id: "thread-message", text: "edited"},
@@ -413,12 +509,13 @@ defmodule Jido.Messaging.ChatActionsTest do
                )
 
       assert_receive {:provider_call, FullAdapter, :fetch_message, ["room-1", "thread-message", verify_opts]}
+
       refute Keyword.has_key?(verify_opts, :thread_id)
 
       assert_receive {:provider_call, FullAdapter, :edit_message, ["room-1", "thread-message", "edited", mutation_opts]}
 
       assert mutation_opts[:thread_id] == "thread-1"
-      assert mutation_opts[:external_thread_id] == "thread-1"
+      assert mutation_opts[:thread_id] == "thread-1"
     end
 
     test "participant lookup cannot replace the trusted adapter selector" do
@@ -432,7 +529,13 @@ defmodule Jido.Messaging.ChatActionsTest do
 
       context = action_context(channel_scope("full-main", :full, "room-1"))
 
-      assert {:ok, %{status: :ok, data: ^participant}} =
+      participant_id = participant.id
+
+      assert {:ok,
+              %Jido.Signal{
+                type: "jido.messaging.operation.completed",
+                data: %{"result" => %{"id" => ^participant_id}}
+              }} =
                Jido.Exec.run(
                  Jido.Messaging.ChatActions.Reader.LookupParticipant,
                  %{
@@ -446,10 +549,17 @@ defmodule Jido.Messaging.ChatActionsTest do
     test "provider errors do not expose provider credentials" do
       context = action_context(channel_scope("full-main", :full, "room-1"))
 
-      assert {:ok, %{status: :error, code: :provider_error, details: %{reason: %{type: :api_error}}} = result} =
+      assert {:ok,
+              %Jido.Signal{
+                type: "jido.messaging.operation.failed",
+                data: %{"code" => "provider_error"}
+              } = result} =
                Jido.Exec.run(
                  FetchMessage,
-                 %{target: target_map("full-main", :full, "room-1"), message_id: "credential-error"},
+                 %{
+                   target: target_map("full-main", :full, "room-1"),
+                   message_id: "credential-error"
+                 },
                  context
                )
 
@@ -460,7 +570,11 @@ defmodule Jido.Messaging.ChatActionsTest do
       implicit = Scope.from_map(%{kind: :workspace, workspace_id: "workspace-1", explicit: false})
       context = action_context(implicit)
 
-      assert {:ok, %{status: :denied, code: :workspace_scope_not_explicit}} =
+      assert {:ok,
+              %Jido.Signal{
+                type: "jido.messaging.operation.failed",
+                data: %{"code" => "workspace_scope_not_explicit"}
+              }} =
                Jido.Exec.run(
                  FetchMessage,
                  %{target: target_map("full-main", :full, "room-1"), message_id: "m-1"},
@@ -469,7 +583,7 @@ defmodule Jido.Messaging.ChatActionsTest do
 
       explicit = Scope.workspace("workspace-1", actor_id: "actor-1")
 
-      assert {:ok, %{status: :ok}} =
+      assert {:ok, %Jido.Signal{type: "jido.messaging.operation.completed", data: %{}}} =
                Jido.Exec.run(
                  FetchMessage,
                  %{target: target_map("full-main", :full, "room-1"), message_id: "m-1"},
@@ -486,9 +600,13 @@ defmodule Jido.Messaging.ChatActionsTest do
         external_user_id: "actor-1"
       }
 
-      context = ChatActions.context(TestMessaging, active_context)
+      context =
+        ChatActions.context(TestMessaging, active_context,
+          principal_id: "actor-1",
+          authorization_scope: Jido.Messaging.AuthorizationScope.new(%{kind: :bridge, bridge_id: "full-main"})
+        )
 
-      assert {:ok, %{status: :ok, audit: %{scope_kind: :thread, actor_id: "actor-1"}}} =
+      assert {:ok, %Jido.Signal{type: "jido.messaging.operation.completed", data: %{}}} =
                Jido.Exec.run(
                  FetchThreadMessages,
                  %{target: target_map("full-main", :full, "room-1", "thread-1")},
@@ -509,16 +627,41 @@ defmodule Jido.Messaging.ChatActionsTest do
       thread_target = target_map("full-main", :full, "room-1", "thread-1")
       room_target = target_map("full-main", :full, "room-1")
 
-      assert {:ok, %{status: :ok, data: %Thread{external_thread_id: "thread-1"}}} =
-               Jido.Exec.run(Jido.Messaging.ChatActions.Reader.FetchThread, %{target: thread_target}, context)
+      assert {:ok,
+              %Jido.Signal{
+                type: "jido.messaging.operation.completed",
+                data: %{"result" => %{"id" => "thread-1"}}
+              }} =
+               Jido.Exec.run(
+                 Jido.Messaging.ChatActions.Reader.FetchThread,
+                 %{target: thread_target},
+                 context
+               )
 
-      assert {:ok, %{status: :ok, data: %MessagePage{}}} =
-               Jido.Exec.run(FetchThreadMessages, %{target: thread_target}, context)
+      assert {:ok,
+              %Jido.Signal{
+                type: "jido.messaging.operation.completed",
+                data: %{"result" => %{"messages" => _messages}}
+              }} = Jido.Exec.run(FetchThreadMessages, %{target: thread_target}, context)
 
-      assert {:ok, %{status: :ok, data: %ThreadPage{}}} =
-               Jido.Exec.run(Jido.Messaging.ChatActions.Reader.ListThreads, %{target: room_target}, context)
+      assert {:ok,
+              %Jido.Signal{
+                type: "jido.messaging.operation.completed",
+                data: %{"result" => %{"threads" => _threads}}
+              }} =
+               Jido.Exec.run(
+                 Jido.Messaging.ChatActions.Reader.ListThreads,
+                 %{target: room_target},
+                 context
+               )
 
-      assert {:ok, %{status: :ok, data: ^participant}} =
+      participant_id = participant.id
+
+      assert {:ok,
+              %Jido.Signal{
+                type: "jido.messaging.operation.completed",
+                data: %{"result" => %{"id" => ^participant_id}}
+              }} =
                Jido.Exec.run(
                  Jido.Messaging.ChatActions.Reader.LookupParticipant,
                  %{target: room_target, query: %{external_id: "user-1"}},
@@ -527,14 +670,22 @@ defmodule Jido.Messaging.ChatActionsTest do
 
       workspace_context = action_context(Scope.workspace("workspace-1", actor_id: "actor-1"))
 
-      assert {:ok, %{status: :ok, data: %{id: "provider-user-1", name: "Ada"}}} =
+      assert {:ok,
+              %Jido.Signal{
+                type: "jido.messaging.operation.completed",
+                data: %{"result" => %{"id" => "provider-user-1", "display_name" => "Ada"}}
+              }} =
                Jido.Exec.run(
                  Jido.Messaging.ChatActions.Reader.LookupUser,
                  %{target: room_target, query: %{id: "provider-user-1"}},
                  workspace_context
                )
 
-      assert {:ok, %{status: :ok, data: %Jido.Chat.ChannelInfo{id: "room-1"}}} =
+      assert {:ok,
+              %Jido.Signal{
+                type: "jido.messaging.operation.completed",
+                data: %{"result" => %{"id" => "room-1"}}
+              }} =
                Jido.Exec.run(
                  Jido.Messaging.ChatActions.Reader.FetchChannelMetadata,
                  %{target: room_target},
@@ -543,18 +694,18 @@ defmodule Jido.Messaging.ChatActionsTest do
     end
   end
 
-  describe "write approval policy" do
+  describe("write approval policy") do
     test "matches an adapter-scoped allow rule and uses the text post fallback" do
       policy =
-        Policy.allow([:post_message],
-          adapter: :read_only,
-          actor: "actor-1",
-          channel: "room-1"
-        )
+        Policy.allow([:post_message], adapter: :read_only, actor: "actor-1", channel: "room-1")
 
       context = action_context(channel_scope("read-main", :read_only, "room-1"), policy)
 
-      assert {:ok, %{status: :ok, data: %Response{external_message_id: "read-send-1"}}} =
+      assert {:ok,
+              %Jido.Signal{
+                type: "jido.messaging.operation.completed",
+                data: %{"result" => %{"id" => "read-send-1"}}
+              }} =
                Jido.Exec.run(
                  PostMessage,
                  %{target: target_map("read-main", :read_only, "room-1"), text: "fallback"},
@@ -568,12 +719,15 @@ defmodule Jido.Messaging.ChatActionsTest do
       context = action_context(channel_scope("full-main", :full, "room-1"))
 
       assert {:ok,
-              %{
-                status: :approval_required,
-                code: :approval_required,
-                audit: %{action: :post_message, actor_id: "actor-1", bridge_id: "full-main"}
+              %Jido.Signal{
+                type: "jido.messaging.operation.failed",
+                data: %{"code" => "approval_required"}
               }} =
-               Jido.Exec.run(PostMessage, %{target: target_map("full-main", :full, "room-1"), text: "hello"}, context)
+               Jido.Exec.run(
+                 PostMessage,
+                 %{target: target_map("full-main", :full, "room-1"), text: "hello"},
+                 context
+               )
 
       refute_receive {:provider_call, FullAdapter, :post_message, _}
     end
@@ -595,12 +749,24 @@ defmodule Jido.Messaging.ChatActionsTest do
 
       context = action_context(channel_scope("full-main", :full, "room-1"), policy)
 
-      assert {:ok, %{status: :ok, data: %Response{external_message_id: "post-1"}}} =
-               Jido.Exec.run(PostMessage, %{target: target_map("full-main", :full, "room-1"), text: "hello"}, context)
+      assert {:ok,
+              %Jido.Signal{
+                type: "jido.messaging.operation.completed",
+                data: %{"result" => %{"id" => "post-1"}}
+              }} =
+               Jido.Exec.run(
+                 PostMessage,
+                 %{target: target_map("full-main", :full, "room-1"), text: "hello"},
+                 context
+               )
 
       assert_receive {:provider_call, FullAdapter, :post_message, _}
 
-      assert {:ok, %{status: :denied, code: :policy_denied}} =
+      assert {:ok,
+              %Jido.Signal{
+                type: "jido.messaging.operation.failed",
+                data: %{"code" => "policy_denied"}
+              }} =
                Jido.Exec.run(
                  DeleteMessage,
                  %{target: target_map("full-main", :full, "room-1"), message_id: "m-1"},
@@ -614,7 +780,11 @@ defmodule Jido.Messaging.ChatActionsTest do
       policy = Policy.allow([:post_message], actor: "privileged-actor", channel: "room-1")
       context = action_context(channel_scope("full-main", :full, "room-1"), policy)
 
-      assert {:ok, %{status: :approval_required, audit: %{actor_id: "actor-1"}}} =
+      assert {:ok,
+              %Jido.Signal{
+                type: "jido.messaging.operation.failed",
+                data: %{"code" => "approval_required"}
+              }} =
                Jido.Exec.run(
                  PostMessage,
                  %{
@@ -633,12 +803,20 @@ defmodule Jido.Messaging.ChatActionsTest do
       policy = Policy.allow([:post_message], actor: "privileged-actor", channel: "room-1")
 
       context =
-        ChatActions.context(TestMessaging, %{scope: scope, policy: policy, actor_id: "actor-1"})
+        ChatActions.context(TestMessaging, %{scope: scope, policy: policy, actor_id: "actor-1"},
+          principal_id: "actor-1",
+          authorization_scope:
+            Jido.Messaging.AuthorizationScope.new(%{kind: :bridge, bridge_id: scope.bridge_id || "full-main"})
+        )
 
       assert context.chat_action.actor_id == "actor-1"
       assert context.chat_action.scope.actor_id == "actor-1"
 
-      assert {:ok, %{status: :approval_required, audit: %{actor_id: "actor-1"}}} =
+      assert {:ok,
+              %Jido.Signal{
+                type: "jido.messaging.operation.failed",
+                data: %{"code" => "approval_required"}
+              }} =
                Jido.Exec.run(
                  PostMessage,
                  %{target: target_map("full-main", :full, "room-1"), text: "blocked"},
@@ -652,29 +830,50 @@ defmodule Jido.Messaging.ChatActionsTest do
       narrow_policy =
         Policy.new(%{
           rules: [
-            %{result: :allow, actions: [:send_direct_message, :ensure_subscription], actors: ["actor-1"]}
+            %{
+              result: :allow,
+              actions: [:send_direct_message, :ensure_subscription],
+              actors: ["actor-1"]
+            }
           ]
         })
 
       channel_context = action_context(channel_scope("full-main", :full, "room-1"), narrow_policy)
 
-      assert {:ok, %{status: :denied, code: :workspace_scope_required}} =
+      assert {:ok,
+              %Jido.Signal{
+                type: "jido.messaging.operation.failed",
+                data: %{"code" => "workspace_scope_required"}
+              }} =
                Jido.Exec.run(
                  SendDirectMessage,
-                 %{target: target_map("full-main", :full, "room-1"), user_id: "user-1", text: "secret"},
+                 %{
+                   target: target_map("full-main", :full, "room-1"),
+                   user_id: "user-1",
+                   text: "secret"
+                 },
                  channel_context
                )
 
-      workspace_context = action_context(Scope.workspace("workspace-1", actor_id: "actor-1"), narrow_policy)
+      workspace_context =
+        action_context(Scope.workspace("workspace-1", actor_id: "actor-1"), narrow_policy)
 
-      assert {:ok, %{status: :ok, data: %Response{external_room_id: "dm-user-1"}}} =
+      assert {:ok,
+              %Jido.Signal{
+                type: "jido.messaging.operation.completed",
+                data: %{"result" => %{"room_id" => "dm-user-1"}}
+              }} =
                Jido.Exec.run(
                  SendDirectMessage,
-                 %{target: target_map("full-main", :full, "room-1"), user_id: "user-1", text: "secret"},
+                 %{
+                   target: target_map("full-main", :full, "room-1"),
+                   user_id: "user-1",
+                   text: "secret"
+                 },
                  workspace_context
                )
 
-      assert {:ok, %{status: :ok}} =
+      assert {:ok, %Jido.Signal{type: "jido.messaging.operation.completed", data: %{}}} =
                Jido.Exec.run(
                  EnsureSubscription,
                  %{
@@ -687,6 +886,7 @@ defmodule Jido.Messaging.ChatActionsTest do
       refute Keyword.has_key?(EnsureSubscription.schema().fields, :target_url)
 
       assert_receive {:provider_call, FullAdapter, :ensure_ingress_subscription, ["full-main", subscription_opts]}
+
       assert subscription_opts[:target_url] == "https://trusted.example.test/hook"
     end
 
@@ -704,32 +904,40 @@ defmodule Jido.Messaging.ChatActionsTest do
       channel_context = action_context(channel_scope("full-main", :full, "room-1"), policy)
       room_target = target_map("full-main", :full, "room-1")
 
-      assert {:ok, %{status: :ok}} =
+      assert {:ok, %Jido.Signal{type: "jido.messaging.operation.completed", data: %{}}} =
                Jido.Exec.run(
                  Jido.Messaging.ChatActions.Messenger.PostChannelMessage,
                  %{target: room_target, text: "channel"},
                  channel_context
                )
 
-      assert {:ok, %{status: :ok}} =
+      assert {:ok, %Jido.Signal{type: "jido.messaging.operation.completed", data: %{}}} =
                Jido.Exec.run(
                  Jido.Messaging.ChatActions.Moderator.EditMessage,
                  %{target: room_target, message_id: "m-1", text: "edited"},
                  channel_context
                )
 
-      assert {:ok, %{status: :ok}} =
-               Jido.Exec.run(DeleteMessage, %{target: room_target, message_id: "m-1"}, channel_context)
+      assert {:ok, %Jido.Signal{type: "jido.messaging.operation.completed", data: %{}}} =
+               Jido.Exec.run(
+                 DeleteMessage,
+                 %{target: room_target, message_id: "m-1"},
+                 channel_context
+               )
 
       for action <- [
             Jido.Messaging.ChatActions.Moderator.AddReaction,
             Jido.Messaging.ChatActions.Moderator.RemoveReaction
           ] do
-        assert {:ok, %{status: :ok}} =
-                 Jido.Exec.run(action, %{target: room_target, message_id: "m-1", emoji: "ok"}, channel_context)
+        assert {:ok, %Jido.Signal{type: "jido.messaging.operation.completed", data: %{}}} =
+                 Jido.Exec.run(
+                   action,
+                   %{target: room_target, message_id: "m-1", emoji: "ok"},
+                   channel_context
+                 )
       end
 
-      assert {:ok, %{status: :ok}} =
+      assert {:ok, %Jido.Signal{type: "jido.messaging.operation.completed", data: %{}}} =
                Jido.Exec.run(
                  Jido.Messaging.ChatActions.Messenger.StartTyping,
                  %{target: room_target},
@@ -737,18 +945,25 @@ defmodule Jido.Messaging.ChatActionsTest do
                )
 
       workspace_policy =
-        Policy.new(%{rules: [%{result: :allow, actions: [:delete_subscription], actors: ["actor-1"]}]})
+        Policy.new(%{
+          rules: [%{result: :allow, actions: [:delete_subscription], actors: ["actor-1"]}]
+        })
 
-      workspace_context = action_context(Scope.workspace("workspace-1", actor_id: "actor-1"), workspace_policy)
+      workspace_context =
+        action_context(Scope.workspace("workspace-1", actor_id: "actor-1"), workspace_policy)
 
-      assert {:ok, %{status: :ok, data: [_subscription]}} =
+      assert {:ok,
+              %Jido.Signal{
+                type: "jido.messaging.operation.completed",
+                data: %{"result" => %{"items" => [_subscription]}}
+              }} =
                Jido.Exec.run(
                  Jido.Messaging.ChatActions.Moderator.ListSubscriptions,
                  %{target: room_target},
                  workspace_context
                )
 
-      assert {:ok, %{status: :ok}} =
+      assert {:ok, %Jido.Signal{type: "jido.messaging.operation.completed", data: %{}}} =
                Jido.Exec.run(
                  Jido.Messaging.ChatActions.Moderator.DeleteSubscription,
                  %{target: room_target, subscription_id: "sub-1"},
@@ -759,23 +974,265 @@ defmodule Jido.Messaging.ChatActionsTest do
 
   test "serializes scope and policy and preserves them through async action execution" do
     scope = Scope.thread("full-main", :full, "room-1", "thread-1", actor_id: "actor-1")
-    policy = Policy.allow([:post_message], actor: "actor-1", channel: "room-1", thread: "thread-1")
 
-    assert scope == scope |> Scope.to_map() |> Jason.encode!() |> Jason.decode!() |> Scope.from_map()
-    assert policy == policy |> Policy.to_map() |> Jason.encode!() |> Jason.decode!() |> Policy.from_map()
+    policy =
+      Policy.allow([:post_message], actor: "actor-1", channel: "room-1", thread: "thread-1")
+
+    assert scope ==
+             scope |> Scope.to_map() |> Jason.encode!() |> Jason.decode!() |> Scope.from_map()
+
+    assert policy ==
+             policy |> Policy.to_map() |> Jason.encode!() |> Jason.decode!() |> Policy.from_map()
 
     context = action_context(scope, policy)
     target = target_map("full-main", :full, "room-1", "thread-1")
     async_ref = Jido.Exec.run_async(PostMessage, %{target: target, text: "async"}, context)
 
-    assert {:ok, %{status: :ok, audit: %{thread_id: "thread-1", actor_id: "actor-1"}}} =
+    assert {:ok, %Jido.Signal{type: "jido.messaging.operation.completed", data: %{}}} =
              Jido.Exec.Async.await(async_ref)
 
     assert_receive {:provider_call, FullAdapter, :post_message, _}
   end
 
+  test "one trusted tool request cannot repeat its provider callback" do
+    scope = channel_scope("full-main", :full, "room-1")
+    policy = Policy.allow([:post_message], actor: "actor-1", channel: "room-1")
+    context = action_context(scope, policy) |> put_in([:chat_action, :request_id], "one-tool")
+    params = %{target: target_map("full-main", :full, "room-1"), text: "hello"}
+    assert {:ok, result} = Jido.Exec.run(PostMessage, params, context)
+    assert result.type == "jido.messaging.operation.completed"
+    assert_receive {:provider_call, FullAdapter, :post_message, _}
+    assert {:ok, ^result} = Jido.Exec.run(PostMessage, params, context)
+    refute_receive {:provider_call, FullAdapter, :post_message, _}
+
+    assert {:error, %Jido.Chat.Errors.Contract{code: :request_conflict}} =
+             Jido.Exec.run(PostMessage, %{params | text: "changed"}, context)
+
+    refute_receive {:provider_call, FullAdapter, :post_message, _}
+  end
+
   defp action_context(scope, policy \\ Policy.default()) do
-    ChatActions.context(TestMessaging, %{scope: scope, policy: policy, actor_id: "actor-1"})
+    ChatActions.context(TestMessaging, %{scope: scope, policy: policy, actor_id: "actor-1"},
+      principal_id: "actor-1",
+      authorization_scope:
+        Jido.Messaging.AuthorizationScope.new(%{kind: :bridge, bridge_id: scope.bridge_id || "full-main"})
+    )
+  end
+
+  test "canonical room authority must match the resolved provider target" do
+    for {id, external} <- [{"canonical-a", "provider-a"}, {"canonical-b", "provider-b"}] do
+      assert {:ok, _} = TestMessaging.create_room(%{id: id, type: :group})
+      assert {:ok, _} = TestMessaging.create_room_binding(id, :full, "full-main", external)
+    end
+
+    resource =
+      Jido.Messaging.AuthorizationScope.new(%{
+        kind: :room,
+        room_id: "canonical-a",
+        bridge_id: "full-main"
+      })
+
+    assert {:ok, _} =
+             TestMessaging.create_principal_grant(%{
+               principal_id: "actor-1",
+               issuer_principal_id: "host",
+               actions: [:fetch_channel_metadata],
+               scope: resource,
+               constraints: %{requires_membership: false}
+             })
+
+    context =
+      action_context(Scope.workspace("workspace-1"))
+      |> put_in([:chat_action, :authorization_scope], resource)
+
+    assert {:ok,
+            %Jido.Signal{
+              type: "jido.messaging.operation.failed",
+              data: %{"code" => "authorization_denied"}
+            }} =
+             Jido.Messaging.ChatActions.Executor.execute(
+               :fetch_channel_metadata,
+               %{target: target_map("full-main", :full, "provider-b")},
+               context
+             )
+
+    refute_receive {:provider_call, FullAdapter, _, _}
+
+    assert {:ok, %Jido.Signal{type: "jido.messaging.operation.completed"}} =
+             Jido.Messaging.ChatActions.Executor.execute(
+               :fetch_channel_metadata,
+               %{target: target_map("full-main", :full, "provider-a")},
+               context
+             )
+
+    assert_receive {:provider_call, FullAdapter, :fetch_metadata, _}
+  end
+
+  test "unbound provider rooms cannot use a canonical room grant" do
+    assert {:ok, _} = TestMessaging.create_room(%{id: "canonical-a", type: :group})
+
+    resource =
+      Jido.Messaging.AuthorizationScope.new(%{
+        kind: :room,
+        room_id: "canonical-a",
+        bridge_id: "full-main"
+      })
+
+    context =
+      action_context(Scope.workspace("workspace-1"))
+      |> put_in([:chat_action, :authorization_scope], resource)
+
+    assert {:ok,
+            %Jido.Signal{
+              type: "jido.messaging.operation.failed",
+              data: %{"code" => "authorization_denied"}
+            }} =
+             Jido.Messaging.ChatActions.Executor.execute(
+               :fetch_channel_metadata,
+               %{target: target_map("full-main", :full, "unbound")},
+               context
+             )
+
+    refute_receive {:provider_call, FullAdapter, _, _}
+  end
+
+  test "message authority uses the provider bridge and canonical room, with an optional thread constraint" do
+    assert {:ok, _} = TestMessaging.create_room(%{id: "canonical-a", type: :group})
+    assert {:ok, _} = TestMessaging.create_room(%{id: "canonical-b", type: :group})
+    assert {:ok, _} = TestMessaging.create_room_binding("canonical-a", :full, "full-main", "provider-a")
+
+    assert {:ok, _} =
+             TestMessaging.save_thread(%{id: "thread-a", room_id: "canonical-a", external_thread_id: "external-thread"})
+
+    for {id, room, bridge, external, thread} <- [
+          {"foreign-bridge", "canonical-a", "another-bridge", "shared-id", "thread-a"},
+          {"own-message", "canonical-a", "full-main", "shared-id", "thread-a"},
+          {"foreign-room", "canonical-b", "full-main", "foreign-id", nil}
+        ] do
+      assert {:ok, _} =
+               TestMessaging.save_message(%{
+                 id: id,
+                 room_id: room,
+                 sender_id: "actor-1",
+                 role: :user,
+                 external_id: external,
+                 thread_id: thread,
+                 metadata: %{channel: :full, bridge_id: bridge}
+               })
+    end
+
+    base = action_context(Scope.workspace("workspace-1"))
+
+    for message_id <- ["foreign-bridge", "own-message"] do
+      resource =
+        Jido.Messaging.AuthorizationScope.new(%{
+          kind: :message,
+          room_id: "canonical-a",
+          message_id: message_id,
+          bridge_id: "full-main"
+        })
+
+      assert {:ok, _} =
+               TestMessaging.create_principal_grant(%{
+                 principal_id: "actor-1",
+                 issuer_principal_id: "host",
+                 actions: [:fetch_message],
+                 scope: resource,
+                 constraints: %{requires_membership: false}
+               })
+
+      context = put_in(base, [:chat_action, :authorization_scope], resource)
+
+      assert {:ok, result} =
+               Jido.Messaging.ChatActions.Executor.execute(
+                 :fetch_message,
+                 %{target: target_map("full-main", :full, "provider-a"), message_id: "shared-id"},
+                 context
+               )
+
+      if message_id == "own-message" do
+        assert result.type == "jido.messaging.operation.completed"
+        assert_receive {:provider_call, FullAdapter, :fetch_message, _}
+      else
+        assert result.data["code"] == "authorization_denied"
+        refute_receive {:provider_call, FullAdapter, _, _}
+      end
+    end
+
+    for kind <- [:room, :thread] do
+      attrs = %{kind: kind, room_id: "canonical-a", bridge_id: "full-main"}
+      attrs = if kind == :thread, do: Map.put(attrs, :thread_id, "thread-a"), else: attrs
+      resource = Jido.Messaging.AuthorizationScope.new(attrs)
+
+      assert {:ok, _} =
+               TestMessaging.create_principal_grant(%{
+                 principal_id: "actor-1",
+                 issuer_principal_id: "host",
+                 actions: [:fetch_message],
+                 scope: resource,
+                 constraints: %{requires_membership: false}
+               })
+
+      context = put_in(base, [:chat_action, :authorization_scope], resource)
+      target = target_map("full-main", :full, "provider-a", if(kind == :thread, do: "external-thread", else: nil))
+
+      assert {:ok, %Jido.Signal{data: %{"code" => "authorization_denied"}}} =
+               Jido.Messaging.ChatActions.Executor.execute(
+                 :fetch_message,
+                 %{target: target, message_id: "foreign-id"},
+                 context
+               )
+
+      refute_receive {:provider_call, FullAdapter, _, _}
+    end
+  end
+
+  test "a canonical thread scope cannot authorize channel-wide reads" do
+    assert {:ok, _} = TestMessaging.create_room(%{id: "canonical-a", type: :group})
+
+    assert {:ok, _} =
+             TestMessaging.create_room_binding("canonical-a", :full, "full-main", "provider-a")
+
+    assert {:ok, _} =
+             TestMessaging.save_thread(%{
+               id: "thread-a",
+               room_id: "canonical-a",
+               external_thread_id: "external-thread"
+             })
+
+    resource =
+      Jido.Messaging.AuthorizationScope.new(%{
+        kind: :thread,
+        room_id: "canonical-a",
+        thread_id: "thread-a",
+        bridge_id: "full-main"
+      })
+
+    assert {:ok, _} =
+             TestMessaging.create_principal_grant(%{
+               principal_id: "actor-1",
+               issuer_principal_id: "host",
+               actions: [:fetch_channel_metadata],
+               scope: resource,
+               constraints: %{requires_membership: false}
+             })
+
+    context =
+      action_context(Scope.workspace("workspace-1"))
+      |> put_in([:chat_action, :authorization_scope], resource)
+
+    assert {:ok,
+            %Jido.Signal{
+              type: "jido.messaging.operation.failed",
+              data: %{"code" => "authorization_denied"}
+            }} =
+             Jido.Messaging.ChatActions.Executor.execute(
+               :fetch_channel_metadata,
+               %{target: target_map("full-main", :full, "provider-a", "external-thread")},
+               context
+             )
+
+    refute_receive {:provider_call, FullAdapter, _, _}
   end
 
   defp channel_scope(bridge_id, adapter, channel_id) do

@@ -24,6 +24,7 @@ defmodule Jido.Messaging.Context do
               thread_id: Zoi.string() |> Zoi.nullish(),
               participant_id: Zoi.string(),
               instance_module: Zoi.module(),
+              parent_signal: Zoi.struct(Jido.Signal) |> Zoi.nullish(),
               msg_context: Zoi.struct(MsgContext)
             },
             coerce: true

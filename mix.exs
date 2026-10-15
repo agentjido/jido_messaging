@@ -70,12 +70,26 @@ defmodule Jido.Messaging.MixProject do
   defp deps do
     [
       # Runtime dependencies
-      {:jido_chat, "~> 1.2"},
+      chat_dependency(),
       {:jason, "~> 1.4"},
-      {:zoi, "~> 0.18.11"},
-      {:jido, "~> 2.4"},
-      {:jido_signal, "~> 2.3 and >= 2.3.1"},
-      {:jido_ai, "~> 2.4", optional: true},
+      upstream_dependency(:zoi, "~> 0.18.11", "mikehostetler/zoi", "2fff2a23e23e7ac0b26f62f49bbc1b12f7818ac9"),
+      upstream_dependency(:jido, "~> 3.0.0-beta.1", "agentjido/jido", "90763478104f1edbf0afcfcf9444621c3f9755e8"),
+      upstream_dependency(
+        :jido_action,
+        "~> 3.0.0-beta.12",
+        "agentjido/jido_action",
+        "8e9b3f7b268e175091b0eb3720bab3b8633d3c24"
+      ),
+      {:runic, "== 0.1.0-alpha.11"},
+      upstream_dependency(
+        :jido_signal,
+        "~> 3.0.0-beta.4",
+        "agentjido/jido_signal",
+        "d6611eca1c95eb507843baceb55991e4801d8421"
+      ),
+      upstream_dependency(:jido_ai, "~> 3.0", "agentjido/jido_ai", "1f19ff262081bc13eb30da7bff8bfe42685d63c8",
+        optional: true
+      ),
       {:yaml_elixir, "~> 2.12"},
       {:plug, "~> 1.16"},
       {:exqlite, "~> 0.42.0"},
@@ -96,6 +110,31 @@ defmodule Jido.Messaging.MixProject do
       {:git_hooks, "~> 0.8", only: [:dev, :test], runtime: false},
       {:git_ops, "~> 2.9", only: :dev, runtime: false}
     ]
+  end
+
+  defp upstream_dependency(app, requirement, repository, ref, opts \\ []) do
+    if Mix.env() in [:dev, :test] or System.get_env("MIX_ENV") in ["dev", "test"] do
+      {app, Keyword.merge([git: "https://github.com/" <> repository <> ".git", ref: ref, override: true], opts)}
+    else
+      {app, requirement, opts}
+    end
+  end
+
+  # Local integration uses an explicit dev/test checkout. Production uses the package source.
+  defp chat_dependency do
+    case {Mix.env(), System.get_env("JIDO_CHAT_PATH")} do
+      {env, path} when env in [:dev, :test] and is_binary(path) and path != "" ->
+        {:jido_chat, path: Path.expand(path), override: true}
+
+      {env, _} when env in [:dev, :test] ->
+        {:jido_chat,
+         git: "https://github.com/agentjido/jido_chat.git",
+         ref: "9a07c7eb0ecf9103efd17097cdaaefc98b83942a",
+         override: true}
+
+      _ ->
+        {:jido_chat, "~> 2.0"}
+    end
   end
 
   defp aliases do

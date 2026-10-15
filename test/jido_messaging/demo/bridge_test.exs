@@ -25,7 +25,11 @@ defmodule Jido.Messaging.Demo.BridgeTest do
     def channel_type, do: :telegram
 
     @impl true
-    def transform_incoming(_raw), do: {:error, :not_implemented}
+    def signal_protocol, do: 1
+    @impl true
+    def configure_binding(opts), do: {:ok, opts}
+    @impl true
+    def normalize_event(_binding, _payload), do: Jido.Chat.Signal.Policy.error(:invalid_delivery)
 
     @impl true
     def send_message(_room_id, _text, _opts), do: {:ok, %{message_id: "tg_stub"}}
@@ -38,7 +42,11 @@ defmodule Jido.Messaging.Demo.BridgeTest do
     def channel_type, do: :discord
 
     @impl true
-    def transform_incoming(_raw), do: {:error, :not_implemented}
+    def signal_protocol, do: 1
+    @impl true
+    def configure_binding(opts), do: {:ok, opts}
+    @impl true
+    def normalize_event(_binding, _payload), do: Jido.Chat.Signal.Policy.error(:invalid_delivery)
 
     @impl true
     def send_message(_room_id, _text, _opts), do: {:ok, %{message_id: "dc_stub"}}
@@ -61,6 +69,47 @@ defmodule Jido.Messaging.Demo.BridgeTest do
   end
 
   describe "Bridge initialization" do
+    test "restores its subscription after Bus and subscription-registry loss" do
+      import Jido.Messaging.TestHelpers
+
+      pid = start_supervised!({Bridge, bridge_opts(telegram_chat_id: "recovery-tg", discord_channel_id: "recovery-dc")})
+      assert_eventually(fn -> :sys.get_state(pid).subscribed end, timeout: 1_000)
+      runtime = Process.whereis(TestMessaging.__jido_messaging__(:runtime))
+      name = TestMessaging.signal_bus_name()
+      {:ok, bus} = Jido.Signal.Bus.whereis(name)
+      supervisor = TestMessaging.__jido_messaging__(:supervisor)
+      {id, ^bus, _, _} = Enum.find(Supervisor.which_children(supervisor), fn {_, child, _, _} -> child == bus end)
+      :ok = Supervisor.terminate_child(supervisor, id)
+      assert_eventually(fn -> not :sys.get_state(pid).subscribed end)
+      {:ok, replacement} = Supervisor.restart_child(supervisor, id)
+      assert_eventually(fn -> :sys.get_state(pid).subscribed end, timeout: 2_000)
+      assert map_size(:sys.get_state(replacement).subscriptions) == 1
+
+      registry = Module.concat(TestMessaging, Registry.Subscriptions)
+      [{worker, _}] = Registry.lookup(registry, pid)
+      Process.exit(Process.whereis(registry), :kill)
+
+      assert_eventually(
+        fn ->
+          try do
+            case Registry.lookup(registry, pid) do
+              [{new_worker, _}] -> new_worker != worker and :sys.get_state(pid).subscribed
+              [] -> false
+            end
+          rescue
+            ArgumentError -> false
+          end
+        end,
+        timeout: 2_000
+      )
+
+      send(pid, :subscribe)
+      send(pid, {:messaging_subscription_status, self(), false})
+      assert :sys.get_state(pid).subscribed
+      assert map_size(:sys.get_state(replacement).subscriptions) == 1
+      assert Process.whereis(TestMessaging.__jido_messaging__(:runtime)) == runtime
+    end
+
     test "starts and subscribes to Signal Bus" do
       {:ok, pid} =
         start_supervised({Bridge, bridge_opts(telegram_chat_id: "123", discord_channel_id: "456")})

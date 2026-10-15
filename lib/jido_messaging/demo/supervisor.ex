@@ -66,6 +66,13 @@ defmodule Jido.Messaging.Demo.Supervisor do
         telegram_bridge_id,
         discord_bridge_id
       )
+      |> Enum.map(fn
+        {Jido.Messaging.Demo.Bridge, bridge_opts} ->
+          {Jido.Messaging.Demo.Bridge, Keyword.put(bridge_opts, :principal_id, Keyword.get(opts, :principal_id))}
+
+        child ->
+          child
+      end)
 
     Logger.info("[Demo] Starting supervisor in #{mode} mode")
 
@@ -149,8 +156,7 @@ defmodule Jido.Messaging.Demo.Supervisor do
        instance_module: Jido.Messaging.Demo.Messaging},
 
       # HeartbeatSensor sends periodic messages every minute
-      {Jido.Sensor.Runtime,
-       sensor: Jido.Messaging.Demo.HeartbeatSensor,
+      {Jido.Messaging.Demo.HeartbeatSensor,
        config: %{
          interval: 60_000,
          room_id: @shared_room_id,

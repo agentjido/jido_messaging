@@ -8,15 +8,19 @@ defmodule Jido.Messaging.TopologyValidator do
   @type validation_error :: %{code: atom(), detail: map()}
 
   @spec validate_bridge_room_spec(module(), BridgeRoomSpec.t()) ::
-          :ok | {:error, {:invalid_topology, [validation_error()]}}
+          :ok | {:error, {:invalid_topology, [validation_error()]} | term()}
   @doc """
   Validates bridge-room topology references before applying them.
   """
   def validate_bridge_room_spec(instance_module, %BridgeRoomSpec{} = spec) when is_atom(instance_module) do
-    existing_bridge_ids =
-      ConfigStore.list_bridge_configs(instance_module)
-      |> Enum.map(& &1.id)
-      |> MapSet.new()
+    case ConfigStore.list_bridge_configs(instance_module) do
+      configs when is_list(configs) -> validate_spec(spec, configs)
+      {:error, _} = error -> error
+    end
+  end
+
+  defp validate_spec(spec, configs) do
+    existing_bridge_ids = configs |> Enum.map(& &1.id) |> MapSet.new()
 
     declared_bridge_ids =
       spec.bridge_configs

@@ -1,0 +1,188 @@
+{
+  "otp": "29",
+  "schedulers": 10,
+  "host": "aarch64-apple-darwin",
+  "elixir": "1.20.4",
+  "trials": [
+    {
+      "rejected": {
+        "p95_us": 261,
+        "p99_us": 589,
+        "p50_us": 121,
+        "max_us": 4298
+      },
+      "held": 1,
+      "trial": 1,
+      "burst": 10000,
+      "capacity": 64,
+      "admitted_from_burst": 63,
+      "rejected_count": 9937,
+      "accepted_completion": {
+        "p95_us": 273525,
+        "p99_us": 282227,
+        "p50_us": 225275,
+        "max_us": 282227
+      },
+      "permits_at_barrier": 64,
+      "queued_at_barrier": 63,
+      "coordinator_mailbox_at_barrier": 0,
+      "pending_rejections_at_barrier": 5000,
+      "all_overflow_before_release": true,
+      "final_permits": 0
+    },
+    {
+      "rejected": {
+        "p95_us": 244,
+        "p99_us": 483,
+        "p50_us": 124,
+        "max_us": 5280
+      },
+      "held": 1,
+      "trial": 2,
+      "burst": 10000,
+      "capacity": 64,
+      "admitted_from_burst": 63,
+      "rejected_count": 9937,
+      "accepted_completion": {
+        "p95_us": 264749,
+        "p99_us": 270173,
+        "p50_us": 212279,
+        "max_us": 270173
+      },
+      "permits_at_barrier": 64,
+      "queued_at_barrier": 63,
+      "coordinator_mailbox_at_barrier": 0,
+      "pending_rejections_at_barrier": 5000,
+      "all_overflow_before_release": true,
+      "final_permits": 0
+    },
+    {
+      "rejected": {
+        "p95_us": 243,
+        "p99_us": 364,
+        "p50_us": 123,
+        "max_us": 1680
+      },
+      "held": 1,
+      "trial": 3,
+      "burst": 10000,
+      "capacity": 64,
+      "admitted_from_burst": 63,
+      "rejected_count": 9937,
+      "accepted_completion": {
+        "p95_us": 248580,
+        "p99_us": 256637,
+        "p50_us": 198641,
+        "max_us": 256637
+      },
+      "permits_at_barrier": 64,
+      "queued_at_barrier": 63,
+      "coordinator_mailbox_at_barrier": 0,
+      "pending_rejections_at_barrier": 4841,
+      "all_overflow_before_release": true,
+      "final_permits": 0
+    },
+    {
+      "rejected": {
+        "p95_us": 238,
+        "p99_us": 398,
+        "p50_us": 132,
+        "max_us": 5468
+      },
+      "held": 1,
+      "trial": 4,
+      "burst": 10000,
+      "capacity": 64,
+      "admitted_from_burst": 63,
+      "rejected_count": 9937,
+      "accepted_completion": {
+        "p95_us": 262258,
+        "p99_us": 269038,
+        "p50_us": 212764,
+        "max_us": 269038
+      },
+      "permits_at_barrier": 64,
+      "queued_at_barrier": 63,
+      "coordinator_mailbox_at_barrier": 0,
+      "pending_rejections_at_barrier": 4772,
+      "all_overflow_before_release": true,
+      "final_permits": 0
+    },
+    {
+      "rejected": {
+        "p95_us": 227,
+        "p99_us": 342,
+        "p50_us": 117,
+        "max_us": 2235
+      },
+      "held": 1,
+      "trial": 5,
+      "burst": 10000,
+      "capacity": 64,
+      "admitted_from_burst": 63,
+      "rejected_count": 9937,
+      "accepted_completion": {
+        "p95_us": 260318,
+        "p99_us": 263092,
+        "p50_us": 207168,
+        "max_us": 263092
+      },
+      "permits_at_barrier": 64,
+      "queued_at_barrier": 63,
+      "coordinator_mailbox_at_barrier": 0,
+      "pending_rejections_at_barrier": 4907,
+      "all_overflow_before_release": true,
+      "final_permits": 0
+    }
+  ],
+  "c5": {
+    "burst": 12,
+    "capacity": 2,
+    "all_overflow_before_release": true,
+    "rejection": {
+      "p95_us": 988,
+      "p99_us": 988,
+      "p50_us": 21,
+      "max_us": 988
+    },
+    "accepted_caller_timed_out": true,
+    "timed_out_accepted_provider_calls": 1,
+    "retry_rejection_us": 71,
+    "retry_queued_completion_us": 207613,
+    "retry_attempts": 2
+  },
+  "delayed_control": {
+    "injected_control_delay_ms": 100,
+    "public_total_us": 103056,
+    "prebuilt_admission_us": 33,
+    "limitation": "Public request construction waits for ConfigStore before queue admission."
+  },
+  "delayed_dead_letter": {
+    "rejected": {
+      "p95_us": 241,
+      "p99_us": 387,
+      "p50_us": 126,
+      "max_us": 3751
+    },
+    "held": 1,
+    "trial": 6,
+    "burst": 10000,
+    "capacity": 64,
+    "admitted_from_burst": 63,
+    "rejected_count": 9937,
+    "accepted_completion": {
+      "p95_us": 300608,
+      "p99_us": 305662,
+      "p50_us": 240644,
+      "max_us": 305662
+    },
+    "permits_at_barrier": 64,
+    "queued_at_barrier": 63,
+    "coordinator_mailbox_at_barrier": 0,
+    "pending_rejections_at_barrier": 5000,
+    "all_overflow_before_release": true,
+    "final_permits": 0
+  },
+  "latency_scope": "Prebuilt Partition.dispatch request: overload response only. Public accepted calls wait for completion.",
+  "healthy_target_passed": true
+}

@@ -10,8 +10,12 @@ defmodule Jido.Messaging.PresenceTest do
       Agent.start_link(fn -> %{} end, name: __MODULE__)
     end
 
+    def fail_next(operation, reason) do
+      Agent.update(__MODULE__, &Map.put(&1, {:failure, operation}, reason))
+    end
+
     def track(pid, topic, key, meta) do
-      Agent.get_and_update(__MODULE__, fn state ->
+      perform(:track, fn state ->
         topic_state = Map.get(state, topic, %{})
 
         if Map.has_key?(topic_state, key) do
@@ -24,7 +28,7 @@ defmodule Jido.Messaging.PresenceTest do
     end
 
     def update(_pid, topic, key, meta) do
-      Agent.get_and_update(__MODULE__, fn state ->
+      perform(:update, fn state ->
         topic_state = Map.get(state, topic, %{})
 
         if Map.has_key?(topic_state, key) do
@@ -32,6 +36,15 @@ defmodule Jido.Messaging.PresenceTest do
           {{:ok, make_ref()}, state}
         else
           {{:error, :not_found}, state}
+        end
+      end)
+    end
+
+    defp perform(operation, function) do
+      Agent.get_and_update(__MODULE__, fn state ->
+        case Map.pop(state, {:failure, operation}) do
+          {nil, state} -> function.(state)
+          {reason, state} -> {{:error, reason}, state}
         end
       end)
     end
@@ -77,7 +90,7 @@ defmodule Jido.Messaging.PresenceTest do
   setup do
     start_supervised!(TestMessaging)
     start_supervised!(FakePhoenixPresence)
-    start_supervised!(AdapterPresence)
+    start_supervised!({AdapterPresence, prune_ms: 60_000, ttl_ms: 60_000})
 
     :ok
   end
@@ -102,12 +115,11 @@ defmodule Jido.Messaging.PresenceTest do
     assert_receive {:signal, joined}, 1_000
     assert joined.type == "jido.messaging.room.participant_joined"
     assert joined.data["participant_id"] == "user:1"
-    assert joined.data["source"] == "test.presence"
+    assert joined.source == Jido.Messaging.Events.source(TestMessaging)
 
     assert_receive {:signal, changed}, 1_000
     assert changed.type == "jido.messaging.participant.presence_changed"
-    assert changed.data["from"] == :offline
-    assert changed.data["to"] == :online
+    assert changed.data["presence"] == "online"
 
     assert {:ok, refreshed, []} =
              AdapterPresence.touch("user:1", room.id, session_id: "session:1")
@@ -164,14 +176,14 @@ defmodule Jido.Messaging.PresenceTest do
 
     assert presence.online_user_ids == ["user:1"]
     assert Enum.map(second_room_signals, & &1.type) == ["jido.messaging.room.participant_joined"]
-    assert hd(second_room_signals).subject == room_b.id
+    assert hd(second_room_signals).subject == Jido.Messaging.Signal.Identity.room_subject(room_b.id)
 
     assert {:ok, presence, room_left_signals} =
              AdapterPresence.mark_left("user:1", session_id: "session:2", reason: :disconnect)
 
     assert presence.online_user_ids == ["user:1"]
     assert Enum.map(room_left_signals, & &1.type) == ["jido.messaging.room.participant_left"]
-    assert hd(room_left_signals).subject == room_b.id
+    assert hd(room_left_signals).subject == Jido.Messaging.Signal.Identity.room_subject(room_b.id)
   end
 
   test "public API normalizes map options and non-string session IDs" do
@@ -219,9 +231,167 @@ defmodule Jido.Messaging.PresenceTest do
              AdapterPresence.touch("user:1", room.id, session_id: "session:1", ttl_ms: 0)
 
     send(Process.whereis(AdapterPresence), :prune)
-    Process.sleep(20)
 
     assert AdapterPresence.snapshot() == %{online_user_ids: []}
     refute Map.has_key?(FakePhoenixPresence.list("test:presence"), "session:1")
+  end
+
+  test "a session move emits the old room leave before the new room join" do
+    {:ok, room_a} = TestMessaging.create_room(%{type: :group})
+    {:ok, room_b} = TestMessaging.create_room(%{type: :group})
+    assert {:ok, _, _} = AdapterPresence.touch("user", room_a.id, session_id: "moving")
+    {:ok, _} = TestMessaging.subscribe_signals("jido.messaging.**")
+
+    assert {:ok, %{online_user_ids: ["user"]}, signals} =
+             AdapterPresence.touch("user", room_b.id,
+               session_id: "moving",
+               metadata: %{private: self()}
+             )
+
+    assert Enum.map(signals, &{&1.type, &1.data["room_id"]}) == [
+             {"jido.messaging.room.participant_left", room_a.id},
+             {"jido.messaging.room.participant_joined", room_b.id}
+           ]
+
+    {:ok, catalog} = Jido.Messaging.Runtime.catalog(TestMessaging.__jido_messaging__(:runtime))
+
+    for signal <- signals do
+      assert_receive {:signal, ^signal}
+      assert signal.source == Jido.Messaging.Events.source(TestMessaging)
+      assert signal.subject == Jido.Messaging.Signal.Identity.room_subject(signal.data["room_id"])
+      assert {:ok, json} = Jido.Signal.Serialization.serialize(signal)
+      assert {:ok, ^signal} = Jido.Signal.Catalog.decode(catalog, json)
+      refute Map.has_key?(signal.data, "metadata")
+      refute Map.has_key?(signal.data, "track_pid")
+    end
+
+    assert FakePhoenixPresence.list("test:presence")["moving"].metadata == %{private: self()}
+    refute_received {:signal, _}
+  end
+
+  test "a move between occupied rooms does not repeat room facts" do
+    {:ok, room_a} = TestMessaging.create_room(%{type: :group})
+    {:ok, room_b} = TestMessaging.create_room(%{type: :group})
+
+    for {session, room} <- [{"moving", room_a}, {"staying-a", room_a}, {"staying-b", room_b}] do
+      assert {:ok, _, _} = AdapterPresence.touch("user", room.id, session_id: session)
+    end
+
+    {:ok, _} = TestMessaging.subscribe_signals("jido.messaging.**")
+    assert {:ok, %{online_user_ids: ["user"]}, []} = AdapterPresence.touch("user", room_b.id, session_id: "moving")
+    refute_received {:signal, _}
+  end
+
+  test "a failed track keeps presence empty and emits no facts" do
+    FakePhoenixPresence.fail_next(:track, :unavailable)
+    {:ok, _} = TestMessaging.subscribe_signals("jido.messaging.**")
+    assert {:error, :unavailable} = AdapterPresence.touch("user", "room", session_id: "failed")
+    assert AdapterPresence.snapshot() == %{online_user_ids: []}
+    assert FakePhoenixPresence.list("test:presence") == %{}
+    refute_received {:signal, _}
+
+    assert {:ok, %{online_user_ids: ["user"]}, [_, _]} =
+             AdapterPresence.touch("user", "room", session_id: "failed")
+  end
+
+  test "a failed update retains the prior session and emits no room change" do
+    assert {:ok, _, _} = AdapterPresence.touch("user", "old-room", session_id: "session")
+    before = FakePhoenixPresence.list("test:presence")
+    FakePhoenixPresence.fail_next(:update, :unavailable)
+    {:ok, _} = TestMessaging.subscribe_signals("jido.messaging.**")
+
+    assert {:error, :unavailable} = AdapterPresence.touch("user", "new-room", session_id: "session")
+    assert FakePhoenixPresence.list("test:presence") == before
+    assert AdapterPresence.snapshot() == %{online_user_ids: ["user"]}
+    refute_received {:signal, _}
+  end
+
+  test "a transport session can be recovered without duplicate runtime joins" do
+    assert {:ok, _, _} = AdapterPresence.touch("user", "room", session_id: "session")
+    :ok = FakePhoenixPresence.untrack(self(), "test:presence", "session")
+    {:ok, _} = TestMessaging.subscribe_signals("jido.messaging.**")
+
+    assert {:ok, %{online_user_ids: ["user"]}, []} = AdapterPresence.touch("user", "room", session_id: "session")
+    assert FakePhoenixPresence.list("test:presence")["session"].participant_id == "user"
+    refute_received {:signal, _}
+  end
+
+  test "an existing transport session is updated when runtime tracking starts" do
+    assert {:ok, _} = FakePhoenixPresence.track(self(), "test:presence", "session", %{old: true})
+
+    assert {:ok, %{online_user_ids: ["user"]}, [_, _]} =
+             AdapterPresence.touch("user", "room", session_id: "session")
+
+    assert FakePhoenixPresence.list("test:presence")["session"].room_id == "room"
+  end
+
+  test "prune keeps an active session online and emits only the final leave" do
+    assert {:ok, _, _} = AdapterPresence.touch("user", "room", session_id: "expired", ttl_ms: 0)
+    assert {:ok, _, []} = AdapterPresence.touch("user", "room", session_id: "active")
+    {:ok, _} = TestMessaging.subscribe_signals("jido.messaging.**")
+
+    send(Process.whereis(AdapterPresence), :prune)
+    assert AdapterPresence.snapshot() == %{online_user_ids: ["user"]}
+    assert Map.keys(FakePhoenixPresence.list("test:presence")) == ["active"]
+    refute_received {:signal, _}
+
+    assert {:ok, _, []} = AdapterPresence.touch("user", "room", session_id: "active", ttl_ms: 0)
+    send(Process.whereis(AdapterPresence), :prune)
+    assert AdapterPresence.snapshot() == %{online_user_ids: []}
+    assert_receive {:signal, left}
+    assert_receive {:signal, offline}
+    assert left.type == "jido.messaging.room.participant_left"
+    assert left.data["reason"] == "expired"
+    assert offline.type == "jido.messaging.participant.presence_changed"
+    assert offline.data["presence"] == "offline"
+
+    send(Process.whereis(AdapterPresence), :prune)
+    assert AdapterPresence.snapshot() == %{online_user_ids: []}
+    refute_received {:signal, _}
+  end
+
+  test "missing sessions do not remove active presence or emit facts" do
+    assert {:ok, _, _} = AdapterPresence.touch("user", "room", session_id: "active")
+    {:ok, _} = TestMessaging.subscribe_signals("jido.messaging.**")
+
+    assert {:ok, %{online_user_ids: ["user"]}, []} = AdapterPresence.mark_left("missing")
+    assert {:ok, %{online_user_ids: ["user"]}, []} = AdapterPresence.mark_left("user", session_id: "missing")
+    assert Map.keys(FakePhoenixPresence.list("test:presence")) == ["active"]
+    refute_received {:signal, _}
+  end
+
+  test "reset clears every transport session and keeps the observation count unchanged" do
+    for participant <- ["b", "a"] do
+      assert {:ok, _, _} = AdapterPresence.touch(participant, "room", session_id: "first-#{participant}")
+      assert {:ok, _, []} = AdapterPresence.touch(participant, "room", session_id: "second-#{participant}")
+    end
+
+    assert AdapterPresence.online_user_ids() == ["a", "b"]
+    {:ok, _} = TestMessaging.subscribe_signals("jido.messaging.**")
+    assert {:ok, %{online_user_ids: []}} = AdapterPresence.reset()
+    assert FakePhoenixPresence.list("test:presence") == %{}
+    refute_received {:signal, _}
+  end
+
+  test "stopped adapters return the documented empty state" do
+    stop_supervised!(AdapterPresence)
+    assert AdapterPresence.online_user_ids() == []
+    assert AdapterPresence.snapshot() == %{online_user_ids: []}
+    refute AdapterPresence.online?("user")
+    refute AdapterPresence.online?(nil)
+    assert AdapterPresence.touch("user", "room") == {:error, :not_started}
+    assert AdapterPresence.mark_left("user") == {:error, :not_started}
+    assert AdapterPresence.reset() == {:error, :not_started}
+  end
+
+  test "default session IDs use normalized participant identity and keep the tracking PID private" do
+    assert {:ok, %{online_user_ids: ["123"]}, signals} =
+             AdapterPresence.touch(123, :room, session_id: [], track_pid: :invalid)
+
+    meta = FakePhoenixPresence.list("test:presence")["presence:123"]
+    assert meta.room_id == "room"
+    assert meta.track_pid == Process.whereis(AdapterPresence)
+    assert Enum.all?(signals, &(not Map.has_key?(&1.data, "track_pid")))
+    assert {:ok, %{online_user_ids: []}, [_, _]} = AdapterPresence.mark_left(" 123 ")
   end
 end

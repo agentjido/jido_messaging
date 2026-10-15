@@ -28,7 +28,6 @@ defmodule Jido.Messaging.DeadLetter.ReplaySupervisor do
         )
       end
 
-    children = [{Registry, keys: :unique, name: registry_name} | worker_children]
-    Supervisor.init(children, strategy: :one_for_one)
+    Jido.Messaging.RegistryDomain.init(registry: registry_name, children: worker_children)
   end
 end

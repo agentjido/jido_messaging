@@ -65,31 +65,38 @@ defmodule Jido.Messaging.OutboundRouter do
 
     with {:ok, policy, routes} <- resolve(instance_module, room_id, opts),
          false <- Enum.empty?(routes) do
-      {delivered, failed} = dispatch_routes(instance_module, room_id, text, routes, policy, gateway_opts)
-
-      summary = %{
-        room_id: room_id,
-        policy: policy,
-        attempted: length(delivered) + length(failed),
-        delivered: delivered,
-        failed: failed
-      }
-
-      if delivered == [] do
-        {:error, {:delivery_failed, summary}}
-      else
-        {:ok, summary}
-      end
+      execute_plan(instance_module, room_id, text, {policy, routes}, gateway_opts)
     else
       true -> {:error, :no_routes}
       {:error, _reason} = error -> error
     end
   end
 
+  @doc false
+  @spec plan(module(), String.t()) :: {:ok, RoutingPolicy.t(), [route()]} | {:error, term()}
+  def plan(instance, room), do: resolve(instance, room, [])
+
+  @doc false
+  @spec execute_plan(module(), String.t(), String.t(), {RoutingPolicy.t(), [route()]}, keyword()) ::
+          {:ok, delivery_summary()} | {:error, term()}
+  def execute_plan(instance, room, text, {policy, routes}, opts) do
+    {delivered, failed} = dispatch_routes(instance, room, text, routes, policy, opts)
+
+    summary = %{
+      room_id: room,
+      policy: policy,
+      attempted: length(delivered) + length(failed),
+      delivered: delivered,
+      failed: failed
+    }
+
+    if delivered == [], do: {:error, {:delivery_failed, summary}}, else: {:ok, summary}
+  end
+
   defp resolve(instance_module, room_id, opts) do
     with {:ok, bindings} <- list_room_bindings(instance_module, room_id),
-         bridges <- ConfigStore.list_bridge_configs(instance_module, enabled: true),
-         policy <- resolve_policy(instance_module, room_id, opts) do
+         bridges when is_list(bridges) <- ConfigStore.list_bridge_configs(instance_module, enabled: true),
+         {:ok, policy} <- resolve_policy(instance_module, room_id, opts) do
       routes =
         bindings
         |> Enum.filter(&eligible_outbound_binding?/1)
@@ -108,15 +115,16 @@ defmodule Jido.Messaging.OutboundRouter do
   defp resolve_policy(instance_module, room_id, opts) do
     case Keyword.get(opts, :routing_policy) do
       %RoutingPolicy{} = policy ->
-        policy
+        {:ok, policy}
 
       policy when is_map(policy) ->
-        RoutingPolicy.new(Map.put(policy, :room_id, room_id))
+        {:ok, RoutingPolicy.new(Map.put(policy, :room_id, room_id))}
 
       _ ->
         case ConfigStore.get_routing_policy(instance_module, room_id) do
-          {:ok, %RoutingPolicy{} = policy} -> policy
-          {:error, :not_found} -> RoutingPolicy.new(%{room_id: room_id})
+          {:ok, %RoutingPolicy{} = policy} -> {:ok, policy}
+          {:error, :not_found} -> {:ok, RoutingPolicy.new(%{room_id: room_id})}
+          {:error, _} = error -> error
         end
     end
   end

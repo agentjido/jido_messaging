@@ -1,71 +1,45 @@
 defmodule Jido.Messaging.Demo.HeartbeatSensor do
   @moduledoc """
-  A Jido Sensor that emits periodic heartbeat messages to a chat room.
+  Sends periodic demo messages to a Messaging room.
 
-  This sensor demonstrates Jido's sensor capability for scheduling periodic
-  events. It fires every minute (60 seconds) and sends a thematic message
-  from Agent Jido to the chat room.
-
-  ## Usage
-
-  Start the sensor with the messaging room context:
-
-      {:ok, _pid} = Jido.Sensor.Runtime.start_link(
-        sensor: Jido.Messaging.Demo.HeartbeatSensor,
-        config: %{
-          interval: 60_000,
-          room_id: "demo:lobby",
-          instance_module: Jido.Messaging.Demo.Messaging
-        }
-      )
-
-  ## How It Works
-
-  1. On init, the sensor schedules the first tick almost immediately (`{:schedule, 1}`)
-  2. On each `:tick` event, it sends a message to the chat room
-  3. After sending, it schedules the next tick (`{:schedule, interval}`)
-
-  The sensor uses the messaging system directly rather than emitting signals,
-  since it's a standalone demo component that writes to the chat room.
+  Start this process with `config: %{interval: 60_000, room_id: room_id,
+  instance_module: messaging_module}`. The first tick occurs after one
+  millisecond. `initial_delay` can set a different first delay.
   """
 
-  use Jido.Sensor,
-    name: "heartbeat_sensor",
-    description: "Sends periodic heartbeat messages to a chat room",
-    schema:
-      Zoi.object(
-        %{
-          interval: Zoi.integer() |> Zoi.default(60_000),
-          room_id: Zoi.string(),
-          instance_module: Zoi.any()
-        },
-        coerce: true
-      )
+  use GenServer
 
   require Logger
 
-  @impl Jido.Sensor
-  def init(config, _context) do
-    state = %{
-      interval: config.interval,
-      room_id: config.room_id,
-      instance_module: config.instance_module,
-      tick_count: 0
-    }
+  @schema Zoi.object(%{
+            interval: Zoi.integer() |> Zoi.min(1) |> Zoi.default(60_000),
+            room_id: Zoi.string(),
+            instance_module: Zoi.atom()
+          })
 
-    Logger.info("[HeartbeatSensor] Initialized - interval: #{config.interval}ms, room: #{config.room_id}")
-
-    # Schedule first tick almost immediately.
-    {:ok, state, [{:schedule, 1}]}
+  @doc "Starts the demo heartbeat process."
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts) do
+    with {:ok, config} <- Zoi.parse(@schema, Keyword.get(opts, :config)),
+         delay when is_integer(delay) and delay >= 0 <- Keyword.get(opts, :initial_delay, 1) do
+      GenServer.start_link(__MODULE__, {config, delay})
+    else
+      {:error, errors} -> {:error, {:invalid_config, errors}}
+      _ -> {:error, :invalid_initial_delay}
+    end
   end
 
-  @impl Jido.Sensor
-  def handle_event(:tick, state) do
-    send_heartbeat_message(state)
-    new_state = %{state | tick_count: state.tick_count + 1}
+  @impl true
+  def init({config, delay}) do
+    Process.send_after(self(), :tick, delay)
+    {:ok, Map.put(config, :tick_count, 0)}
+  end
 
-    # Schedule next tick
-    {:ok, new_state, [{:schedule, state.interval}]}
+  @impl true
+  def handle_info(:tick, state) do
+    send_heartbeat_message(state)
+    Process.send_after(self(), :tick, state.interval)
+    {:noreply, %{state | tick_count: state.tick_count + 1}}
   end
 
   defp send_heartbeat_message(state) do

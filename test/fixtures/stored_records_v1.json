@@ -1,0 +1,728 @@
+{
+  "records": {
+    "Jido.Chat.Participant": {
+      "fields": [
+        "capabilities",
+        "external_ids",
+        "id",
+        "identity",
+        "metadata",
+        "presence",
+        "type"
+      ],
+      "payload": "g3QAAAAIdwJpZG0AAAAVc3RvcmVkLXYxLVBhcnRpY2lwYW50dwR0eXBldwVodW1hbncIbWV0YWRhdGF0AAAAAncGbGVnYWN5dwR0cnVldwZuZXN0ZWR0AAAAAW0AAAAEdGV4dG0AAAAJdW5jaGFuZ2VkdwpfX3N0cnVjdF9fdxxFbGl4aXIuSmlkby5DaGF0LlBhcnRpY2lwYW50dwhpZGVudGl0eXQAAAAAdwhwcmVzZW5jZXcHb2ZmbGluZXcMY2FwYWJpbGl0aWVzbAAAAAF3BHRleHRqdwxleHRlcm5hbF9pZHN0AAAAAA=="
+    },
+    "Jido.Chat.Room": {
+      "fields": [
+        "external_bindings",
+        "id",
+        "inserted_at",
+        "metadata",
+        "name",
+        "type"
+      ],
+      "payload": "g3QAAAAHdwJpZG0AAAAOc3RvcmVkLXYxLVJvb213BG5hbWV3A25pbHcEdHlwZXcFZ3JvdXB3CG1ldGFkYXRhdAAAAAJ3BmxlZ2FjeXcEdHJ1ZXcGbmVzdGVkdAAAAAFtAAAABHRleHRtAAAACXVuY2hhbmdlZHcKX19zdHJ1Y3RfX3cVRWxpeGlyLkppZG8uQ2hhdC5Sb29tdwtpbnNlcnRlZF9hdHQAAAANdwttaWNyb3NlY29uZGgCYQBhBncGc2Vjb25kYQB3CGNhbGVuZGFydxNFbGl4aXIuQ2FsZW5kYXIuSVNPdwVtb250aGEKdwpfX3N0cnVjdF9fdw9FbGl4aXIuRGF0ZVRpbWV3A2RheWEOdwR5ZWFyYgAAB+p3Bm1pbnV0ZWEAdwRob3VyYQB3CXRpbWVfem9uZW0AAAAHRXRjL1VUQ3cJem9uZV9hYmJybQAAAANVVEN3CnV0Y19vZmZzZXRhAHcKc3RkX29mZnNldGEAdxFleHRlcm5hbF9iaW5kaW5nc3QAAAAA"
+    },
+    "Jido.Messaging.AgentDirectoryProjection": {
+      "fields": [
+        "availability",
+        "capabilities",
+        "description",
+        "endpoint_ref",
+        "fresh_until",
+        "id",
+        "inserted_at",
+        "invocation_summary",
+        "jidoka_agent_ref",
+        "listing_state",
+        "name",
+        "principal_id",
+        "source_revision",
+        "source_updated_at",
+        "updated_at",
+        "verification_state",
+        "version"
+      ],
+      "payload": "g3QAAAASdwJpZG0AAAAic3RvcmVkLXYxLUFnZW50RGlyZWN0b3J5UHJvamVjdGlvbncEbmFtZXcDbmlsdwd2ZXJzaW9udwNuaWx3C2Rlc2NyaXB0aW9udwNuaWx3Cl9fc3RydWN0X193LkVsaXhpci5KaWRvLk1lc3NhZ2luZy5BZ2VudERpcmVjdG9yeVByb2plY3Rpb253DHByaW5jaXBhbF9pZG0AAAAVc3RvcmVkLXYxLVBhcnRpY2lwYW50dwtpbnNlcnRlZF9hdHQAAAANdwttaWNyb3NlY29uZGgCYQBhBncGc2Vjb25kYQB3CGNhbGVuZGFydxNFbGl4aXIuQ2FsZW5kYXIuSVNPdwVtb250aGEKdwpfX3N0cnVjdF9fdw9FbGl4aXIuRGF0ZVRpbWV3A2RheWEOdwR5ZWFyYgAAB+p3Bm1pbnV0ZWEAdwRob3VyYQB3CXRpbWVfem9uZW0AAAAHRXRjL1VUQ3cJem9uZV9hYmJybQAAAANVVEN3CnV0Y19vZmZzZXRhAHcKc3RkX29mZnNldGEAdwp1cGRhdGVkX2F0dAAAAA13C21pY3Jvc2Vjb25kaAJhAGEGdwZzZWNvbmRhAHcIY2FsZW5kYXJ3E0VsaXhpci5DYWxlbmRhci5JU093BW1vbnRoYQp3Cl9fc3RydWN0X193D0VsaXhpci5EYXRlVGltZXcDZGF5YQ53BHllYXJiAAAH6ncGbWludXRlYQB3BGhvdXJhAHcJdGltZV96b25lbQAAAAdFdGMvVVRDdwl6b25lX2FiYnJtAAAAA1VUQ3cKdXRjX29mZnNldGEAdwpzdGRfb2Zmc2V0YQB3DGNhcGFiaWxpdGllc3cDbmlsdxJ2ZXJpZmljYXRpb25fc3RhdGV3A25pbHcQamlkb2thX2FnZW50X3JlZncDbmlsdwxhdmFpbGFiaWxpdHl3A25pbHcRc291cmNlX3VwZGF0ZWRfYXR3A25pbHcMZW5kcG9pbnRfcmVmdwNuaWx3Emludm9jYXRpb25fc3VtbWFyeXcDbmlsdw1saXN0aW5nX3N0YXRldwNuaWx3D3NvdXJjZV9yZXZpc2lvbncDbmlsdwtmcmVzaF91bnRpbHcDbmls"
+    },
+    "Jido.Messaging.AgentMessagingEndpoint": {
+      "fields": [
+        "availability",
+        "availability_ref",
+        "id",
+        "inserted_at",
+        "jidoka_agent_ref",
+        "last_seen_at",
+        "metadata",
+        "principal_id",
+        "status",
+        "updated_at"
+      ],
+      "payload": "g3QAAAALdwJpZG0AAAAgc3RvcmVkLXYxLUFnZW50TWVzc2FnaW5nRW5kcG9pbnR3BnN0YXR1c3cGYWN0aXZldwhtZXRhZGF0YXQAAAACdwZsZWdhY3l3BHRydWV3Bm5lc3RlZHQAAAABbQAAAAR0ZXh0bQAAAAl1bmNoYW5nZWR3Cl9fc3RydWN0X193LEVsaXhpci5KaWRvLk1lc3NhZ2luZy5BZ2VudE1lc3NhZ2luZ0VuZHBvaW50dwxwcmluY2lwYWxfaWRtAAAAFXN0b3JlZC12MS1QYXJ0aWNpcGFudHcLaW5zZXJ0ZWRfYXR0AAAADXcLbWljcm9zZWNvbmRoAmEAYQZ3BnNlY29uZGEAdwhjYWxlbmRhcncTRWxpeGlyLkNhbGVuZGFyLklTT3cFbW9udGhhCncKX19zdHJ1Y3RfX3cPRWxpeGlyLkRhdGVUaW1ldwNkYXlhDncEeWVhcmIAAAfqdwZtaW51dGVhAHcEaG91cmEAdwl0aW1lX3pvbmVtAAAAB0V0Yy9VVEN3CXpvbmVfYWJicm0AAAADVVRDdwp1dGNfb2Zmc2V0YQB3CnN0ZF9vZmZzZXRhAHcKdXBkYXRlZF9hdHQAAAANdwttaWNyb3NlY29uZGgCYQBhBncGc2Vjb25kYQB3CGNhbGVuZGFydxNFbGl4aXIuQ2FsZW5kYXIuSVNPdwVtb250aGEKdwpfX3N0cnVjdF9fdw9FbGl4aXIuRGF0ZVRpbWV3A2RheWEOdwR5ZWFyYgAAB+p3Bm1pbnV0ZWEAdwRob3VyYQB3CXRpbWVfem9uZW0AAAAHRXRjL1VUQ3cJem9uZV9hYmJybQAAAANVVEN3CnV0Y19vZmZzZXRhAHcKc3RkX29mZnNldGEAdwxsYXN0X3NlZW5fYXR3A25pbHcQamlkb2thX2FnZW50X3JlZncDbmlsdxBhdmFpbGFiaWxpdHlfcmVmdwNuaWx3DGF2YWlsYWJpbGl0eXcHdW5rbm93bg=="
+    },
+    "Jido.Messaging.AgentThreadRoute": {
+      "fields": [
+        "delivery_revision",
+        "endpoint_id",
+        "id",
+        "inserted_at",
+        "jidoka_request_ref",
+        "jidoka_session_ref",
+        "jidoka_turn_ref",
+        "metadata",
+        "room_id",
+        "status",
+        "thread_id",
+        "updated_at"
+      ],
+      "payload": "g3QAAAANdwJpZG0AAAAac3RvcmVkLXYxLUFnZW50VGhyZWFkUm91dGV3BnN0YXR1c3cGYWN0aXZldwhtZXRhZGF0YXQAAAACdwZsZWdhY3l3BHRydWV3Bm5lc3RlZHQAAAABbQAAAAR0ZXh0bQAAAAl1bmNoYW5nZWR3Cl9fc3RydWN0X193JkVsaXhpci5KaWRvLk1lc3NhZ2luZy5BZ2VudFRocmVhZFJvdXRldwdyb29tX2lkbQAAAA5zdG9yZWQtdjEtUm9vbXcLaW5zZXJ0ZWRfYXR0AAAADXcLbWljcm9zZWNvbmRoAmEAYQZ3BnNlY29uZGEAdwhjYWxlbmRhcncTRWxpeGlyLkNhbGVuZGFyLklTT3cFbW9udGhhCncKX19zdHJ1Y3RfX3cPRWxpeGlyLkRhdGVUaW1ldwNkYXlhDncEeWVhcmIAAAfqdwZtaW51dGVhAHcEaG91cmEAdwl0aW1lX3pvbmVtAAAAB0V0Yy9VVEN3CXpvbmVfYWJicm0AAAADVVRDdwp1dGNfb2Zmc2V0YQB3CnN0ZF9vZmZzZXRhAHcKdXBkYXRlZF9hdHQAAAANdwttaWNyb3NlY29uZGgCYQBhBncGc2Vjb25kYQB3CGNhbGVuZGFydxNFbGl4aXIuQ2FsZW5kYXIuSVNPdwVtb250aGEKdwpfX3N0cnVjdF9fdw9FbGl4aXIuRGF0ZVRpbWV3A2RheWEOdwR5ZWFyYgAAB+p3Bm1pbnV0ZWEAdwRob3VyYQB3CXRpbWVfem9uZW0AAAAHRXRjL1VUQ3cJem9uZV9hYmJybQAAAANVVEN3CnV0Y19vZmZzZXRhAHcKc3RkX29mZnNldGEAdwl0aHJlYWRfaWR3A25pbHcLZW5kcG9pbnRfaWR3A25pbHcRZGVsaXZlcnlfcmV2aXNpb25hAHcSamlkb2thX3Nlc3Npb25fcmVmdwNuaWx3EmppZG9rYV9yZXF1ZXN0X3JlZncDbmlsdw9qaWRva2FfdHVybl9yZWZ3A25pbA=="
+    },
+    "Jido.Messaging.BridgeConfig": {
+      "fields": [
+        "adapter_module",
+        "capabilities",
+        "credentials",
+        "delivery_policy",
+        "enabled",
+        "id",
+        "inserted_at",
+        "opts",
+        "revision",
+        "secret_refs",
+        "updated_at"
+      ],
+      "payload": "g3QAAAAMdwdlbmFibGVkdwR0cnVldwJpZG0AAAAWc3RvcmVkLXYxLUJyaWRnZUNvbmZpZ3cEb3B0c3QAAAAAdwtjcmVkZW50aWFsc3QAAAAAdwpfX3N0cnVjdF9fdyJFbGl4aXIuSmlkby5NZXNzYWdpbmcuQnJpZGdlQ29uZmlndwhyZXZpc2lvbmEAdwtpbnNlcnRlZF9hdHQAAAANdwttaWNyb3NlY29uZGgCYQBhBncGc2Vjb25kYQB3CGNhbGVuZGFydxNFbGl4aXIuQ2FsZW5kYXIuSVNPdwVtb250aGEKdwpfX3N0cnVjdF9fdw9FbGl4aXIuRGF0ZVRpbWV3A2RheWEOdwR5ZWFyYgAAB+p3Bm1pbnV0ZWEAdwRob3VyYQB3CXRpbWVfem9uZW0AAAAHRXRjL1VUQ3cJem9uZV9hYmJybQAAAANVVEN3CnV0Y19vZmZzZXRhAHcKc3RkX29mZnNldGEAdwp1cGRhdGVkX2F0dAAAAA13C21pY3Jvc2Vjb25kaAJhAGEGdwZzZWNvbmRhAHcIY2FsZW5kYXJ3E0VsaXhpci5DYWxlbmRhci5JU093BW1vbnRoYQp3Cl9fc3RydWN0X193D0VsaXhpci5EYXRlVGltZXcDZGF5YQ53BHllYXJiAAAH6ncGbWludXRlYQB3BGhvdXJhAHcJdGltZV96b25lbQAAAAdFdGMvVVRDdwl6b25lX2FiYnJtAAAAA1VUQ3cKdXRjX29mZnNldGEAdwpzdGRfb2Zmc2V0YQB3DGNhcGFiaWxpdGllc3QAAAAAdwtzZWNyZXRfcmVmc3QAAAAAdw9kZWxpdmVyeV9wb2xpY3l0AAAABXcMbWF4X2F0dGVtcHRzYQN3Cl9fc3RydWN0X193JEVsaXhpci5KaWRvLk1lc3NhZ2luZy5EZWxpdmVyeVBvbGljeXcPYmFzZV9iYWNrb2ZmX21zYRl3C2RlYWRfbGV0dGVydwR0cnVldw5tYXhfYmFja29mZl9tc2IAAAH0dw5hZGFwdGVyX21vZHVsZXcDbmls"
+    },
+    "Jido.Messaging.ExternalIdentityBinding": {
+      "fields": [
+        "assurance",
+        "bridge_id",
+        "channel",
+        "external_id",
+        "id",
+        "inserted_at",
+        "metadata",
+        "participant_id",
+        "principal_id",
+        "proof_ref",
+        "revoked_at",
+        "status",
+        "updated_at",
+        "verified_at"
+      ],
+      "payload": "g3QAAAAPdwJpZG0AAAAhc3RvcmVkLXYxLUV4dGVybmFsSWRlbnRpdHlCaW5kaW5ndwZzdGF0dXN3BmFjdGl2ZXcIbWV0YWRhdGF0AAAAAncGbGVnYWN5dwR0cnVldwZuZXN0ZWR0AAAAAW0AAAAEdGV4dG0AAAAJdW5jaGFuZ2VkdwpfX3N0cnVjdF9fdy1FbGl4aXIuSmlkby5NZXNzYWdpbmcuRXh0ZXJuYWxJZGVudGl0eUJpbmRpbmd3B2NoYW5uZWx3A25pbHcOcGFydGljaXBhbnRfaWRtAAAAFXN0b3JlZC12MS1QYXJ0aWNpcGFudHcMcHJpbmNpcGFsX2lkbQAAABVzdG9yZWQtdjEtUGFydGljaXBhbnR3C2luc2VydGVkX2F0dAAAAA13C21pY3Jvc2Vjb25kaAJhAGEGdwZzZWNvbmRhAHcIY2FsZW5kYXJ3E0VsaXhpci5DYWxlbmRhci5JU093BW1vbnRoYQp3Cl9fc3RydWN0X193D0VsaXhpci5EYXRlVGltZXcDZGF5YQ53BHllYXJiAAAH6ncGbWludXRlYQB3BGhvdXJhAHcJdGltZV96b25lbQAAAAdFdGMvVVRDdwl6b25lX2FiYnJtAAAAA1VUQ3cKdXRjX29mZnNldGEAdwpzdGRfb2Zmc2V0YQB3CnVwZGF0ZWRfYXR0AAAADXcLbWljcm9zZWNvbmRoAmEAYQZ3BnNlY29uZGEAdwhjYWxlbmRhcncTRWxpeGlyLkNhbGVuZGFyLklTT3cFbW9udGhhCncKX19zdHJ1Y3RfX3cPRWxpeGlyLkRhdGVUaW1ldwNkYXlhDncEeWVhcmIAAAfqdwZtaW51dGVhAHcEaG91cmEAdwl0aW1lX3pvbmVtAAAAB0V0Yy9VVEN3CXpvbmVfYWJicm0AAAADVVRDdwp1dGNfb2Zmc2V0YQB3CnN0ZF9vZmZzZXRhAHcLZXh0ZXJuYWxfaWR3A25pbHcJYnJpZGdlX2lkdwNuaWx3CWFzc3VyYW5jZXcIYXNzZXJ0ZWR3CXByb29mX3JlZncDbmlsdwt2ZXJpZmllZF9hdHcDbmlsdwpyZXZva2VkX2F0dwNuaWw="
+    },
+    "Jido.Messaging.Grant": {
+      "fields": [
+        "actions",
+        "constraints",
+        "expires_at",
+        "id",
+        "inserted_at",
+        "issuer_principal_id",
+        "metadata",
+        "principal_id",
+        "revision",
+        "scope",
+        "starts_at",
+        "status",
+        "updated_at"
+      ],
+      "payload": "g3QAAAAOdwJpZG0AAAAPc3RvcmVkLXYxLUdyYW50dwVzY29wZXQAAAAHdwpfX3N0cnVjdF9fdyhFbGl4aXIuSmlkby5NZXNzYWdpbmcuQXV0aG9yaXphdGlvblNjb3BldwRraW5kdwRyb29tdwdyb29tX2lkbQAAAA5zdG9yZWQtdjEtUm9vbXcTdGFyZ2V0X3ByaW5jaXBhbF9pZHcDbmlsdwl0aHJlYWRfaWR3A25pbHcJYnJpZGdlX2lkdwNuaWx3Cm1lc3NhZ2VfaWR3A25pbHcGc3RhdHVzdwZhY3RpdmV3CG1ldGFkYXRhdAAAAAJ3BmxlZ2FjeXcEdHJ1ZXcGbmVzdGVkdAAAAAFtAAAABHRleHRtAAAACXVuY2hhbmdlZHcKX19zdHJ1Y3RfX3cbRWxpeGlyLkppZG8uTWVzc2FnaW5nLkdyYW50dwhyZXZpc2lvbmEBdwtjb25zdHJhaW50c3QAAAABbQAAABNyZXF1aXJlc19tZW1iZXJzaGlwdwR0cnVldwpleHBpcmVzX2F0dwNuaWx3B2FjdGlvbnNsAAAAAXcPcmVhZF90cmFuc2NyaXB0ancMcHJpbmNpcGFsX2lkbQAAABVzdG9yZWQtdjEtUGFydGljaXBhbnR3E2lzc3Vlcl9wcmluY2lwYWxfaWRtAAAABGhvc3R3C2luc2VydGVkX2F0dAAAAA13C21pY3Jvc2Vjb25kaAJhAGEGdwZzZWNvbmRhAHcIY2FsZW5kYXJ3E0VsaXhpci5DYWxlbmRhci5JU093BW1vbnRoYQp3Cl9fc3RydWN0X193D0VsaXhpci5EYXRlVGltZXcDZGF5YQ53BHllYXJiAAAH6ncGbWludXRlYQB3BGhvdXJhAHcJdGltZV96b25lbQAAAAdFdGMvVVRDdwl6b25lX2FiYnJtAAAAA1VUQ3cKdXRjX29mZnNldGEAdwpzdGRfb2Zmc2V0YQB3CnVwZGF0ZWRfYXR0AAAADXcLbWljcm9zZWNvbmRoAmEAYQZ3BnNlY29uZGEAdwhjYWxlbmRhcncTRWxpeGlyLkNhbGVuZGFyLklTT3cFbW9udGhhCncKX19zdHJ1Y3RfX3cPRWxpeGlyLkRhdGVUaW1ldwNkYXlhDncEeWVhcmIAAAfqdwZtaW51dGVhAHcEaG91cmEAdwl0aW1lX3pvbmVtAAAAB0V0Yy9VVEN3CXpvbmVfYWJicm0AAAADVVRDdwp1dGNfb2Zmc2V0YQB3CnN0ZF9vZmZzZXRhAHcJc3RhcnRzX2F0dwNuaWw="
+    },
+    "Jido.Messaging.IdentityAssertionUse": {
+      "fields": [
+        "assertion_key",
+        "credential_id",
+        "expires_at",
+        "id",
+        "inserted_at"
+      ],
+      "payload": "g3QAAAAGdwJpZG0AAAAec3RvcmVkLXYxLUlkZW50aXR5QXNzZXJ0aW9uVXNldwpfX3N0cnVjdF9fdypFbGl4aXIuSmlkby5NZXNzYWdpbmcuSWRlbnRpdHlBc3NlcnRpb25Vc2V3CmV4cGlyZXNfYXR3A25pbHcLaW5zZXJ0ZWRfYXR0AAAADXcLbWljcm9zZWNvbmRoAmEAYQZ3BnNlY29uZGEAdwhjYWxlbmRhcncTRWxpeGlyLkNhbGVuZGFyLklTT3cFbW9udGhhCncKX19zdHJ1Y3RfX3cPRWxpeGlyLkRhdGVUaW1ldwNkYXlhDncEeWVhcmIAAAfqdwZtaW51dGVhAHcEaG91cmEAdwl0aW1lX3pvbmVtAAAAB0V0Yy9VVEN3CXpvbmVfYWJicm0AAAADVVRDdwp1dGNfb2Zmc2V0YQB3CnN0ZF9vZmZzZXRhAHcNYXNzZXJ0aW9uX2tleXcDbmlsdw1jcmVkZW50aWFsX2lkdwNuaWw="
+    },
+    "Jido.Messaging.IdentityCredential": {
+      "fields": [
+        "conditions",
+        "expires_at",
+        "id",
+        "inserted_at",
+        "issued_at",
+        "issuer_principal_id",
+        "key_version_ref",
+        "metadata",
+        "not_before",
+        "proof_ref",
+        "proof_type",
+        "provider_id",
+        "purpose",
+        "revision",
+        "revocation_reason",
+        "revoked_at",
+        "rotated_from_credential_id",
+        "status",
+        "subject_principal_id",
+        "updated_at"
+      ],
+      "payload": "g3QAAAAVdwJpZG0AAAAcc3RvcmVkLXYxLUlkZW50aXR5Q3JlZGVudGlhbHcGc3RhdHVzdwZhY3RpdmV3CG1ldGFkYXRhdAAAAAJ3BmxlZ2FjeXcEdHJ1ZXcGbmVzdGVkdAAAAAFtAAAABHRleHRtAAAACXVuY2hhbmdlZHcKX19zdHJ1Y3RfX3coRWxpeGlyLkppZG8uTWVzc2FnaW5nLklkZW50aXR5Q3JlZGVudGlhbHcIcmV2aXNpb25hAXcKZXhwaXJlc19hdHcDbmlsdxNpc3N1ZXJfcHJpbmNpcGFsX2lkbQAAAARob3N0dwtpbnNlcnRlZF9hdHQAAAANdwttaWNyb3NlY29uZGgCYQBhBncGc2Vjb25kYQB3CGNhbGVuZGFydxNFbGl4aXIuQ2FsZW5kYXIuSVNPdwVtb250aGEKdwpfX3N0cnVjdF9fdw9FbGl4aXIuRGF0ZVRpbWV3A2RheWEOdwR5ZWFyYgAAB+p3Bm1pbnV0ZWEAdwRob3VyYQB3CXRpbWVfem9uZW0AAAAHRXRjL1VUQ3cJem9uZV9hYmJybQAAAANVVEN3CnV0Y19vZmZzZXRhAHcKc3RkX29mZnNldGEAdwp1cGRhdGVkX2F0dAAAAA13C21pY3Jvc2Vjb25kaAJhAGEGdwZzZWNvbmRhAHcIY2FsZW5kYXJ3E0VsaXhpci5DYWxlbmRhci5JU093BW1vbnRoYQp3Cl9fc3RydWN0X193D0VsaXhpci5EYXRlVGltZXcDZGF5YQ53BHllYXJiAAAH6ncGbWludXRlYQB3BGhvdXJhAHcJdGltZV96b25lbQAAAAdFdGMvVVRDdwl6b25lX2FiYnJtAAAAA1VUQ3cKdXRjX29mZnNldGEAdwpzdGRfb2Zmc2V0YQB3CXByb29mX3JlZncDbmlsdwpyZXZva2VkX2F0dwNuaWx3Cm5vdF9iZWZvcmV3A25pbHcJaXNzdWVkX2F0dwNuaWx3FHN1YmplY3RfcHJpbmNpcGFsX2lkdwNuaWx3EXJldm9jYXRpb25fcmVhc29udwNuaWx3B3B1cnBvc2V3A25pbHcKY29uZGl0aW9uc3cDbmlsdwtwcm92aWRlcl9pZHcDbmlsdwpwcm9vZl90eXBldwNuaWx3D2tleV92ZXJzaW9uX3JlZncDbmlsdxpyb3RhdGVkX2Zyb21fY3JlZGVudGlhbF9pZHcDbmls"
+    },
+    "Jido.Messaging.IngressSubscription": {
+      "fields": [
+        "adapter_name",
+        "bridge_id",
+        "expires_at",
+        "external_id",
+        "metadata",
+        "raw",
+        "status",
+        "subscription_id",
+        "target_url"
+      ],
+      "payload": "g3QAAAAKdwNyYXd3A25pbHcGc3RhdHVzdwZhY3RpdmV3CG1ldGFkYXRhdAAAAAJ3BmxlZ2FjeXcEdHJ1ZXcGbmVzdGVkdAAAAAFtAAAABHRleHRtAAAACXVuY2hhbmdlZHcKX19zdHJ1Y3RfX3cpRWxpeGlyLkppZG8uTWVzc2FnaW5nLkluZ3Jlc3NTdWJzY3JpcHRpb253CmV4cGlyZXNfYXR3A25pbHcLZXh0ZXJuYWxfaWR3A25pbHcJYnJpZGdlX2lkdwNuaWx3CnRhcmdldF91cmx3A25pbHcPc3Vic2NyaXB0aW9uX2lkdwNuaWx3DGFkYXB0ZXJfbmFtZXcDbmls"
+    },
+    "Jido.Messaging.InvocationPolicy": {
+      "fields": [
+        "allowed_principal_ids",
+        "controller_principal_id",
+        "expires_at",
+        "id",
+        "inserted_at",
+        "issuer_principal_id",
+        "metadata",
+        "mode",
+        "revision",
+        "scope",
+        "status",
+        "target_principal_id",
+        "updated_at"
+      ],
+      "payload": "g3QAAAAOdwJpZG0AAAAac3RvcmVkLXYxLUludm9jYXRpb25Qb2xpY3l3BXNjb3BldAAAAAd3Cl9fc3RydWN0X193KEVsaXhpci5KaWRvLk1lc3NhZ2luZy5BdXRob3JpemF0aW9uU2NvcGV3BGtpbmR3BHJvb213B3Jvb21faWRtAAAADnN0b3JlZC12MS1Sb29tdxN0YXJnZXRfcHJpbmNpcGFsX2lkdwNuaWx3CXRocmVhZF9pZHcDbmlsdwlicmlkZ2VfaWR3A25pbHcKbWVzc2FnZV9pZHcDbmlsdwZzdGF0dXN3BmFjdGl2ZXcEbW9kZXcGbm9ib2R5dwhtZXRhZGF0YXQAAAACdwZsZWdhY3l3BHRydWV3Bm5lc3RlZHQAAAABbQAAAAR0ZXh0bQAAAAl1bmNoYW5nZWR3Cl9fc3RydWN0X193JkVsaXhpci5KaWRvLk1lc3NhZ2luZy5JbnZvY2F0aW9uUG9saWN5dwhyZXZpc2lvbmEBdwpleHBpcmVzX2F0dwNuaWx3E2lzc3Vlcl9wcmluY2lwYWxfaWRtAAAABGhvc3R3E3RhcmdldF9wcmluY2lwYWxfaWRtAAAAFXN0b3JlZC12MS1QYXJ0aWNpcGFudHcLaW5zZXJ0ZWRfYXR0AAAADXcLbWljcm9zZWNvbmRoAmEAYQZ3BnNlY29uZGEAdwhjYWxlbmRhcncTRWxpeGlyLkNhbGVuZGFyLklTT3cFbW9udGhhCncKX19zdHJ1Y3RfX3cPRWxpeGlyLkRhdGVUaW1ldwNkYXlhDncEeWVhcmIAAAfqdwZtaW51dGVhAHcEaG91cmEAdwl0aW1lX3pvbmVtAAAAB0V0Yy9VVEN3CXpvbmVfYWJicm0AAAADVVRDdwp1dGNfb2Zmc2V0YQB3CnN0ZF9vZmZzZXRhAHcKdXBkYXRlZF9hdHQAAAANdwttaWNyb3NlY29uZGgCYQBhBncGc2Vjb25kYQB3CGNhbGVuZGFydxNFbGl4aXIuQ2FsZW5kYXIuSVNPdwVtb250aGEKdwpfX3N0cnVjdF9fdw9FbGl4aXIuRGF0ZVRpbWV3A2RheWEOdwR5ZWFyYgAAB+p3Bm1pbnV0ZWEAdwRob3VyYQB3CXRpbWVfem9uZW0AAAAHRXRjL1VUQ3cJem9uZV9hYmJybQAAAANVVEN3CnV0Y19vZmZzZXRhAHcKc3RkX29mZnNldGEAdxdjb250cm9sbGVyX3ByaW5jaXBhbF9pZHcDbmlsdxVhbGxvd2VkX3ByaW5jaXBhbF9pZHNq"
+    },
+    "Jido.Messaging.JidokaDelegationEvent": {
+      "fields": [
+        "action",
+        "delegation_ref",
+        "emission_ref",
+        "id",
+        "observed_at",
+        "reason_code",
+        "related_message_ids",
+        "room_id",
+        "route_ref",
+        "source_principal_id",
+        "target_principal_id",
+        "thread_id",
+        "transport_id",
+        "visited_nodes"
+      ],
+      "payload": "g3QAAAAPdwJpZG0AAAAfc3RvcmVkLXYxLUppZG9rYURlbGVnYXRpb25FdmVudHcGYWN0aW9udwNuaWx3Cl9fc3RydWN0X193K0VsaXhpci5KaWRvLk1lc3NhZ2luZy5KaWRva2FEZWxlZ2F0aW9uRXZlbnR3B3Jvb21faWRtAAAADnN0b3JlZC12MS1Sb29tdxN0YXJnZXRfcHJpbmNpcGFsX2lkbQAAABVzdG9yZWQtdjEtUGFydGljaXBhbnR3CXRocmVhZF9pZHcDbmlsdwxlbWlzc2lvbl9yZWZ3A25pbHcNdmlzaXRlZF9ub2Rlc3cDbmlsdwtvYnNlcnZlZF9hdHcDbmlsdw5kZWxlZ2F0aW9uX3JlZncDbmlsdwlyb3V0ZV9yZWZ3A25pbHcLcmVhc29uX2NvZGV3A25pbHcTcmVsYXRlZF9tZXNzYWdlX2lkc3cDbmlsdxNzb3VyY2VfcHJpbmNpcGFsX2lkdwNuaWx3DHRyYW5zcG9ydF9pZHcDbmls"
+    },
+    "Jido.Messaging.Membership": {
+      "fields": [
+        "ended_at",
+        "id",
+        "inserted_at",
+        "issuer_principal_id",
+        "joined_at",
+        "metadata",
+        "principal_id",
+        "revision",
+        "room_id",
+        "status",
+        "updated_at"
+      ],
+      "payload": "g3QAAAAMdwJpZG0AAAAUc3RvcmVkLXYxLU1lbWJlcnNoaXB3BnN0YXR1c3cGYWN0aXZldwhtZXRhZGF0YXQAAAACdwZsZWdhY3l3BHRydWV3Bm5lc3RlZHQAAAABbQAAAAR0ZXh0bQAAAAl1bmNoYW5nZWR3Cl9fc3RydWN0X193IEVsaXhpci5KaWRvLk1lc3NhZ2luZy5NZW1iZXJzaGlwdwhyZXZpc2lvbmEBdwdyb29tX2lkbQAAAA5zdG9yZWQtdjEtUm9vbXcMcHJpbmNpcGFsX2lkbQAAABVzdG9yZWQtdjEtUGFydGljaXBhbnR3E2lzc3Vlcl9wcmluY2lwYWxfaWRtAAAABGhvc3R3C2luc2VydGVkX2F0dAAAAA13C21pY3Jvc2Vjb25kaAJhAGEGdwZzZWNvbmRhAHcIY2FsZW5kYXJ3E0VsaXhpci5DYWxlbmRhci5JU093BW1vbnRoYQp3Cl9fc3RydWN0X193D0VsaXhpci5EYXRlVGltZXcDZGF5YQ53BHllYXJiAAAH6ncGbWludXRlYQB3BGhvdXJhAHcJdGltZV96b25lbQAAAAdFdGMvVVRDdwl6b25lX2FiYnJtAAAAA1VUQ3cKdXRjX29mZnNldGEAdwpzdGRfb2Zmc2V0YQB3CnVwZGF0ZWRfYXR0AAAADXcLbWljcm9zZWNvbmRoAmEAYQZ3BnNlY29uZGEAdwhjYWxlbmRhcncTRWxpeGlyLkNhbGVuZGFyLklTT3cFbW9udGhhCncKX19zdHJ1Y3RfX3cPRWxpeGlyLkRhdGVUaW1ldwNkYXlhDncEeWVhcmIAAAfqdwZtaW51dGVhAHcEaG91cmEAdwl0aW1lX3pvbmVtAAAAB0V0Yy9VVEN3CXpvbmVfYWJicm0AAAADVVRDdwp1dGNfb2Zmc2V0YQB3CnN0ZF9vZmZzZXRhAHcJam9pbmVkX2F0dAAAAA13C21pY3Jvc2Vjb25kaAJiAAu8PmEGdwZzZWNvbmRhJXcIY2FsZW5kYXJ3E0VsaXhpci5DYWxlbmRhci5JU093BW1vbnRoYQp3Cl9fc3RydWN0X193D0VsaXhpci5EYXRlVGltZXcDZGF5YQ93BHllYXJiAAAH6ncGbWludXRlYQZ3BGhvdXJhAHcJdGltZV96b25lbQAAAAdFdGMvVVRDdwl6b25lX2FiYnJtAAAAA1VUQ3cKdXRjX29mZnNldGEAdwpzdGRfb2Zmc2V0YQB3CGVuZGVkX2F0dwNuaWw="
+    },
+    "Jido.Messaging.Message": {
+      "fields": [
+        "content",
+        "delivery_external_room_id",
+        "external_id",
+        "external_reply_to_id",
+        "external_thread_id",
+        "id",
+        "inserted_at",
+        "metadata",
+        "reactions",
+        "receipts",
+        "reply_to_id",
+        "role",
+        "room_id",
+        "sender_id",
+        "status",
+        "thread_id",
+        "updated_at"
+      ],
+      "payload": "g3QAAAASdwJpZG0AAAARc3RvcmVkLXYxLU1lc3NhZ2V3BnN0YXR1c3cHc2VuZGluZ3cIbWV0YWRhdGF0AAAAAncGbGVnYWN5dwR0cnVldwZuZXN0ZWR0AAAAAW0AAAAEdGV4dG0AAAAJdW5jaGFuZ2VkdwpfX3N0cnVjdF9fdx1FbGl4aXIuSmlkby5NZXNzYWdpbmcuTWVzc2FnZXcEcm9sZXcEdXNlcncHY29udGVudGwAAAABdAAAAAJ3BHR5cGV3BHRleHR3BHRleHRtAAAAEFN0b3JlZCBiZWZvcmUgQzRqdwdyb29tX2lkbQAAAA5zdG9yZWQtdjEtUm9vbXcJc2VuZGVyX2lkbQAAABVzdG9yZWQtdjEtUGFydGljaXBhbnR3C2luc2VydGVkX2F0dAAAAA13C21pY3Jvc2Vjb25kaAJhAGEGdwZzZWNvbmRhAHcIY2FsZW5kYXJ3E0VsaXhpci5DYWxlbmRhci5JU093BW1vbnRoYQp3Cl9fc3RydWN0X193D0VsaXhpci5EYXRlVGltZXcDZGF5YQ53BHllYXJiAAAH6ncGbWludXRlYQB3BGhvdXJhAHcJdGltZV96b25lbQAAAAdFdGMvVVRDdwl6b25lX2FiYnJtAAAAA1VUQ3cKdXRjX29mZnNldGEAdwpzdGRfb2Zmc2V0YQB3CnVwZGF0ZWRfYXR0AAAADXcLbWljcm9zZWNvbmRoAmEAYQZ3BnNlY29uZGEAdwhjYWxlbmRhcncTRWxpeGlyLkNhbGVuZGFyLklTT3cFbW9udGhhCncKX19zdHJ1Y3RfX3cPRWxpeGlyLkRhdGVUaW1ldwNkYXlhDncEeWVhcmIAAAfqdwZtaW51dGVhAHcEaG91cmEAdwl0aW1lX3pvbmVtAAAAB0V0Yy9VVEN3CXpvbmVfYWJicm0AAAADVVRDdwp1dGNfb2Zmc2V0YQB3CnN0ZF9vZmZzZXRhAHcSZXh0ZXJuYWxfdGhyZWFkX2lkdwNuaWx3CXRocmVhZF9pZHcDbmlsdxlkZWxpdmVyeV9leHRlcm5hbF9yb29tX2lkdwNuaWx3C2V4dGVybmFsX2lkdwNuaWx3FGV4dGVybmFsX3JlcGx5X3RvX2lkdwNuaWx3C3JlcGx5X3RvX2lkdwNuaWx3CXJlYWN0aW9uc3QAAAAAdwhyZWNlaXB0c3QAAAAA"
+    },
+    "Jido.Messaging.MessagingActivityEntry": {
+      "fields": [
+        "execution_ref",
+        "id",
+        "inserted_at",
+        "kind",
+        "message_id",
+        "principal_id",
+        "room_id",
+        "source_event_id",
+        "source_event_type",
+        "source_recorded_at",
+        "source_revision",
+        "status",
+        "summary",
+        "thread_id",
+        "updated_at"
+      ],
+      "payload": "g3QAAAAQdwJpZG0AAAAgc3RvcmVkLXYxLU1lc3NhZ2luZ0FjdGl2aXR5RW50cnl3BnN0YXR1c3cDbmlsdwpfX3N0cnVjdF9fdyxFbGl4aXIuSmlkby5NZXNzYWdpbmcuTWVzc2FnaW5nQWN0aXZpdHlFbnRyeXcEa2luZHcDbmlsdwdzdW1tYXJ5dwNuaWx3B3Jvb21faWRtAAAADnN0b3JlZC12MS1Sb29tdwxwcmluY2lwYWxfaWRtAAAAFXN0b3JlZC12MS1QYXJ0aWNpcGFudHcLaW5zZXJ0ZWRfYXR0AAAADXcLbWljcm9zZWNvbmRoAmEAYQZ3BnNlY29uZGEAdwhjYWxlbmRhcncTRWxpeGlyLkNhbGVuZGFyLklTT3cFbW9udGhhCncKX19zdHJ1Y3RfX3cPRWxpeGlyLkRhdGVUaW1ldwNkYXlhDncEeWVhcmIAAAfqdwZtaW51dGVhAHcEaG91cmEAdwl0aW1lX3pvbmVtAAAAB0V0Yy9VVEN3CXpvbmVfYWJicm0AAAADVVRDdwp1dGNfb2Zmc2V0YQB3CnN0ZF9vZmZzZXRhAHcKdXBkYXRlZF9hdHQAAAANdwttaWNyb3NlY29uZGgCYQBhBncGc2Vjb25kYQB3CGNhbGVuZGFydxNFbGl4aXIuQ2FsZW5kYXIuSVNPdwVtb250aGEKdwpfX3N0cnVjdF9fdw9FbGl4aXIuRGF0ZVRpbWV3A2RheWEOdwR5ZWFyYgAAB+p3Bm1pbnV0ZWEAdwRob3VyYQB3CXRpbWVfem9uZW0AAAAHRXRjL1VUQ3cJem9uZV9hYmJybQAAAANVVEN3CnV0Y19vZmZzZXRhAHcKc3RkX29mZnNldGEAdwl0aHJlYWRfaWR3A25pbHcKbWVzc2FnZV9pZHcDbmlsdw9zb3VyY2VfcmV2aXNpb253A25pbHcNZXhlY3V0aW9uX3JlZncDbmlsdw9zb3VyY2VfZXZlbnRfaWR3A25pbHcSc291cmNlX3JlY29yZGVkX2F0dwNuaWx3EXNvdXJjZV9ldmVudF90eXBldwNuaWw="
+    },
+    "Jido.Messaging.Principal": {
+      "fields": [
+        "agent_ref",
+        "controller_principal_id",
+        "credential_state",
+        "id",
+        "inserted_at",
+        "metadata",
+        "participant_id",
+        "status",
+        "type",
+        "updated_at",
+        "verification_state"
+      ],
+      "payload": "g3QAAAAMdwJpZG0AAAAVc3RvcmVkLXYxLVBhcnRpY2lwYW50dwZzdGF0dXN3BmFjdGl2ZXcEdHlwZXcFaHVtYW53CG1ldGFkYXRhdAAAAAJ3BmxlZ2FjeXcEdHJ1ZXcGbmVzdGVkdAAAAAFtAAAABHRleHRtAAAACXVuY2hhbmdlZHcKX19zdHJ1Y3RfX3cfRWxpeGlyLkppZG8uTWVzc2FnaW5nLlByaW5jaXBhbHcOcGFydGljaXBhbnRfaWRtAAAAFXN0b3JlZC12MS1QYXJ0aWNpcGFudHcLaW5zZXJ0ZWRfYXR0AAAADXcLbWljcm9zZWNvbmRoAmEAYQZ3BnNlY29uZGEAdwhjYWxlbmRhcncTRWxpeGlyLkNhbGVuZGFyLklTT3cFbW9udGhhCncKX19zdHJ1Y3RfX3cPRWxpeGlyLkRhdGVUaW1ldwNkYXlhDncEeWVhcmIAAAfqdwZtaW51dGVhAHcEaG91cmEAdwl0aW1lX3pvbmVtAAAAB0V0Yy9VVEN3CXpvbmVfYWJicm0AAAADVVRDdwp1dGNfb2Zmc2V0YQB3CnN0ZF9vZmZzZXRhAHcKdXBkYXRlZF9hdHQAAAANdwttaWNyb3NlY29uZGgCYQBhBncGc2Vjb25kYQB3CGNhbGVuZGFydxNFbGl4aXIuQ2FsZW5kYXIuSVNPdwVtb250aGEKdwpfX3N0cnVjdF9fdw9FbGl4aXIuRGF0ZVRpbWV3A2RheWEOdwR5ZWFyYgAAB+p3Bm1pbnV0ZWEAdwRob3VyYQB3CXRpbWVfem9uZW0AAAAHRXRjL1VUQ3cJem9uZV9hYmJybQAAAANVVEN3CnV0Y19vZmZzZXRhAHcKc3RkX29mZnNldGEAdwlhZ2VudF9yZWZ3A25pbHcXY29udHJvbGxlcl9wcmluY2lwYWxfaWR3A25pbHcSdmVyaWZpY2F0aW9uX3N0YXRldwp1bnZlcmlmaWVkdxBjcmVkZW50aWFsX3N0YXRldwRub25l"
+    },
+    "Jido.Messaging.RoomBinding": {
+      "fields": [
+        "bridge_id",
+        "channel",
+        "direction",
+        "enabled",
+        "external_room_id",
+        "id",
+        "inserted_at",
+        "room_id"
+      ],
+      "payload": "g3QAAAAJdwdlbmFibGVkdwR0cnVldwJpZG0AAAAVc3RvcmVkLXYxLVJvb21CaW5kaW5ndwpfX3N0cnVjdF9fdyFFbGl4aXIuSmlkby5NZXNzYWdpbmcuUm9vbUJpbmRpbmd3CWRpcmVjdGlvbncEYm90aHcHY2hhbm5lbHcDbmlsdwdyb29tX2lkbQAAAA5zdG9yZWQtdjEtUm9vbXcLaW5zZXJ0ZWRfYXR0AAAADXcLbWljcm9zZWNvbmRoAmEAYQZ3BnNlY29uZGEAdwhjYWxlbmRhcncTRWxpeGlyLkNhbGVuZGFyLklTT3cFbW9udGhhCncKX19zdHJ1Y3RfX3cPRWxpeGlyLkRhdGVUaW1ldwNkYXlhDncEeWVhcmIAAAfqdwZtaW51dGVhAHcEaG91cmEAdwl0aW1lX3pvbmVtAAAAB0V0Yy9VVEN3CXpvbmVfYWJicm0AAAADVVRDdwp1dGNfb2Zmc2V0YQB3CnN0ZF9vZmZzZXRhAHcJYnJpZGdlX2lkdwNuaWx3EGV4dGVybmFsX3Jvb21faWR3A25pbA=="
+    },
+    "Jido.Messaging.RoomMembership": {
+      "fields": [
+        "ended_at",
+        "endpoint_id",
+        "id",
+        "inserted_at",
+        "joined_at",
+        "metadata",
+        "principal_id",
+        "room_id",
+        "status",
+        "updated_at"
+      ],
+      "payload": "g3QAAAALdwJpZG0AAAAYc3RvcmVkLXYxLVJvb21NZW1iZXJzaGlwdwZzdGF0dXN3BmFjdGl2ZXcIbWV0YWRhdGF0AAAAAncGbGVnYWN5dwR0cnVldwZuZXN0ZWR0AAAAAW0AAAAEdGV4dG0AAAAJdW5jaGFuZ2VkdwpfX3N0cnVjdF9fdyRFbGl4aXIuSmlkby5NZXNzYWdpbmcuUm9vbU1lbWJlcnNoaXB3B3Jvb21faWRtAAAADnN0b3JlZC12MS1Sb29tdwxwcmluY2lwYWxfaWRtAAAAFXN0b3JlZC12MS1QYXJ0aWNpcGFudHcLaW5zZXJ0ZWRfYXR0AAAADXcLbWljcm9zZWNvbmRoAmEAYQZ3BnNlY29uZGEAdwhjYWxlbmRhcncTRWxpeGlyLkNhbGVuZGFyLklTT3cFbW9udGhhCncKX19zdHJ1Y3RfX3cPRWxpeGlyLkRhdGVUaW1ldwNkYXlhDncEeWVhcmIAAAfqdwZtaW51dGVhAHcEaG91cmEAdwl0aW1lX3pvbmVtAAAAB0V0Yy9VVEN3CXpvbmVfYWJicm0AAAADVVRDdwp1dGNfb2Zmc2V0YQB3CnN0ZF9vZmZzZXRhAHcKdXBkYXRlZF9hdHQAAAANdwttaWNyb3NlY29uZGgCYQBhBncGc2Vjb25kYQB3CGNhbGVuZGFydxNFbGl4aXIuQ2FsZW5kYXIuSVNPdwVtb250aGEKdwpfX3N0cnVjdF9fdw9FbGl4aXIuRGF0ZVRpbWV3A2RheWEOdwR5ZWFyYgAAB+p3Bm1pbnV0ZWEAdwRob3VyYQB3CXRpbWVfem9uZW0AAAAHRXRjL1VUQ3cJem9uZV9hYmJybQAAAANVVEN3CnV0Y19vZmZzZXRhAHcKc3RkX29mZnNldGEAdwlqb2luZWRfYXR3A25pbHcIZW5kZWRfYXR3A25pbHcLZW5kcG9pbnRfaWR3A25pbA=="
+    },
+    "Jido.Messaging.RoutingPolicy": {
+      "fields": [
+        "dedupe_scope",
+        "delivery_mode",
+        "failover_policy",
+        "fallback_order",
+        "id",
+        "inserted_at",
+        "metadata",
+        "revision",
+        "room_id",
+        "updated_at"
+      ],
+      "payload": "g3QAAAALdwJpZG0AAAAXc3RvcmVkLXYxLVJvdXRpbmdQb2xpY3l3CG1ldGFkYXRhdAAAAAJ3BmxlZ2FjeXcEdHJ1ZXcGbmVzdGVkdAAAAAFtAAAABHRleHRtAAAACXVuY2hhbmdlZHcKX19zdHJ1Y3RfX3cjRWxpeGlyLkppZG8uTWVzc2FnaW5nLlJvdXRpbmdQb2xpY3l3CHJldmlzaW9uYQB3B3Jvb21faWRtAAAADnN0b3JlZC12MS1Sb29tdwtpbnNlcnRlZF9hdHQAAAANdwttaWNyb3NlY29uZGgCYQBhBncGc2Vjb25kYQB3CGNhbGVuZGFydxNFbGl4aXIuQ2FsZW5kYXIuSVNPdwVtb250aGEKdwpfX3N0cnVjdF9fdw9FbGl4aXIuRGF0ZVRpbWV3A2RheWEOdwR5ZWFyYgAAB+p3Bm1pbnV0ZWEAdwRob3VyYQB3CXRpbWVfem9uZW0AAAAHRXRjL1VUQ3cJem9uZV9hYmJybQAAAANVVEN3CnV0Y19vZmZzZXRhAHcKc3RkX29mZnNldGEAdwp1cGRhdGVkX2F0dAAAAA13C21pY3Jvc2Vjb25kaAJhAGEGdwZzZWNvbmRhAHcIY2FsZW5kYXJ3E0VsaXhpci5DYWxlbmRhci5JU093BW1vbnRoYQp3Cl9fc3RydWN0X193D0VsaXhpci5EYXRlVGltZXcDZGF5YQ53BHllYXJiAAAH6ncGbWludXRlYQB3BGhvdXJhAHcJdGltZV96b25lbQAAAAdFdGMvVVRDdwl6b25lX2FiYnJtAAAAA1VUQ3cKdXRjX29mZnNldGEAdwpzdGRfb2Zmc2V0YQB3DmZhbGxiYWNrX29yZGVyancPZmFpbG92ZXJfcG9saWN5dw5uZXh0X2F2YWlsYWJsZXcNZGVsaXZlcnlfbW9kZXcLYmVzdF9lZmZvcnR3DGRlZHVwZV9zY29wZXcKbWVzc2FnZV9pZA=="
+    },
+    "Jido.Messaging.Thread": {
+      "fields": [
+        "assigned_agent_id",
+        "delivery_external_room_id",
+        "external_thread_id",
+        "id",
+        "inserted_at",
+        "metadata",
+        "room_id",
+        "root_external_message_id",
+        "root_message_id",
+        "status",
+        "updated_at"
+      ],
+      "payload": "g3QAAAAMdwJpZG0AAAAQc3RvcmVkLXYxLVRocmVhZHcGc3RhdHVzdwZhY3RpdmV3CG1ldGFkYXRhdAAAAAJ3BmxlZ2FjeXcEdHJ1ZXcGbmVzdGVkdAAAAAFtAAAABHRleHRtAAAACXVuY2hhbmdlZHcKX19zdHJ1Y3RfX3ccRWxpeGlyLkppZG8uTWVzc2FnaW5nLlRocmVhZHcHcm9vbV9pZG0AAAAOc3RvcmVkLXYxLVJvb213C2luc2VydGVkX2F0dAAAAA13C21pY3Jvc2Vjb25kaAJhAGEGdwZzZWNvbmRhAHcIY2FsZW5kYXJ3E0VsaXhpci5DYWxlbmRhci5JU093BW1vbnRoYQp3Cl9fc3RydWN0X193D0VsaXhpci5EYXRlVGltZXcDZGF5YQ53BHllYXJiAAAH6ncGbWludXRlYQB3BGhvdXJhAHcJdGltZV96b25lbQAAAAdFdGMvVVRDdwl6b25lX2FiYnJtAAAAA1VUQ3cKdXRjX29mZnNldGEAdwpzdGRfb2Zmc2V0YQB3CnVwZGF0ZWRfYXR0AAAADXcLbWljcm9zZWNvbmRoAmEAYQZ3BnNlY29uZGEAdwhjYWxlbmRhcncTRWxpeGlyLkNhbGVuZGFyLklTT3cFbW9udGhhCncKX19zdHJ1Y3RfX3cPRWxpeGlyLkRhdGVUaW1ldwNkYXlhDncEeWVhcmIAAAfqdwZtaW51dGVhAHcEaG91cmEAdwl0aW1lX3pvbmVtAAAAB0V0Yy9VVEN3CXpvbmVfYWJicm0AAAADVVRDdwp1dGNfb2Zmc2V0YQB3CnN0ZF9vZmZzZXRhAHcSZXh0ZXJuYWxfdGhyZWFkX2lkdwNuaWx3GWRlbGl2ZXJ5X2V4dGVybmFsX3Jvb21faWR3A25pbHcPcm9vdF9tZXNzYWdlX2lkdwNuaWx3EWFzc2lnbmVkX2FnZW50X2lkdwNuaWx3GHJvb3RfZXh0ZXJuYWxfbWVzc2FnZV9pZHcDbmls"
+    },
+    "Jido.Messaging.ThreadContinuityLink": {
+      "fields": [
+        "continuity_ref",
+        "id",
+        "inserted_at",
+        "principal_id",
+        "reason_code",
+        "room_id",
+        "source_revision",
+        "source_updated_at",
+        "status",
+        "thread_id",
+        "transition_ref",
+        "updated_at"
+      ],
+      "payload": "g3QAAAANdwJpZG0AAAAec3RvcmVkLXYxLVRocmVhZENvbnRpbnVpdHlMaW5rdwZzdGF0dXN3A25pbHcKX19zdHJ1Y3RfX3cqRWxpeGlyLkppZG8uTWVzc2FnaW5nLlRocmVhZENvbnRpbnVpdHlMaW5rdwdyb29tX2lkbQAAAA5zdG9yZWQtdjEtUm9vbXcMcHJpbmNpcGFsX2lkbQAAABVzdG9yZWQtdjEtUGFydGljaXBhbnR3C2luc2VydGVkX2F0dAAAAA13C21pY3Jvc2Vjb25kaAJhAGEGdwZzZWNvbmRhAHcIY2FsZW5kYXJ3E0VsaXhpci5DYWxlbmRhci5JU093BW1vbnRoYQp3Cl9fc3RydWN0X193D0VsaXhpci5EYXRlVGltZXcDZGF5YQ53BHllYXJiAAAH6ncGbWludXRlYQB3BGhvdXJhAHcJdGltZV96b25lbQAAAAdFdGMvVVRDdwl6b25lX2FiYnJtAAAAA1VUQ3cKdXRjX29mZnNldGEAdwpzdGRfb2Zmc2V0YQB3CnVwZGF0ZWRfYXR0AAAADXcLbWljcm9zZWNvbmRoAmEAYQZ3BnNlY29uZGEAdwhjYWxlbmRhcncTRWxpeGlyLkNhbGVuZGFyLklTT3cFbW9udGhhCncKX19zdHJ1Y3RfX3cPRWxpeGlyLkRhdGVUaW1ldwNkYXlhDncEeWVhcmIAAAfqdwZtaW51dGVhAHcEaG91cmEAdwl0aW1lX3pvbmVtAAAAB0V0Yy9VVEN3CXpvbmVfYWJicm0AAAADVVRDdwp1dGNfb2Zmc2V0YQB3CnN0ZF9vZmZzZXRhAHcJdGhyZWFkX2lkdwNuaWx3EXNvdXJjZV91cGRhdGVkX2F0dwNuaWx3D3NvdXJjZV9yZXZpc2lvbncDbmlsdwtyZWFzb25fY29kZXcDbmlsdw5jb250aW51aXR5X3JlZncDbmlsdw50cmFuc2l0aW9uX3JlZncDbmls"
+    },
+    "Jido.Messaging.TrustEvidence": {
+      "fields": [
+        "capability_scope",
+        "claim_id",
+        "expires_at",
+        "id",
+        "issuer_principal_id",
+        "observed_at",
+        "outcome",
+        "recorded_at",
+        "room_id",
+        "source",
+        "subject_jidoka_agent_ref",
+        "subject_principal_id",
+        "verification_ref",
+        "verification_state"
+      ],
+      "payload": "g3QAAAAPdwJpZG0AAAAXc3RvcmVkLXYxLVRydXN0RXZpZGVuY2V3BnNvdXJjZXcDbmlsdwpfX3N0cnVjdF9fdyNFbGl4aXIuSmlkby5NZXNzYWdpbmcuVHJ1c3RFdmlkZW5jZXcKZXhwaXJlc19hdHcDbmlsdwdvdXRjb21ldwNuaWx3B3Jvb21faWRtAAAADnN0b3JlZC12MS1Sb29tdxNpc3N1ZXJfcHJpbmNpcGFsX2lkbQAAAARob3N0dxJ2ZXJpZmljYXRpb25fc3RhdGV3A25pbHcUc3ViamVjdF9wcmluY2lwYWxfaWR3A25pbHcLb2JzZXJ2ZWRfYXR3A25pbHcLcmVjb3JkZWRfYXR3A25pbHcYc3ViamVjdF9qaWRva2FfYWdlbnRfcmVmdwNuaWx3EGNhcGFiaWxpdHlfc2NvcGV3A25pbHcQdmVyaWZpY2F0aW9uX3JlZncDbmlsdwhjbGFpbV9pZHcDbmls"
+    }
+  },
+  "callbacks": {
+    "get_room_membership/3": [
+      "get_room_membership(state(), String.t(), String.t()) ::\n  {:ok, Jido.Messaging.RoomMembership.t()} | {:error, :not_found}"
+    ],
+    "save_agent_directory_projection/2": [
+      "save_agent_directory_projection(state(), Jido.Messaging.AgentDirectoryProjection.t()) ::\n  {:ok, Jido.Messaging.AgentDirectoryProjection.t()} | {:error, term()}"
+    ],
+    "update_message_external_id/3": [
+      "update_message_external_id(state(), message_id(), external_id()) ::\n  {:ok, Jido.Messaging.Message.t()} | {:error, term()}"
+    ],
+    "get_message_by_external_id/4": [
+      "get_message_by_external_id(state(), channel(), bridge_id(), external_id()) ::\n  {:ok, Jido.Messaging.Message.t()} | {:error, :not_found}"
+    ],
+    "get_thread_by_external_id/3": [
+      "get_thread_by_external_id(state(), room_id(), String.t()) ::\n  {:ok, Jido.Messaging.Thread.t()} | {:error, :not_found}"
+    ],
+    "directory_lookup/4": [
+      "directory_lookup(state(), directory_target(), directory_query(), opts :: keyword()) ::\n  {:ok, map()} | {:error, :not_found | {:ambiguous, [map()]} | term()}"
+    ],
+    "get_room_membership/2": [
+      "get_room_membership(state(), String.t()) ::\n  {:ok, Jido.Messaging.RoomMembership.t()} | {:error, :not_found}"
+    ],
+    "save_invocation_policy/2": [
+      "save_invocation_policy(state(), Jido.Messaging.InvocationPolicy.t()) ::\n  {:ok, Jido.Messaging.InvocationPolicy.t()} | {:error, term()}"
+    ],
+    "delete_bridge_config/2": [
+      "delete_bridge_config(state(), String.t()) :: :ok | {:error, :not_found}"
+    ],
+    "get_routing_policy/2": [
+      "get_routing_policy(state(), String.t()) ::\n  {:ok, Jido.Messaging.RoutingPolicy.t()} | {:error, :not_found}"
+    ],
+    "init/1": [
+      "init(opts :: keyword()) :: {:ok, state()} | {:error, term()}"
+    ],
+    "save_bridge_config/2": [
+      "save_bridge_config(state(), Jido.Messaging.BridgeConfig.t()) ::\n  {:ok, Jido.Messaging.BridgeConfig.t()} | {:error, term()}"
+    ],
+    "save_identity_credential/2": [
+      "save_identity_credential(state(), Jido.Messaging.IdentityCredential.t()) ::\n  {:ok, Jido.Messaging.IdentityCredential.t()} | {:error, term()}"
+    ],
+    "list_bridge_configs/2": [
+      "list_bridge_configs(\n  state(),\n  keyword()\n) :: {:ok, [Jido.Messaging.BridgeConfig.t()]}"
+    ],
+    "get_thread_continuity_link/2": [
+      "get_thread_continuity_link(state(), String.t()) ::\n  {:ok, Jido.Messaging.ThreadContinuityLink.t()} | {:error, :not_found | term()}"
+    ],
+    "mark_message_read/4": [
+      "mark_message_read(state(), message_id(), participant_id(), receipt :: map()) ::\n  {:ok, Jido.Messaging.Message.t(), :updated | :unchanged} | {:error, term()}"
+    ],
+    "delete_room/2": [
+      "delete_room(state(), room_id()) :: :ok | {:error, term()}"
+    ],
+    "get_room/2": [
+      "get_room(state(), room_id()) :: {:ok, Jido.Chat.Room.t()} | {:error, :not_found}"
+    ],
+    "list_invocation_policies/3": [
+      "list_invocation_policies(state(), participant_id(), keyword()) ::\n  {:ok, [Jido.Messaging.InvocationPolicy.t()]}"
+    ],
+    "delete_participant/2": [
+      "delete_participant(state(), participant_id()) :: :ok | {:error, term()}"
+    ],
+    "save_agent_messaging_endpoint/2": [
+      "save_agent_messaging_endpoint(state(), Jido.Messaging.AgentMessagingEndpoint.t()) ::\n  {:ok, Jido.Messaging.AgentMessagingEndpoint.t()} | {:error, term()}"
+    ],
+    "get_invocation_policy_by_scope/3": [
+      "get_invocation_policy_by_scope(state(), participant_id(), String.t()) ::\n  {:ok, Jido.Messaging.InvocationPolicy.t()} | {:error, :not_found}"
+    ],
+    "list_principal_grants/3": [
+      "list_principal_grants(state(), participant_id(), keyword()) :: {:ok, [Jido.Messaging.Grant.t()]}"
+    ],
+    "get_agent_messaging_endpoint_by_ref/2": [
+      "get_agent_messaging_endpoint_by_ref(state(), String.t()) ::\n  {:ok, Jido.Messaging.AgentMessagingEndpoint.t()} | {:error, :not_found}"
+    ],
+    "get_principal_activity/4": [
+      "get_principal_activity(state(), participant_id(), room_ids :: [room_id()], keyword()) ::\n  {:ok, [Jido.Messaging.MessagingActivityEntry.t()]} | {:error, term()}"
+    ],
+    "list_agent_thread_routes/3": [
+      "list_agent_thread_routes(state(), String.t(), keyword()) ::\n  {:ok, [Jido.Messaging.AgentThreadRoute.t()]}"
+    ],
+    "get_message_by_external_id/5": [
+      "get_message_by_external_id(state(), channel(), bridge_id(), external_id(), room_id()) ::\n  {:ok, Jido.Messaging.Message.t()} | {:error, :not_found}"
+    ],
+    "save_participant/2": [
+      "save_participant(state(), Jido.Chat.Participant.t()) ::\n  {:ok, Jido.Chat.Participant.t()} | {:error, term()}"
+    ],
+    "list_rooms/2": [
+      "list_rooms(state(), opts :: keyword()) :: {:ok, [Jido.Chat.Room.t()]}"
+    ],
+    "get_room_by_external_binding/4": [
+      "get_room_by_external_binding(state(), channel(), bridge_id(), external_id()) ::\n  {:ok, Jido.Chat.Room.t()} | {:error, :not_found}"
+    ],
+    "get_identity_credential/2": [
+      "get_identity_credential(state(), String.t()) ::\n  {:ok, Jido.Messaging.IdentityCredential.t()} | {:error, :not_found}"
+    ],
+    "save_message/2": [
+      "save_message(state(), Jido.Messaging.Message.t()) ::\n  {:ok, Jido.Messaging.Message.t()} | {:error, term()}"
+    ],
+    "capabilities/1": [
+      "capabilities(state()) :: [capability()]"
+    ],
+    "get_external_identity_binding/4": [
+      "get_external_identity_binding(state(), channel(), bridge_id(), external_id()) ::\n  {:ok, Jido.Messaging.ExternalIdentityBinding.t()} | {:error, :not_found}"
+    ],
+    "get_agent_thread_route/2": [
+      "get_agent_thread_route(state(), String.t()) ::\n  {:ok, Jido.Messaging.AgentThreadRoute.t()} | {:error, :not_found}"
+    ],
+    "get_invocation_policy/2": [
+      "get_invocation_policy(state(), String.t()) ::\n  {:ok, Jido.Messaging.InvocationPolicy.t()} | {:error, :not_found}"
+    ],
+    "get_agent_directory_projection/2": [
+      "get_agent_directory_projection(state(), String.t()) ::\n  {:ok, Jido.Messaging.AgentDirectoryProjection.t()} | {:error, :not_found | term()}"
+    ],
+    "save_room_membership/2": [
+      "save_room_membership(state(), Jido.Messaging.RoomMembership.t()) ::\n  {:ok, Jido.Messaging.RoomMembership.t()} | {:error, term()}"
+    ],
+    "get_or_create_participant_by_external_binding/5": [
+      "get_or_create_participant_by_external_binding(\n  state(),\n  channel(),\n  bridge_id(),\n  external_id(),\n  attrs :: map()\n) :: {:ok, Jido.Chat.Participant.t()}"
+    ],
+    "list_agent_messaging_endpoints/2": [
+      "list_agent_messaging_endpoints(\n  state(),\n  keyword()\n) :: {:ok, [Jido.Messaging.AgentMessagingEndpoint.t()]}"
+    ],
+    "save_room/2": [
+      "save_room(state(), Jido.Chat.Room.t()) :: {:ok, Jido.Chat.Room.t()} | {:error, term()}"
+    ],
+    "save_agent_thread_route/2": [
+      "save_agent_thread_route(state(), Jido.Messaging.AgentThreadRoute.t()) ::\n  {:ok, Jido.Messaging.AgentThreadRoute.t()} | {:error, term()}"
+    ],
+    "list_trust_evidence/4": [
+      "list_trust_evidence(state(), participant_id(), room_id(), keyword()) ::\n  {:ok, [Jido.Messaging.TrustEvidence.t()]} | {:error, term()}"
+    ],
+    "consume_identity_assertion/4": [
+      "consume_identity_assertion(\n  state(),\n  credential_id :: String.t(),\n  assertion_key :: String.t(),\n  expires_at :: DateTime.t()\n) :: :ok | {:error, term()}"
+    ],
+    "get_agent_messaging_endpoint/2": [
+      "get_agent_messaging_endpoint(state(), String.t()) ::\n  {:ok, Jido.Messaging.AgentMessagingEndpoint.t()} | {:error, :not_found}"
+    ],
+    "get_jidoka_delegation_event/2": [
+      "get_jidoka_delegation_event(state(), String.t()) ::\n  {:ok, Jido.Messaging.JidokaDelegationEvent.t()} | {:error, :not_found | term()}"
+    ],
+    "save_jidoka_delegation_event/2": [
+      "save_jidoka_delegation_event(state(), Jido.Messaging.JidokaDelegationEvent.t()) ::\n  {:ok, Jido.Messaging.JidokaDelegationEvent.t()} | {:error, term()}"
+    ],
+    "delete_room_binding/2": [
+      "delete_room_binding(state(), binding_id :: String.t()) :: :ok | {:error, term()}"
+    ],
+    "save_onboarding/2": [
+      "save_onboarding(state(), onboarding_flow()) :: {:ok, onboarding_flow()} | {:error, term()}"
+    ],
+    "get_or_create_participant_by_external_id/4": [
+      "get_or_create_participant_by_external_id(\n  state(),\n  channel(),\n  external_id(),\n  attrs :: map()\n) :: {:ok, Jido.Chat.Participant.t()}"
+    ],
+    "list_memberships/3": [
+      "list_memberships(state(), room_id(), keyword()) :: {:ok, [Jido.Messaging.Membership.t()]}"
+    ],
+    "close/1": [
+      "close(state()) :: :ok"
+    ],
+    "bind_participant_external_id/5": [
+      "bind_participant_external_id(state(), participant_id(), channel(), bridge_id(), external_id()) ::\n  :ok | {:error, :not_found | {:external_identity_conflict, participant_id()}}"
+    ],
+    "get_thread/2": [
+      "get_thread(state(), String.t()) :: {:ok, Jido.Messaging.Thread.t()} | {:error, :not_found}"
+    ],
+    "delete_ingress_subscription/3": [
+      "delete_ingress_subscription(state(), bridge_id(), String.t()) :: :ok | {:error, :not_found}"
+    ],
+    "save_messaging_activity/2": [
+      "save_messaging_activity(state(), Jido.Messaging.MessagingActivityEntry.t()) ::\n  {:ok, Jido.Messaging.MessagingActivityEntry.t()} | {:error, term()}"
+    ],
+    "health_check/1": [
+      "health_check(state()) :: :ok | {:error, term()}"
+    ],
+    "list_room_memberships/3": [
+      "list_room_memberships(state(), String.t(), keyword()) ::\n  {:ok, [Jido.Messaging.RoomMembership.t()]}"
+    ],
+    "save_routing_policy/2": [
+      "save_routing_policy(state(), Jido.Messaging.RoutingPolicy.t()) ::\n  {:ok, Jido.Messaging.RoutingPolicy.t()} | {:error, term()}"
+    ],
+    "get_onboarding/2": [
+      "get_onboarding(state(), onboarding_id()) :: {:ok, onboarding_flow()} | {:error, :not_found}"
+    ],
+    "get_messages/3": [
+      "get_messages(state(), room_id(), opts :: keyword()) ::\n  {:ok, [Jido.Messaging.Message.t()]} | {:error, :cursor_not_found | :invalid_cursor_options}"
+    ],
+    "get_external_identity_binding/2": [
+      "get_external_identity_binding(state(), String.t()) ::\n  {:ok, Jido.Messaging.ExternalIdentityBinding.t()} | {:error, :not_found}"
+    ],
+    "list_ingress_subscriptions/3": [
+      "list_ingress_subscriptions(state(), bridge_id(), keyword()) ::\n  {:ok, [Jido.Messaging.IngressSubscription.t()]}"
+    ],
+    "get_participant_messages/4": [
+      "get_participant_messages(\n  state(),\n  participant_id(),\n  room_ids :: [room_id()],\n  opts :: keyword()\n) :: {:ok, [Jido.Messaging.Message.t()]} | {:error, term()}"
+    ],
+    "save_external_identity_binding/2": [
+      "save_external_identity_binding(state(), Jido.Messaging.ExternalIdentityBinding.t()) ::\n  {:ok, Jido.Messaging.ExternalIdentityBinding.t()}\n  | {:error, :not_found | :external_identity_revoked | {:external_identity_conflict, String.t()}}"
+    ],
+    "list_agent_directory_projections/2": [
+      "list_agent_directory_projections(state(), opts :: keyword()) ::\n  {:ok, [Jido.Messaging.AgentDirectoryProjection.t()]} | {:error, term()}"
+    ],
+    "save_trust_evidence/2": [
+      "save_trust_evidence(state(), Jido.Messaging.TrustEvidence.t()) ::\n  {:ok, Jido.Messaging.TrustEvidence.t()} | {:error, term()}"
+    ],
+    "get_participant/2": [
+      "get_participant(state(), participant_id()) ::\n  {:ok, Jido.Chat.Participant.t()} | {:error, :not_found}"
+    ],
+    "list_threads/3": [
+      "list_threads(state(), room_id(), opts :: keyword()) :: {:ok, [Jido.Messaging.Thread.t()]}"
+    ],
+    "directory_search/4": [
+      "directory_search(state(), directory_target(), directory_query(), opts :: keyword()) ::\n  {:ok, [map()]} | {:error, term()}"
+    ],
+    "transaction/2": [
+      "transaction(state(), (state() -> transaction_result(value))) :: transaction_result(value)\nwhen value: term()"
+    ],
+    "delete_routing_policy/2": [
+      "delete_routing_policy(state(), String.t()) :: :ok | {:error, :not_found}"
+    ],
+    "list_external_identity_bindings/3": [
+      "list_external_identity_bindings(state(), String.t(), keyword()) ::\n  {:ok, [Jido.Messaging.ExternalIdentityBinding.t()]} | {:error, term()}"
+    ],
+    "delete_message/2": [
+      "delete_message(state(), message_id()) :: :ok | {:error, term()}"
+    ],
+    "get_principal/2": [
+      "get_principal(state(), String.t()) :: {:ok, Jido.Messaging.Principal.t()} | {:error, :not_found}"
+    ],
+    "create_room_binding/6": [
+      "create_room_binding(\n  state(),\n  room_id(),\n  channel(),\n  bridge_id(),\n  external_id(),\n  attrs :: map()\n) :: {:ok, Jido.Messaging.RoomBinding.t()} | {:error, term()}"
+    ],
+    "get_membership/2": [
+      "get_membership(state(), String.t()) :: {:ok, Jido.Messaging.Membership.t()} | {:error, :not_found}"
+    ],
+    "get_message/2": [
+      "get_message(state(), message_id()) :: {:ok, Jido.Messaging.Message.t()} | {:error, :not_found}"
+    ],
+    "save_principal_grant/2": [
+      "save_principal_grant(state(), Jido.Messaging.Grant.t()) ::\n  {:ok, Jido.Messaging.Grant.t()} | {:error, term()}"
+    ],
+    "save_thread/2": [
+      "save_thread(state(), Jido.Messaging.Thread.t()) ::\n  {:ok, Jido.Messaging.Thread.t()} | {:error, term()}"
+    ],
+    "save_principal/2": [
+      "save_principal(state(), Jido.Messaging.Principal.t()) ::\n  {:ok, Jido.Messaging.Principal.t()} | {:error, term()}"
+    ],
+    "save_membership/2": [
+      "save_membership(state(), Jido.Messaging.Membership.t()) ::\n  {:ok, Jido.Messaging.Membership.t()} | {:error, term()}"
+    ],
+    "save_ingress_subscription/2": [
+      "save_ingress_subscription(state(), Jido.Messaging.IngressSubscription.t()) ::\n  {:ok, Jido.Messaging.IngressSubscription.t()} | {:error, term()}"
+    ],
+    "list_room_bindings/2": [
+      "list_room_bindings(state(), room_id()) :: {:ok, [Jido.Messaging.RoomBinding.t()]}"
+    ],
+    "get_thread_by_root_message/3": [
+      "get_thread_by_root_message(state(), room_id(), message_id()) ::\n  {:ok, Jido.Messaging.Thread.t()} | {:error, :not_found}"
+    ],
+    "get_bridge_config/2": [
+      "get_bridge_config(state(), String.t()) ::\n  {:ok, Jido.Messaging.BridgeConfig.t()} | {:error, :not_found}"
+    ],
+    "save_thread_continuity_link/2": [
+      "save_thread_continuity_link(state(), Jido.Messaging.ThreadContinuityLink.t()) ::\n  {:ok, Jido.Messaging.ThreadContinuityLink.t()} | {:error, term()}"
+    ],
+    "get_principal_grant/2": [
+      "get_principal_grant(state(), String.t()) :: {:ok, Jido.Messaging.Grant.t()} | {:error, :not_found}"
+    ],
+    "rotate_identity_credential/3": [
+      "rotate_identity_credential(\n  state(),\n  revoked :: Jido.Messaging.IdentityCredential.t(),\n  replacement :: Jido.Messaging.IdentityCredential.t()\n) ::\n  {:ok, Jido.Messaging.IdentityCredential.t(), Jido.Messaging.IdentityCredential.t()}\n  | {:error, term()}"
+    ],
+    "get_or_create_room_by_external_binding/5": [
+      "get_or_create_room_by_external_binding(\n  state(),\n  channel(),\n  bridge_id(),\n  external_id(),\n  attrs :: map()\n) :: {:ok, Jido.Chat.Room.t()}"
+    ],
+    "list_identity_credentials/3": [
+      "list_identity_credentials(state(), participant_id(), keyword()) ::\n  {:ok, [Jido.Messaging.IdentityCredential.t()]} | {:error, term()}"
+    ],
+    "get_membership_by_scope/3": [
+      "get_membership_by_scope(state(), room_id(), participant_id()) ::\n  {:ok, Jido.Messaging.Membership.t()} | {:error, :not_found}"
+    ],
+    "get_messaging_activity/2": [
+      "get_messaging_activity(state(), String.t()) ::\n  {:ok, Jido.Messaging.MessagingActivityEntry.t()} | {:error, :not_found}"
+    ]
+  },
+  "optional_callbacks": [
+    "bind_participant_external_id/5",
+    "capabilities/1",
+    "close/1",
+    "consume_identity_assertion/4",
+    "delete_ingress_subscription/3",
+    "get_agent_directory_projection/2",
+    "get_agent_messaging_endpoint/2",
+    "get_agent_messaging_endpoint_by_ref/2",
+    "get_agent_thread_route/2",
+    "get_external_identity_binding/2",
+    "get_external_identity_binding/4",
+    "get_identity_credential/2",
+    "get_invocation_policy/2",
+    "get_invocation_policy_by_scope/3",
+    "get_jidoka_delegation_event/2",
+    "get_membership/2",
+    "get_membership_by_scope/3",
+    "get_messaging_activity/2",
+    "get_or_create_participant_by_external_binding/5",
+    "get_principal/2",
+    "get_principal_activity/4",
+    "get_principal_grant/2",
+    "get_room_membership/2",
+    "get_room_membership/3",
+    "get_thread_continuity_link/2",
+    "health_check/1",
+    "list_agent_directory_projections/2",
+    "list_agent_messaging_endpoints/2",
+    "list_agent_thread_routes/3",
+    "list_external_identity_bindings/3",
+    "list_identity_credentials/3",
+    "list_ingress_subscriptions/3",
+    "list_invocation_policies/3",
+    "list_memberships/3",
+    "list_principal_grants/3",
+    "list_room_memberships/3",
+    "list_trust_evidence/4",
+    "mark_message_read/4",
+    "rotate_identity_credential/3",
+    "save_agent_directory_projection/2",
+    "save_agent_messaging_endpoint/2",
+    "save_agent_thread_route/2",
+    "save_external_identity_binding/2",
+    "save_identity_credential/2",
+    "save_ingress_subscription/2",
+    "save_invocation_policy/2",
+    "save_jidoka_delegation_event/2",
+    "save_membership/2",
+    "save_messaging_activity/2",
+    "save_principal/2",
+    "save_principal_grant/2",
+    "save_room_membership/2",
+    "save_thread_continuity_link/2",
+    "save_trust_evidence/2",
+    "transaction/2"
+  ],
+  "baseline": "3022c269e4e3faca25a13ecaff37884138bb76c0"
+}

@@ -371,10 +371,10 @@ defmodule Jido.Messaging.Security do
     mode = normalize_mode(config[:mode])
 
     verify_failure_policy =
-      normalize_verify_failure_policy(config[:verify_failure_policy] || default_verify_failure_policy(mode))
+      normalize_verify_failure_policy(config[:verify_failure_policy], mode)
 
     sanitize_failure_policy =
-      normalize_sanitize_failure_policy(config[:sanitize_failure_policy] || default_sanitize_failure_policy(mode))
+      normalize_sanitize_failure_policy(config[:sanitize_failure_policy], mode)
 
     adapter = normalize_adapter(config[:adapter])
     adapter_opts = normalize_keyword(config[:adapter_opts], [])
@@ -396,13 +396,13 @@ defmodule Jido.Messaging.Security do
   defp normalize_mode(:permissive), do: :permissive
   defp normalize_mode(_), do: @default_mode
 
-  defp normalize_verify_failure_policy(:allow), do: :allow
-  defp normalize_verify_failure_policy(:deny), do: :deny
-  defp normalize_verify_failure_policy(_), do: default_verify_failure_policy(@default_mode)
+  defp normalize_verify_failure_policy(policy, _mode) when policy in [:allow, :deny], do: policy
+  defp normalize_verify_failure_policy(_, mode), do: default_verify_failure_policy(mode)
 
-  defp normalize_sanitize_failure_policy(:allow_original), do: :allow_original
-  defp normalize_sanitize_failure_policy(:deny), do: :deny
-  defp normalize_sanitize_failure_policy(_), do: default_sanitize_failure_policy(@default_mode)
+  defp normalize_sanitize_failure_policy(policy, _mode) when policy in [:allow_original, :deny],
+    do: policy
+
+  defp normalize_sanitize_failure_policy(_, mode), do: default_sanitize_failure_policy(mode)
 
   defp default_verify_failure_policy(:strict), do: :deny
   defp default_verify_failure_policy(:permissive), do: :allow
@@ -438,19 +438,21 @@ defmodule Jido.Messaging.Security do
 
   defp run_security_hook(fun, timeout_ms) when is_function(fun, 0) do
     started_at = System.monotonic_time(:millisecond)
-    task = Task.async(fun)
 
-    case Task.yield(task, timeout_ms) do
-      {:ok, result} ->
-        {:ok, result, elapsed_ms(started_at)}
-
-      {:exit, reason} ->
-        {:error, reason, elapsed_ms(started_at)}
-
-      nil ->
-        _ = Task.shutdown(task, :brutal_kill)
-        {:timeout, elapsed_ms(started_at)}
+    case Jido.Messaging.BoundedCall.run(fn -> invoke_security_hook(fun) end, timeout_ms) do
+      {:ok, {:ok, result}} -> {:ok, result, elapsed_ms(started_at)}
+      {:ok, {:error, reason}} -> {:error, reason, elapsed_ms(started_at)}
+      {:exit, reason} -> {:error, reason, elapsed_ms(started_at)}
+      :timeout -> {:timeout, elapsed_ms(started_at)}
     end
+  end
+
+  defp invoke_security_hook(fun) do
+    {:ok, fun.()}
+  rescue
+    exception -> {:error, {:exception, exception}}
+  catch
+    kind, reason -> {:error, {kind, reason}}
   end
 
   defp classify_failure(:timeout), do: :retry

@@ -45,6 +45,15 @@ defmodule Jido.Messaging.StreamingTest do
     end
   end
 
+  defmodule RecordingChannel do
+    def send_message(owner, _text, _opts), do: {:ok, %{message_id: owner}}
+
+    def edit_message(owner, _message_id, text) do
+      send(owner, {:stream_edit, text})
+      {:ok, %{}}
+    end
+  end
+
   describe "start/6" do
     test "starts a stream with initial content" do
       {:ok, stream} = Streaming.start(nil, nil, MockChannel, 123, "Hello...")
@@ -64,6 +73,60 @@ defmodule Jido.Messaging.StreamingTest do
   end
 
   describe "update/2" do
+    test "a stale flush cannot send content from a newer throttle window" do
+      {:ok, stream} =
+        Streaming.start(nil, nil, RecordingChannel, self(), "initial", min_update_interval_ms: 60_000)
+
+      on_exit(fn -> if Process.alive?(stream), do: Streaming.cancel(stream) end)
+      :ok = Streaming.update(stream, "older")
+      state = Streaming.get_state(stream)
+
+      old_flush =
+        case Map.get(state, :pending_timer) do
+          {_timer, token} -> {:flush_pending, token}
+          nil -> :flush_pending
+        end
+
+      :sys.replace_state(stream, fn current ->
+        %{current | last_update_at: System.monotonic_time(:millisecond) - 60_000}
+      end)
+
+      :ok = :sys.suspend(stream)
+      :ok = Streaming.update(stream, "immediate")
+      :ok = Streaming.update(stream, "next window")
+      send(stream, old_flush)
+      :ok = :sys.resume(stream)
+
+      assert %{current_content: "immediate", pending_update: "next window"} =
+               Streaming.get_state(stream)
+
+      assert_receive {:stream_edit, "immediate"}
+      refute_receive {:stream_edit, "next window"}, 0
+    end
+
+    test "a newer immediate update clears an older pending edit" do
+      {:ok, stream} =
+        Streaming.start(nil, nil, RecordingChannel, self(), "initial", min_update_interval_ms: 60_000)
+
+      on_exit(fn -> if Process.alive?(stream), do: Streaming.cancel(stream) end)
+
+      :ok = Streaming.update(stream, "older")
+      assert %{pending_update: "older"} = Streaming.get_state(stream)
+
+      :sys.replace_state(stream, fn state ->
+        %{state | last_update_at: System.monotonic_time(:millisecond) - 60_000}
+      end)
+
+      :ok = :sys.suspend(stream)
+      :ok = Streaming.update(stream, "newer")
+      send(stream, :flush_pending)
+      :ok = :sys.resume(stream)
+
+      assert %{current_content: "newer", pending_update: nil} = Streaming.get_state(stream)
+      assert_receive {:stream_edit, "newer"}
+      refute_receive {:stream_edit, "older"}, 0
+    end
+
     test "updates stream content" do
       {:ok, stream} =
         Streaming.start(nil, nil, MockChannel, 123, "Hello...", min_update_interval_ms: 0)
@@ -102,6 +165,14 @@ defmodule Jido.Messaging.StreamingTest do
   end
 
   describe "finish/2" do
+    test "returns the final provider error and stops the stream" do
+      {:ok, stream} = Streaming.start(nil, nil, FailingEditChannel, 123, "initial")
+      monitor = Process.monitor(stream)
+
+      assert {:error, :edit_failed} = Streaming.finish(stream, "final")
+      assert_receive {:DOWN, ^monitor, :process, ^stream, :normal}
+    end
+
     test "finalizes stream with content" do
       {:ok, stream} = Streaming.start(nil, nil, MockChannel, 123, "Hello...")
 

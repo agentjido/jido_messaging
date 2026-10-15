@@ -10,7 +10,7 @@ defmodule Jido.Messaging.InstanceSupervisor do
   use DynamicSupervisor
   require Logger
 
-  alias Jido.Messaging.{Instance, InstanceReconnectWorker, InstanceServer, BridgeRegistry}
+  alias Jido.Messaging.{Instance, InstanceReconnectWorker, InstanceServer, BridgeRegistry, DesiredWorkers}
 
   @instance_domain_max_restarts 6
   @instance_domain_max_seconds 30
@@ -19,7 +19,15 @@ defmodule Jido.Messaging.InstanceSupervisor do
 
   def start_link(opts) do
     name = Keyword.fetch!(opts, :name)
-    DynamicSupervisor.start_link(__MODULE__, opts, name: name)
+
+    case DynamicSupervisor.start_link(__MODULE__, opts, name: name) do
+      {:ok, _pid} = ok ->
+        DesiredWorkers.restore(name)
+        ok
+
+      error ->
+        error
+    end
   end
 
   @impl true
@@ -54,7 +62,7 @@ defmodule Jido.Messaging.InstanceSupervisor do
 
     supervisor = supervisor_name(messaging_module)
 
-    case DynamicSupervisor.start_child(supervisor, child_spec) do
+    case DesiredWorkers.start(messaging_module, supervisor, instance.id, child_spec) do
       {:ok, _pid} ->
         Logger.info("[Jido.Messaging.InstanceSupervisor] Started instance #{instance.id} (#{channel_type})")
         {:ok, instance}
@@ -110,13 +118,16 @@ defmodule Jido.Messaging.InstanceSupervisor do
         {:error, :not_found}
 
       sup_pid ->
-        case DynamicSupervisor.terminate_child(supervisor, sup_pid) do
+        case DesiredWorkers.stop(messaging_module, supervisor, instance_id, sup_pid) do
           :ok ->
             Logger.info("[Jido.Messaging.InstanceSupervisor] Stopped instance #{instance_id}")
             :ok
 
           {:error, :not_found} ->
             {:error, :not_found}
+
+          {:error, _reason} = error ->
+            error
         end
     end
   end
@@ -136,7 +147,7 @@ defmodule Jido.Messaging.InstanceSupervisor do
   def list_instances(messaging_module) do
     registry = Module.concat(messaging_module, Registry.Instances)
 
-    Registry.select(registry, [{{:"$1", :"$2", :"$3"}, [], [{{:"$1", :"$2"}}]}])
+    instance_entries(registry)
     |> Enum.filter(fn
       {{:instance, _id}, _pid} -> true
       _ -> false
@@ -171,7 +182,7 @@ defmodule Jido.Messaging.InstanceSupervisor do
   def list_instance_health(messaging_module) do
     registry = Module.concat(messaging_module, Registry.Instances)
 
-    Registry.select(registry, [{{:"$1", :"$2", :"$3"}, [], [{{:"$1", :"$2"}}]}])
+    instance_entries(registry)
     |> Enum.filter(fn
       {{:instance, _id}, _pid} -> true
       _ -> false
@@ -184,6 +195,12 @@ defmodule Jido.Messaging.InstanceSupervisor do
 
   defp supervisor_name(messaging_module) do
     Module.concat(messaging_module, InstanceSupervisor)
+  end
+
+  defp instance_entries(registry) do
+    Registry.select(registry, [{{:"$1", :"$2", :"$3"}, [], [{{:"$1", :"$2"}}]}])
+  rescue
+    ArgumentError -> []
   end
 
   defp instance_supervisor_name(messaging_module, instance_id) do

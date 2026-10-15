@@ -58,6 +58,18 @@ The work merged in this order:
 - A shared SQLite database now requires a stable messaging `instance_id`. Existing unscoped data needs a migration or an explicit legacy namespace.
 - Participant identity keys now include the bridge scope. Existing cross-bridge participant IDs need mapping during migration.
 - Message cursors are opaque. Consumers must not parse them and must handle the defined invalid-cursor error.
+- Message history uses UTC instants and message IDs to determine order. SQLite
+  normalizes old SQL order keys at startup. PostgreSQL migration 2 performs the
+  same change. Both keep stored message payloads and existing ID cursors.
+- An external room binding keeps one canonical room owner. A retry for the same
+  room returns the existing binding. A different room returns
+  `{:error, {:room_binding_conflict, owner_room_id}}`.
+- SQLite transaction callbacks must use the supplied state for storage calls.
+  Required callbacks reuse its connection. A nested transaction failure rolls
+  back the outer transaction, even if the outer callback returns success.
+- If a typed identity lookup fails, transcript entries omit the uncertain
+  provider participant ID. An absent binding or an unsupported legacy adapter
+  retains the existing legacy fallback.
 - Applications that use `jido_ai` must add it as their own dependency and can use the shipped example integration.
 - The current memory delivery path remains non-durable. A successful in-memory enqueue does not give a restart guarantee.
 

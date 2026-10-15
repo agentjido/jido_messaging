@@ -15,7 +15,11 @@ defmodule Jido.Messaging.DeliverTest do
     def channel_type, do: :mock
 
     @impl true
-    def transform_incoming(_), do: {:error, :not_implemented}
+    def signal_protocol, do: 1
+    @impl true
+    def configure_binding(opts), do: {:ok, opts}
+    @impl true
+    def normalize_event(_binding, _payload), do: Jido.Chat.Signal.Policy.error(:invalid_delivery)
 
     @impl true
     def send_message(_chat_id, text, _opts) do
@@ -42,11 +46,14 @@ defmodule Jido.Messaging.DeliverTest do
     @impl true
     def channel_type, do: :media_mock
 
-    @impl true
-    def capabilities, do: [:text, :image]
+    def content_capabilities, do: [:text, :image]
 
     @impl true
-    def transform_incoming(_), do: {:error, :not_implemented}
+    def signal_protocol, do: 1
+    @impl true
+    def configure_binding(opts), do: {:ok, opts}
+    @impl true
+    def normalize_event(_binding, _payload), do: Jido.Chat.Signal.Policy.error(:invalid_delivery)
 
     @impl true
     def send_message(_chat_id, text, _opts), do: {:ok, %{message_id: "text:#{text}"}}

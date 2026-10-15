@@ -28,32 +28,145 @@ defmodule Jido.Messaging do
       })
       {:ok, messages} = MyApp.Messaging.list_messages(room.id)
 
-  For app-level chat commands that should notify realtime consumers, use the
-  eventful command APIs:
+  Use a typed request to persist a message and notify consumers:
 
-      {:ok, result} = MyApp.Messaging.post_message(%{
-        room_id: room.id,
-        sender_id: "user_123",
-        role: :user,
-        content: [%{type: :text, text: "Hello!"}]
+      request = Jido.Messaging.Signal.PostMessage.new!(%{
+        "request_id" => "post-1",
+        "room_id" => room.id,
+        "sender_id" => "user_123",
+        "text" => "Hello!"
       })
+      actor = [principal_id: "user_123", authorization_scope: room_scope]
+      {:ok, %Jido.Signal{}} = MyApp.Messaging.execute(request, actor)
 
-      [%Jido.Signal{type: "jido.messaging.room.message_added"}] = result.signals
+  The trusted principal needs an active grant for the room scope.
+  The instance Bus publishes registered facts and results.
+  `save_message/1` is a low-level record operation.
 
-  `save_message/1` remains the low-level persistence primitive. `post_message/2`
-  persists and emits committed `jido.messaging.*` CloudEvents through the
-  instance Signal Bus.
+  Application code should use the generated instance API. Use `execute/2`
+  for authorized typed commands and `accept_delivery/1` for provider deliveries.
+  Record functions such as `save_message/1` do not run these workflows.
+  Operator functions such as `register_agent/3` and `create_bridge_room/1`
+  manage assignment and routing setup.
   """
 
+  @doc "Returns the explicit public Signal definition list for this domain."
+  @spec signal_definitions() :: [module()]
+  def signal_definitions do
+    [
+      Jido.Messaging.Signal.SendMessage,
+      Jido.Messaging.Signal.SendFile,
+      Jido.Messaging.Signal.PostProviderMessage,
+      Jido.Messaging.Signal.EditMessage,
+      Jido.Messaging.Signal.DeleteMessage,
+      Jido.Messaging.Signal.StartTyping,
+      Jido.Messaging.Signal.FetchMetadata,
+      Jido.Messaging.Signal.FetchThread,
+      Jido.Messaging.Signal.FetchMessage,
+      Jido.Messaging.Signal.GetUser,
+      Jido.Messaging.Signal.FetchSubject,
+      Jido.Messaging.Signal.GetThreadParticipants,
+      Jido.Messaging.Signal.MarkAsRead,
+      Jido.Messaging.Signal.FetchMedia,
+      Jido.Messaging.Signal.AddReaction,
+      Jido.Messaging.Signal.RemoveReaction,
+      Jido.Messaging.Signal.PostEphemeral,
+      Jido.Messaging.Signal.PostChannelMessage,
+      Jido.Messaging.Signal.Stream,
+      Jido.Messaging.Signal.OpenModal,
+      Jido.Messaging.Signal.LoadOptions,
+      Jido.Messaging.Signal.FetchMessages,
+      Jido.Messaging.Signal.FetchChannelMessages,
+      Jido.Messaging.Signal.ListThreads,
+      Jido.Messaging.Signal.OpenThread,
+      Jido.Messaging.Signal.OpenDm,
+      Jido.Messaging.Signal.RoomMessageAdded,
+      Jido.Messaging.Signal.MessageReceived,
+      Jido.Messaging.Signal.MessageSent,
+      Jido.Messaging.Signal.MessageFailed,
+      Jido.Messaging.Signal.RoomCreated,
+      Jido.Messaging.Signal.ParticipantJoined,
+      Jido.Messaging.Signal.ParticipantLeft,
+      Jido.Messaging.Signal.PresenceChanged,
+      Jido.Messaging.Signal.TypingChanged,
+      Jido.Messaging.Signal.ReactionAdded,
+      Jido.Messaging.Signal.ReactionRemoved,
+      Jido.Messaging.Signal.MessageDelivered,
+      Jido.Messaging.Signal.MessageRead,
+      Jido.Messaging.Signal.ThreadCreated,
+      Jido.Messaging.Signal.ThreadReplyAdded,
+      Jido.Messaging.Signal.AgentTriggered,
+      Jido.Messaging.Signal.AgentStarted,
+      Jido.Messaging.Signal.AgentCompleted,
+      Jido.Messaging.Signal.AgentFailed,
+      Jido.Messaging.Signal.InstanceStarted,
+      Jido.Messaging.Signal.InstanceConnecting,
+      Jido.Messaging.Signal.InstanceConnected,
+      Jido.Messaging.Signal.InstanceDisconnected,
+      Jido.Messaging.Signal.InstanceStopped,
+      Jido.Messaging.Signal.InstanceError,
+      Jido.Messaging.Signal.MembershipObserved,
+      Jido.Messaging.Signal.PostMessage,
+      Jido.Messaging.Signal.CreateRoom,
+      Jido.Messaging.Signal.ParticipantJoinedRequest,
+      Jido.Messaging.Signal.ParticipantLeftRequest,
+      Jido.Messaging.Signal.SetPresence,
+      Jido.Messaging.Signal.SetTyping,
+      Jido.Messaging.Signal.AddRoomReaction,
+      Jido.Messaging.Signal.RemoveRoomReaction,
+      Jido.Messaging.Signal.MarkDelivered,
+      Jido.Messaging.Signal.MarkRead,
+      Jido.Messaging.Signal.OperationCompleted,
+      Jido.Messaging.Signal.OperationFailed,
+      Jido.Messaging.Signal.ThreadChanged
+    ]
+  end
+
+  @doc "Executes a typed request with trusted principal and authorization scope options."
+  @spec execute(module(), Jido.Signal.t(), keyword()) :: {:ok, Jido.Signal.t()} | {:error, term()}
+  def execute(instance, request, opts), do: Jido.Messaging.Execution.execute(instance, request, opts)
+
+  @doc "Accepts a complete validated provider delivery through the runtime owner."
+  @spec accept_delivery(module(), Jido.Chat.Delivery.t()) :: {:ok, [Jido.Signal.t()]} | {:error, term()}
+  def accept_delivery(instance, delivery), do: Jido.Messaging.Acceptance.accept(instance, delivery)
+
+  @doc "Resolves a private resource for the call that created its reference."
+  @spec resolve_resource(module(), map()) :: {:ok, term()} | {:error, term()}
+  def resolve_resource(instance, ref) do
+    with {:ok, owner} <- resource_owner(instance, ref), do: Jido.Chat.Resources.resolve(owner, ref)
+  end
+
+  @doc "Cancels a private call-scoped resource and clears its value."
+  @spec cancel_resource(module(), map()) :: :ok | {:error, term()}
+  def cancel_resource(instance, ref) do
+    with {:ok, owner} <- resource_owner(instance, ref), do: Jido.Chat.Resources.cancel(owner, ref)
+  end
+
+  defp resource_owner(instance, %{"binding_id" => id}) do
+    runtime = instance.__jido_messaging__(:runtime)
+    owner = Jido.Messaging.Runtime.resource_owner(runtime)
+
+    if owner.id == id do
+      {:ok, owner}
+    else
+      case Jido.Messaging.Runtime.binding(runtime, id) do
+        {:ok, _} = result -> result
+        _ -> Jido.Chat.Signal.Policy.error(:invalid_resource)
+      end
+    end
+  rescue
+    _ -> Jido.Chat.Signal.Policy.error(:invalid_resource)
+  catch
+    _, _ -> Jido.Chat.Signal.Policy.error(:resource_expired)
+  end
+
+  defp resource_owner(_instance, _ref), do: Jido.Chat.Signal.Policy.error(:invalid_resource)
+
   alias Jido.Chat.{Participant, Room}
-  alias Jido.Messaging.BridgeRoomSpec
-  alias Jido.Messaging.TopologyValidator
 
   alias Jido.Messaging.{
     AccessControl,
     AgentEndpoints,
-    AgentRunner,
-    AgentSupervisor,
     ActivityProjection,
     ConfigStore,
     IdentityCredentials,
@@ -64,8 +177,6 @@ defmodule Jido.Messaging do
     Message,
     Onboarding,
     Principal,
-    RoomServer,
-    RoomSupervisor,
     Runtime,
     Thread
   }
@@ -141,6 +252,18 @@ defmodule Jido.Messaging do
           :pubsub -> @pubsub
         end
       end
+
+      @doc "Executes a typed request with trusted actor options."
+      def execute(request, opts), do: Jido.Messaging.execute(__MODULE__, request, opts)
+
+      @doc "Accepts a complete normalized Chat delivery."
+      def accept_delivery(delivery), do: Jido.Messaging.accept_delivery(__MODULE__, delivery)
+
+      @doc "Resolves a private resource for its creator call."
+      def resolve_resource(ref), do: Jido.Messaging.resolve_resource(__MODULE__, ref)
+
+      @doc "Cancels a private call-scoped resource."
+      def cancel_resource(ref), do: Jido.Messaging.cancel_resource(__MODULE__, ref)
 
       # Delegated API functions
 
@@ -573,35 +696,9 @@ defmodule Jido.Messaging do
         Jido.Messaging.save_message(__jido_messaging__(:runtime), attrs)
       end
 
-      @doc "Persist a message and emit a committed `jido.messaging.room.message_added` signal"
-      def post_message(attrs, opts \\ []) do
-        Jido.Messaging.post_message(__MODULE__, __jido_messaging__(:runtime), attrs, opts)
-      end
-
       @doc "Get a message by ID"
       def get_message(message_id) do
         Jido.Messaging.get_message(__jido_messaging__(:runtime), message_id)
-      end
-
-      @doc """
-      Mark a provider message as read and persist its normalized receipt.
-
-      ## Example
-
-          iex> defmodule ReceiptExample do
-          ...>   use Jido.Messaging, persistence: Jido.Messaging.Persistence.ETS
-          ...> end
-          iex> function_exported?(ReceiptExample, :mark_message_as_read, 3)
-          true
-      """
-      def mark_message_as_read(message_id, participant_id, opts \\ []) do
-        Jido.Messaging.mark_message_as_read(
-          __MODULE__,
-          __jido_messaging__(:runtime),
-          message_id,
-          participant_id,
-          opts
-        )
       end
 
       @doc """
@@ -891,6 +988,17 @@ defmodule Jido.Messaging do
         )
       end
 
+      @doc "Get a provider message within one canonical room."
+      def get_message_by_external_id(channel, bridge_id, external_id, room_id) do
+        Jido.Messaging.get_message_by_external_id(
+          __jido_messaging__(:runtime),
+          channel,
+          bridge_id,
+          external_id,
+          room_id
+        )
+      end
+
       @doc "Update a message's external_id"
       def update_message_external_id(message_id, external_id) do
         Jido.Messaging.update_message_external_id(
@@ -903,30 +1011,6 @@ defmodule Jido.Messaging do
       @doc "Save an already-constructed message struct (for updates)"
       def save_message_struct(message) do
         Jido.Messaging.save_message_struct(__jido_messaging__(:runtime), message)
-      end
-
-      @doc "Add a reaction to a message and emit a committed reaction signal"
-      def add_reaction(message_id, participant_id, reaction, opts \\ []) do
-        Jido.Messaging.add_reaction(
-          __MODULE__,
-          __jido_messaging__(:runtime),
-          message_id,
-          participant_id,
-          reaction,
-          opts
-        )
-      end
-
-      @doc "Remove a reaction from a message and emit a committed reaction signal"
-      def remove_reaction(message_id, participant_id, reaction, opts \\ []) do
-        Jido.Messaging.remove_reaction(
-          __MODULE__,
-          __jido_messaging__(:runtime),
-          message_id,
-          participant_id,
-          reaction,
-          opts
-        )
       end
 
       @doc "Save an already-constructed thread struct (for updates)"
@@ -1274,21 +1358,6 @@ defmodule Jido.Messaging do
 
       # Inbound routing functions
 
-      @doc "Route webhook payload through bridge-config parse/verify path into ingest."
-      def route_webhook(bridge_id, payload, opts \\ []) do
-        Jido.Messaging.route_webhook(__MODULE__, bridge_id, payload, opts)
-      end
-
-      @doc "Route webhook request and return typed webhook response + ingest outcome."
-      def route_webhook_request(bridge_id, request_meta, payload, opts \\ []) do
-        Jido.Messaging.route_webhook_request(__MODULE__, bridge_id, request_meta, payload, opts)
-      end
-
-      @doc "Route direct payload through bridge-config transform path into ingest."
-      def route_payload(bridge_id, payload, opts \\ []) do
-        Jido.Messaging.route_payload(__MODULE__, bridge_id, payload, opts)
-      end
-
       @doc "Create or ensure a bridge-backed room topology in one call."
       def create_bridge_room(attrs) do
         Jido.Messaging.create_bridge_room(__MODULE__, attrs)
@@ -1299,11 +1368,6 @@ defmodule Jido.Messaging do
       @doc "Resolve configured outbound adapter routes for a room."
       def resolve_outbound_routes(room_id, opts \\ []) do
         Jido.Messaging.resolve_outbound_routes(__MODULE__, room_id, opts)
-      end
-
-      @doc "Route outbound text through bridge bindings/policy for a room."
-      def route_outbound(room_id, text, opts \\ []) do
-        Jido.Messaging.route_outbound(__MODULE__, room_id, text, opts)
       end
 
       @doc "Get health snapshot for an instance"
@@ -1373,17 +1437,7 @@ defmodule Jido.Messaging do
         Jido.Messaging.DeadLetter.purge(__MODULE__, opts)
       end
 
-      # PubSub functions
-
-      @doc "Subscribe to room events via PubSub"
-      def subscribe(room_id) do
-        Jido.Messaging.PubSub.subscribe(__MODULE__, room_id)
-      end
-
-      @doc "Unsubscribe from room events"
-      def unsubscribe(room_id) do
-        Jido.Messaging.PubSub.unsubscribe(__MODULE__, room_id)
-      end
+      # Native Signal subscriptions
 
       @doc "Subscribe to Jido Signal events emitted by this messaging instance"
       def subscribe_signals(path \\ "jido.messaging.**", opts \\ []) do
@@ -1393,31 +1447,6 @@ defmodule Jido.Messaging do
       @doc "Unsubscribe from a Jido Signal Bus subscription"
       def unsubscribe_signals(subscription_id, opts \\ []) do
         Jido.Messaging.unsubscribe_signals(__MODULE__, subscription_id, opts)
-      end
-
-      @doc "Emit a custom room-scoped Jido Signal event"
-      def dispatch_room_event(event_type, room_id, data \\ %{}, opts \\ []) do
-        Jido.Messaging.dispatch_room_event(__MODULE__, event_type, room_id, data, opts)
-      end
-
-      @doc "Emit a room-scoped participant joined signal"
-      def participant_joined(room_id, participant_id, opts \\ []) do
-        Jido.Messaging.participant_joined(__MODULE__, room_id, participant_id, opts)
-      end
-
-      @doc "Emit a room-scoped participant left signal"
-      def participant_left(room_id, participant_id, opts \\ []) do
-        Jido.Messaging.participant_left(__MODULE__, room_id, participant_id, opts)
-      end
-
-      @doc "Emit a participant presence changed signal"
-      def participant_presence_changed(room_id, participant_id, from, to, opts \\ []) do
-        Jido.Messaging.participant_presence_changed(__MODULE__, room_id, participant_id, from, to, opts)
-      end
-
-      @doc "Emit a participant typing signal"
-      def participant_typing(room_id, participant_id, is_typing, opts \\ []) do
-        Jido.Messaging.participant_typing(__MODULE__, room_id, participant_id, is_typing, opts)
       end
 
       @doc "Return the instance Signal Bus name"
@@ -1781,52 +1810,10 @@ defmodule Jido.Messaging do
     persistence.save_message(persistence_state, message)
   end
 
-  @doc """
-  Persist a message and emit the committed `jido.messaging.room.message_added` signal.
-
-  This is the eventful command API for chat apps. `save_message/2` remains the
-  low-level persistence primitive for migrations, imports, and tests that need
-  no side effects.
-  """
-  def post_message(instance_module, runtime, attrs, opts \\ [])
-      when is_atom(instance_module) and is_map(attrs) do
-    opts = normalize_event_opts(opts)
-
-    with {:ok, message} <- save_message(runtime, attrs),
-         {:ok, signal} <- Jido.Messaging.Events.message_added(instance_module, message, signal_opts(message, opts)),
-         {:ok, signal} <-
-           Jido.Messaging.Dispatch.emit(instance_module, signal,
-             telemetry_event: Jido.Messaging.Events.telemetry_event_for(:message_added),
-             telemetry_metadata:
-               telemetry_metadata(instance_module, :message_added, message.room_id, %{
-                 message: message,
-                 sender_id: message.sender_id,
-                 thread_id: message.thread_id
-               }),
-             room_id: message.room_id,
-             legacy_event: {:message_added, message}
-           ) do
-      {:ok, Jido.Messaging.CommandResult.new(message, [signal])}
-    end
-  end
-
   @doc "Get a message by ID"
   def get_message(runtime, message_id) do
     {persistence, persistence_state} = Runtime.get_persistence(runtime)
     persistence.get_message(persistence_state, message_id)
-  end
-
-  @doc "Mark a provider message as read and persist its normalized receipt."
-  def mark_message_as_read(instance_module, runtime, message_id, participant_id, opts \\ [])
-      when is_atom(instance_module) and is_binary(message_id) and is_binary(participant_id) and
-             is_list(opts) do
-    Jido.Messaging.ReadReceipt.mark_as_read(
-      instance_module,
-      runtime,
-      message_id,
-      participant_id,
-      opts
-    )
   end
 
   @doc """
@@ -1907,25 +1894,7 @@ defmodule Jido.Messaging do
   """
   def participant_transcript(instance_module, runtime, participant_id, scope, opts \\ [])
       when is_atom(instance_module) and is_binary(participant_id) and is_list(opts) do
-    with :ok <- validate_history_scope(instance_module, scope),
-         {persistence, persistence_state} <- Runtime.get_persistence(runtime),
-         {:ok, participant} <- persistence.get_participant(persistence_state, participant_id),
-         {:ok, messages} <-
-           persistence.get_participant_messages(persistence_state, participant_id, scope.room_ids, opts) do
-      entries =
-        Enum.map(
-          messages,
-          &build_transcript_entry(
-            instance_module,
-            persistence,
-            persistence_state,
-            participant,
-            &1
-          )
-        )
-
-      {:ok, entries}
-    end
+    Jido.Messaging.History.Transcript.participant_transcript(instance_module, runtime, participant_id, scope, opts)
   end
 
   @doc "Record one scoped advisory trust-evidence revision."
@@ -1950,64 +1919,25 @@ defmodule Jido.Messaging do
   @doc "Search a configured optional transcript projection."
   def search_transcript(instance_module, query, scope, opts \\ [])
       when is_atom(instance_module) and is_binary(query) and is_list(opts) do
-    with :ok <- validate_history_scope(instance_module, scope),
-         {:ok, projection} <- search_projection(instance_module, opts),
-         :ok <- validate_projection(projection) do
-      context = %{instance_module: instance_module, scope: scope}
-
-      with {:ok, entries} <- projection.search(query, context, Keyword.delete(opts, :projection)),
-           :ok <- validate_projection_results(entries, instance_module, scope) do
-        {:ok, entries}
-      end
-    end
+    Jido.Messaging.History.Transcript.search_transcript(instance_module, query, scope, opts)
   end
 
   @doc "Upsert one committed canonical message into a configured search projection."
   def upsert_transcript_search(instance_module, runtime, message_id, scope, opts \\ [])
       when is_atom(instance_module) and is_binary(message_id) and is_list(opts) do
-    with :ok <- validate_history_scope(instance_module, scope),
-         {:ok, projection} <- search_projection(instance_module, opts),
-         :ok <- validate_projection(projection),
-         {persistence, persistence_state} <- Runtime.get_persistence(runtime),
-         {:ok, message} <- persistence.get_message(persistence_state, message_id),
-         :ok <- validate_history_room(scope, message.room_id),
-         {:ok, participant} <- persistence.get_participant(persistence_state, message.sender_id) do
-      entry =
-        build_transcript_entry(
-          instance_module,
-          persistence,
-          persistence_state,
-          participant,
-          message
-        )
-
-      context = %{instance_module: instance_module, scope: scope}
-      projection.upsert(entry, context, Keyword.delete(opts, :projection))
-    end
+    Jido.Messaging.History.Transcript.upsert_transcript_search(instance_module, runtime, message_id, scope, opts)
   end
 
   @doc "Delete one committed canonical message from a configured search projection."
   def delete_transcript_search(instance_module, message_id, room_id, scope, opts \\ [])
       when is_atom(instance_module) and is_binary(message_id) and is_binary(room_id) and is_list(opts) do
-    with :ok <- validate_history_scope(instance_module, scope),
-         :ok <- validate_history_room(scope, room_id),
-         {:ok, projection} <- search_projection(instance_module, opts),
-         :ok <- validate_projection(projection) do
-      context = %{instance_module: instance_module, scope: scope}
-      projection.delete(message_id, context, Keyword.delete(opts, :projection))
-    end
+    Jido.Messaging.History.Transcript.delete_transcript_search(instance_module, message_id, room_id, scope, opts)
   end
 
   @doc "Rebuild a configured search projection from canonical participant history."
   def rebuild_transcript_search(instance_module, runtime, participant_id, scope, opts \\ [])
       when is_atom(instance_module) and is_binary(participant_id) and is_list(opts) do
-    with :ok <- validate_history_scope(instance_module, scope),
-         {:ok, projection} <- search_projection(instance_module, opts),
-         :ok <- validate_projection(projection),
-         {:ok, entries} <- collect_transcript(instance_module, runtime, participant_id, scope, opts) do
-      context = %{instance_module: instance_module, scope: scope}
-      projection.rebuild(entries, context, Keyword.drop(opts, [:projection, :batch_size]))
-    end
+    Jido.Messaging.History.Transcript.rebuild_transcript_search(instance_module, runtime, participant_id, scope, opts)
   end
 
   @doc "Delete a message"
@@ -2074,6 +2004,12 @@ defmodule Jido.Messaging do
     persistence.get_message_by_external_id(persistence_state, channel, bridge_id, external_id)
   end
 
+  @doc "Get a provider message within one canonical room."
+  def get_message_by_external_id(runtime, channel, bridge_id, external_id, room_id) do
+    {persistence, persistence_state} = Runtime.get_persistence(runtime)
+    persistence.get_message_by_external_id(persistence_state, channel, bridge_id, external_id, room_id)
+  end
+
   @doc "Update a message's external_id"
   def update_message_external_id(runtime, message_id, external_id) do
     {persistence, persistence_state} = Runtime.get_persistence(runtime)
@@ -2084,119 +2020,6 @@ defmodule Jido.Messaging do
   def save_message_struct(runtime, %Message{} = message) do
     {persistence, persistence_state} = Runtime.get_persistence(runtime)
     persistence.save_message(persistence_state, message)
-  end
-
-  @doc "Add a participant reaction to a message and emit a committed reaction signal."
-  def add_reaction(instance_module, runtime, message_id, participant_id, reaction, opts \\ [])
-      when is_atom(instance_module) and is_binary(message_id) and is_binary(participant_id) and
-             is_binary(reaction) do
-    update_reaction(
-      instance_module,
-      runtime,
-      message_id,
-      participant_id,
-      reaction,
-      :reaction_added,
-      normalize_event_opts(opts)
-    )
-  end
-
-  @doc "Remove a participant reaction from a message and emit a committed reaction signal."
-  def remove_reaction(instance_module, runtime, message_id, participant_id, reaction, opts \\ [])
-      when is_atom(instance_module) and is_binary(message_id) and is_binary(participant_id) and
-             is_binary(reaction) do
-    update_reaction(
-      instance_module,
-      runtime,
-      message_id,
-      participant_id,
-      reaction,
-      :reaction_removed,
-      normalize_event_opts(opts)
-    )
-  end
-
-  @doc "Dispatch a custom room-scoped Jido Signal event."
-  def dispatch_room_event(instance_module, event_type, room_id, data \\ %{}, opts \\ [])
-      when is_atom(instance_module) and is_atom(event_type) and is_binary(room_id) and is_map(data) do
-    opts = normalize_event_opts(opts)
-
-    with {:ok, signal} <- Jido.Messaging.Events.room_event(instance_module, event_type, room_id, data, opts),
-         {:ok, signal} <-
-           Jido.Messaging.Dispatch.emit(instance_module, signal,
-             telemetry_event: Jido.Messaging.Events.telemetry_event_for(event_type),
-             telemetry_metadata: telemetry_metadata(instance_module, event_type, room_id, data),
-             room_id: room_id,
-             legacy_event: Keyword.get(opts, :legacy_event)
-           ) do
-      {:ok, signal}
-    end
-  end
-
-  @doc """
-  Emit a canonical participant joined signal for a room.
-
-  This is a transport-agnostic helper for apps that receive participant lifecycle
-  information from Phoenix Presence, adapters, polling, or any other source.
-  """
-  def participant_joined(instance_module, room_id, participant_id, opts \\ [])
-      when is_atom(instance_module) and is_binary(room_id) and is_binary(participant_id) do
-    opts = normalize_event_opts(opts)
-
-    dispatch_room_event(
-      instance_module,
-      :participant_joined,
-      room_id,
-      participant_event_data(participant_id, opts),
-      opts
-    )
-  end
-
-  @doc """
-  Emit a canonical participant left signal for a room.
-  """
-  def participant_left(instance_module, room_id, participant_id, opts \\ [])
-      when is_atom(instance_module) and is_binary(room_id) and is_binary(participant_id) do
-    opts = normalize_event_opts(opts)
-
-    dispatch_room_event(
-      instance_module,
-      :participant_left,
-      room_id,
-      participant_event_data(participant_id, opts),
-      opts
-    )
-  end
-
-  @doc """
-  Emit a canonical participant presence changed signal.
-  """
-  def participant_presence_changed(instance_module, room_id, participant_id, from, to, opts \\ [])
-      when is_atom(instance_module) and is_binary(room_id) and is_binary(participant_id) do
-    opts = normalize_event_opts(opts)
-
-    data =
-      participant_event_data(participant_id, opts)
-      |> Map.put(:from, from)
-      |> Map.put(:to, to)
-
-    dispatch_room_event(instance_module, :presence_changed, room_id, data, opts)
-  end
-
-  @doc """
-  Emit a canonical participant typing signal.
-  """
-  def participant_typing(instance_module, room_id, participant_id, is_typing, opts \\ [])
-      when is_atom(instance_module) and is_binary(room_id) and is_binary(participant_id) and
-             is_boolean(is_typing) do
-    opts = normalize_event_opts(opts)
-
-    data =
-      participant_event_data(participant_id, opts)
-      |> Map.put(:is_typing, is_typing)
-      |> maybe_put_data(:thread_id, Keyword.get(opts, :thread_id))
-
-    dispatch_room_event(instance_module, :typing, room_id, data, opts)
   end
 
   @doc "Subscribe to Jido Signal events for an instance module."
@@ -2414,245 +2237,48 @@ defmodule Jido.Messaging do
   @doc "Register a legacy in-memory agent handler with a room."
   def register_agent(instance_module, room_id, agent_spec, opts \\ [])
       when is_atom(instance_module) and is_binary(room_id) and is_map(agent_spec) and is_list(opts) do
-    normalized_spec = normalize_agent_spec(agent_spec, opts)
-
-    with {:ok, room_server} <- ensure_room_server(instance_module, room_id),
-         {:ok, registered_spec} <- RoomServer.register_agent(room_server, normalized_spec) do
-      restore_agent_assignments(instance_module, room_id, room_server, registered_spec)
-      {:ok, registered_spec}
-    end
+    Jido.Messaging.Agents.Assignment.register_agent(instance_module, room_id, agent_spec, opts)
   end
 
   @doc "Unregister an agent from a room."
   def unregister_agent(instance_module, room_id, agent_id)
       when is_atom(instance_module) and is_binary(room_id) and is_binary(agent_id) do
-    runtime = runtime_name(instance_module)
-
-    with {:ok, room_server} <- ensure_room_server(instance_module, room_id) do
-      runtime
-      |> assigned_thread_ids_for_agent(room_server, room_id, agent_id)
-      |> Enum.reduce_while(:ok, fn thread_id, :ok ->
-        with :ok <- stop_thread_runner(instance_module, room_id, thread_id, agent_id),
-             _ <- clear_persisted_thread_assignment(runtime, room_id, thread_id),
-             :ok <- room_server_unassign_thread(room_server, thread_id) do
-          {:cont, :ok}
-        else
-          {:error, reason} -> {:halt, {:error, reason}}
-        end
-      end)
-      |> case do
-        :ok -> room_server_unregister_agent(room_server, agent_id)
-        {:error, reason} -> {:error, reason}
-      end
-    end
+    Jido.Messaging.Agents.Assignment.unregister_agent(instance_module, room_id, agent_id)
   end
 
   @doc "List registered agents for a room."
   def list_agents(instance_module, room_id)
       when is_atom(instance_module) and is_binary(room_id) do
-    with {:ok, room_server} <- ensure_room_server(instance_module, room_id) do
-      {:ok, RoomServer.list_agents(room_server)}
-    end
+    Jido.Messaging.Agents.Assignment.list_agents(instance_module, room_id)
   end
 
   @doc "Assign a thread to an agent."
   def assign_thread(instance_module, room_id, thread_id, agent_id)
       when is_atom(instance_module) and is_binary(room_id) and is_binary(thread_id) and is_binary(agent_id) do
-    runtime = runtime_name(instance_module)
-
-    with {:ok, thread} <- get_thread(runtime, thread_id),
-         :ok <- ensure_thread_room(thread, room_id),
-         {:ok, room_server} <- ensure_room_server(instance_module, room_id),
-         {:ok, agent_spec} <- room_server_get_agent(room_server, agent_id) do
-      previous_agent_id = room_server_thread_assignment(room_server, thread_id) || thread.assigned_agent_id
-
-      previous_agent_spec =
-        registered_agent_spec(instance_module, room_id, thread_id, room_server, previous_agent_id)
-
-      case AgentRunner.whereis(instance_module, room_id, thread_id, agent_id) do
-        pid when is_pid(pid) and previous_agent_id == agent_id ->
-          updated_thread = maybe_touch_thread_assignment(thread, agent_id)
-
-          with {:ok, persisted_thread} <- persist_thread_assignment(runtime, updated_thread),
-               :ok <- room_server_assign_thread(room_server, thread_id, agent_id) do
-            {:ok, persisted_thread}
-          else
-            {:error, reason} ->
-              _ = save_thread_struct(runtime, thread)
-              {:error, reason}
-          end
-
-        _ ->
-          updated_thread = %{thread | assigned_agent_id: agent_id, updated_at: DateTime.utc_now()}
-
-          case stop_thread_runner(instance_module, room_id, thread_id, previous_agent_id) do
-            :ok ->
-              case assign_thread_state(
-                     runtime,
-                     room_server,
-                     instance_module,
-                     room_id,
-                     thread_id,
-                     agent_id,
-                     agent_spec,
-                     updated_thread
-                   ) do
-                {:ok, persisted_thread} ->
-                  {:ok, persisted_thread}
-
-                {:error, reason} ->
-                  case rollback_thread_assignment(
-                         instance_module,
-                         runtime,
-                         room_server,
-                         thread,
-                         previous_agent_spec
-                       ) do
-                    :ok -> {:error, reason}
-                    {:error, rollback_reason} -> {:error, {:assignment_failed, reason, rollback_reason}}
-                  end
-              end
-
-            {:error, reason} ->
-              {:error, reason}
-          end
-      end
-    end
+    Jido.Messaging.Agents.Assignment.assign_thread(instance_module, room_id, thread_id, agent_id)
   end
 
   @doc "Unassign a thread."
   def unassign_thread(instance_module, room_id, thread_id)
       when is_atom(instance_module) and is_binary(room_id) and is_binary(thread_id) do
-    runtime = runtime_name(instance_module)
-
-    with {:ok, thread} <- get_thread(runtime, thread_id),
-         :ok <- ensure_thread_room(thread, room_id),
-         {:ok, room_server} <- ensure_room_server(instance_module, room_id) do
-      assigned_agent_id = room_server_thread_assignment(room_server, thread_id) || thread.assigned_agent_id
-
-      assigned_agent_spec =
-        registered_agent_spec(instance_module, room_id, thread_id, room_server, assigned_agent_id)
-
-      case stop_thread_runner(instance_module, room_id, thread_id, assigned_agent_id) do
-        :ok ->
-          updated_thread = %{thread | assigned_agent_id: nil, updated_at: DateTime.utc_now()}
-
-          case unassign_thread_state(runtime, room_server, updated_thread) do
-            {:ok, persisted_thread} ->
-              {:ok, persisted_thread}
-
-            {:error, reason} ->
-              case rollback_thread_assignment(
-                     instance_module,
-                     runtime,
-                     room_server,
-                     thread,
-                     assigned_agent_spec
-                   ) do
-                :ok -> {:error, reason}
-                {:error, rollback_reason} -> {:error, {:unassignment_failed, reason, rollback_reason}}
-              end
-          end
-
-        {:error, reason} ->
-          {:error, reason}
-      end
-    end
+    Jido.Messaging.Agents.Assignment.unassign_thread(instance_module, room_id, thread_id)
   end
 
   @doc "Fetch thread assignment for a room thread."
   def thread_assignment(instance_module, room_id, thread_id)
       when is_atom(instance_module) and is_binary(room_id) and is_binary(thread_id) do
-    runtime = runtime_name(instance_module)
-
-    with {:ok, thread} <- get_thread(runtime, thread_id),
-         :ok <- ensure_thread_room(thread, room_id) do
-      {:ok, resolve_thread_assignment(instance_module, room_id, thread_id, thread)}
-    end
-  end
-
-  @doc "Route webhook payload through bridge-config parse/verify path into ingest."
-  def route_webhook(instance_module, bridge_id, payload, opts \\ [])
-      when is_atom(instance_module) and is_binary(bridge_id) and is_map(payload) and is_list(opts) do
-    Jido.Messaging.InboundRouter.route_webhook(instance_module, bridge_id, payload, opts)
-  end
-
-  @doc "Route webhook request and return typed response + ingest outcome."
-  def route_webhook_request(instance_module, bridge_id, request_meta, payload, opts \\ [])
-      when is_atom(instance_module) and is_binary(bridge_id) and is_map(request_meta) and is_map(payload) and
-             is_list(opts) do
-    Jido.Messaging.InboundRouter.route_webhook_request(instance_module, bridge_id, request_meta, payload, opts)
-  end
-
-  @doc "Route direct payload through bridge-config transform path into ingest."
-  def route_payload(instance_module, bridge_id, payload, opts \\ [])
-      when is_atom(instance_module) and is_binary(bridge_id) and is_map(payload) and is_list(opts) do
-    Jido.Messaging.InboundRouter.route_payload(instance_module, bridge_id, payload, opts)
+    Jido.Messaging.Agents.Assignment.thread_assignment(instance_module, room_id, thread_id)
   end
 
   @doc false
   def restore_agent_runners(instance_module) when is_atom(instance_module) do
-    runtime = runtime_name(instance_module)
-    room_supervisor = Module.concat(instance_module, :RoomSupervisor)
-
-    if is_nil(Process.whereis(runtime)) or is_nil(Process.whereis(room_supervisor)) do
-      {:error, :runtime_unavailable}
-    else
-      RoomSupervisor.list_rooms(instance_module)
-      |> Enum.each(fn {room_id, room_server} ->
-        agent_specs =
-          room_server
-          |> room_server_list_agents()
-          |> case do
-            {:ok, agents} -> Map.new(agents, &{&1.agent_id, &1})
-            {:error, _reason} -> %{}
-          end
-
-        case list_threads(runtime, room_id) do
-          {:ok, threads} ->
-            Enum.each(threads, fn
-              %Thread{id: thread_id, assigned_agent_id: agent_id}
-              when is_binary(agent_id) and map_size(agent_specs) > 0 ->
-                case Map.fetch(agent_specs, agent_id) do
-                  {:ok, agent_spec} ->
-                    _ = ensure_agent_runner(instance_module, room_id, thread_id, agent_id, agent_spec)
-                    :ok
-
-                  :error ->
-                    :ok
-                end
-
-              _thread ->
-                :ok
-            end)
-
-          {:error, _reason} ->
-            :ok
-        end
-      end)
-
-      :ok
-    end
+    Jido.Messaging.Agents.Assignment.restore_agent_runners(instance_module)
   end
 
   @doc false
   def restore_room_server_state(instance_module, room_id, room_server)
       when is_atom(instance_module) and is_binary(room_id) and is_pid(room_server) do
-    instance_module
-    |> AgentSupervisor.list_agents(room_id)
-    |> Enum.each(fn {{thread_id, agent_id}, pid} ->
-      case runner_agent_spec(pid, agent_id) do
-        {:ok, agent_spec} ->
-          _ = room_server_register_agent(room_server, agent_spec)
-          _ = room_server_assign_thread(room_server, thread_id, agent_id)
-          :ok
-
-        {:error, _reason} ->
-          :ok
-      end
-    end)
-
-    :ok
+    Jido.Messaging.Agents.Assignment.restore_room_server_state(instance_module, room_id, room_server)
   end
 
   @doc """
@@ -2666,808 +2292,8 @@ defmodule Jido.Messaging do
   """
   def create_bridge_room(instance_module, attrs)
       when is_atom(instance_module) and is_map(attrs) do
-    spec = BridgeRoomSpec.new(attrs)
-    room_id = spec.room_id || "bridge:" <> Jido.Chat.ID.generate!()
-    runtime = runtime_name(instance_module)
-
-    with :ok <- TopologyValidator.validate_bridge_room_spec(instance_module, spec),
-         :ok <- ensure_bridge_configs(instance_module, spec.bridge_configs),
-         {:ok, room} <- ensure_room(runtime, room_id, spec),
-         {:ok, _bindings} <- ensure_bindings(runtime, instance_module, room_id, spec.bindings),
-         {:ok, _policy} <- ensure_routing_policy(instance_module, room_id, spec.routing_policy) do
-      {:ok, room}
-    end
+    Jido.Messaging.Routing.BridgeRoom.create_bridge_room(instance_module, attrs)
   end
-
-  defp update_reaction(instance_module, runtime, message_id, participant_id, reaction, event_type, opts) do
-    with {:ok, message} <- get_message(runtime, message_id) do
-      existing_reactions = message.reactions || %{}
-      current_participants = existing_reactions |> Map.get(reaction, []) |> List.wrap() |> Enum.map(&to_string/1)
-
-      participants =
-        case event_type do
-          :reaction_added -> [participant_id | current_participants] |> Enum.uniq() |> Enum.sort()
-          :reaction_removed -> Enum.reject(current_participants, &(&1 == participant_id))
-        end
-
-      reactions =
-        if participants == [] do
-          Map.delete(existing_reactions, reaction)
-        else
-          Map.put(existing_reactions, reaction, participants)
-        end
-
-      if reactions == existing_reactions do
-        {:ok, Jido.Messaging.CommandResult.new(message, [])}
-      else
-        updated_message = %{message | reactions: reactions, updated_at: DateTime.utc_now()}
-
-        with {:ok, updated_message} <- save_message_struct(runtime, updated_message),
-             {:ok, signal} <-
-               reaction_signal(event_type, instance_module, updated_message, participant_id, reaction, opts),
-             {:ok, signal} <-
-               Jido.Messaging.Dispatch.emit(instance_module, signal,
-                 telemetry_event: Jido.Messaging.Events.telemetry_event_for(event_type),
-                 telemetry_metadata:
-                   telemetry_metadata(instance_module, event_type, updated_message.room_id, %{
-                     message_id: updated_message.id,
-                     participant_id: participant_id,
-                     reaction: reaction,
-                     message: updated_message
-                   }),
-                 room_id: updated_message.room_id,
-                 legacy_event:
-                   {event_type,
-                    %{
-                      message_id: updated_message.id,
-                      participant_id: participant_id,
-                      reaction: reaction,
-                      message: updated_message
-                    }}
-               ) do
-          {:ok, Jido.Messaging.CommandResult.new(updated_message, [signal])}
-        end
-      end
-    end
-  end
-
-  defp reaction_signal(:reaction_added, instance_module, message, participant_id, reaction, opts) do
-    Jido.Messaging.Events.reaction_added(instance_module, message, participant_id, reaction, signal_opts(message, opts))
-  end
-
-  defp reaction_signal(:reaction_removed, instance_module, message, participant_id, reaction, opts) do
-    Jido.Messaging.Events.reaction_removed(
-      instance_module,
-      message,
-      participant_id,
-      reaction,
-      signal_opts(message, opts)
-    )
-  end
-
-  defp signal_opts(%Message{} = message, opts) do
-    opts
-    |> Keyword.put_new(:message_id, message.id)
-    |> Keyword.put_new(:correlation_id, message.id)
-    |> Keyword.put_new(:external_message_id, message.external_id)
-    |> Keyword.put_new(:external_thread_id, message.external_thread_id)
-    |> Keyword.put_new(:delivery_external_room_id, message.delivery_external_room_id)
-  end
-
-  defp normalize_event_opts(opts), do: Jido.Messaging.EventOptions.normalize(opts, :command)
-
-  defp telemetry_metadata(instance_module, event_type, room_id, data) do
-    data
-    |> Map.merge(%{
-      room_id: room_id,
-      instance_module: instance_module,
-      timestamp: DateTime.utc_now(),
-      correlation_id:
-        data[:message_id] || data["message_id"] || data[:participant_id] || data["participant_id"] ||
-          "corr_" <> Base.encode16(:crypto.strong_rand_bytes(8), case: :lower)
-    })
-    |> Map.put_new(:event_type, event_type)
-  end
-
-  defp participant_event_data(participant_id, opts) do
-    %{
-      participant_id: participant_id,
-      session_id: Keyword.get(opts, :session_id),
-      presence: Keyword.get(opts, :presence),
-      source: Keyword.get(opts, :source)
-    }
-    |> maybe_put_data(:metadata, Keyword.get(opts, :metadata))
-    |> maybe_put_data(:reason, Keyword.get(opts, :reason))
-    |> Map.reject(fn {_key, value} -> is_nil(value) end)
-  end
-
-  defp maybe_put_data(data, _key, nil), do: data
-  defp maybe_put_data(data, key, value), do: Map.put(data, key, value)
-
-  defp ensure_bridge_configs(_instance_module, []), do: :ok
-
-  defp ensure_bridge_configs(instance_module, bridge_configs) when is_list(bridge_configs) do
-    Enum.reduce_while(bridge_configs, :ok, fn config, :ok ->
-      attrs = normalize_bridge_config_attrs(config)
-
-      case put_bridge_config(instance_module, attrs) do
-        {:ok, _bridge} -> {:cont, :ok}
-        {:error, reason} -> {:halt, {:error, {:bridge_config_failed, reason, config}}}
-      end
-    end)
-  end
-
-  defp ensure_room(runtime, room_id, %BridgeRoomSpec{} = spec) do
-    case get_room(runtime, room_id) do
-      {:ok, room} ->
-        {:ok, room}
-
-      {:error, :not_found} ->
-        save_room(
-          runtime,
-          Room.new(%{
-            id: room_id,
-            type: spec.room_type,
-            name: spec.room_name,
-            metadata: spec.room_metadata
-          })
-        )
-
-      {:error, reason} ->
-        {:error, {:room_lookup_failed, reason}}
-    end
-  end
-
-  defp ensure_bindings(_runtime, _instance_module, _room_id, []), do: {:ok, []}
-
-  defp ensure_bindings(runtime, instance_module, room_id, bindings) when is_list(bindings) do
-    Enum.reduce_while(bindings, {:ok, []}, fn binding, {:ok, acc} ->
-      with {:ok, normalized} <- normalize_binding(binding),
-           {:ok, _bridge} <- ensure_binding_bridge_enabled(instance_module, normalized.bridge_id),
-           {:ok, result} <- ensure_binding(runtime, room_id, normalized) do
-        {:cont, {:ok, [result | acc]}}
-      else
-        {:error, reason} -> {:halt, {:error, reason}}
-      end
-    end)
-    |> case do
-      {:ok, results} -> {:ok, Enum.reverse(results)}
-      {:error, _reason} = error -> error
-    end
-  end
-
-  defp ensure_binding(runtime, room_id, normalized) do
-    case get_room_by_external_binding(
-           runtime,
-           normalized.channel,
-           normalized.bridge_id,
-           normalized.external_room_id
-         ) do
-      {:ok, %Room{id: ^room_id}} ->
-        {:ok, :existing}
-
-      {:ok, %Room{id: existing_room_id}} ->
-        {:error,
-         {:binding_conflict,
-          %{
-            room_id: room_id,
-            existing_room_id: existing_room_id,
-            channel: normalized.channel,
-            bridge_id: normalized.bridge_id,
-            external_room_id: normalized.external_room_id
-          }}}
-
-      {:error, :not_found} ->
-        create_room_binding(
-          runtime,
-          room_id,
-          normalized.channel,
-          normalized.bridge_id,
-          normalized.external_room_id,
-          normalized.attrs
-        )
-
-      {:error, reason} ->
-        {:error, {:binding_lookup_failed, reason}}
-    end
-  end
-
-  defp ensure_binding_bridge_enabled(instance_module, bridge_id) when is_binary(bridge_id) do
-    case get_bridge_config(instance_module, bridge_id) do
-      {:ok, %{enabled: true} = config} -> {:ok, config}
-      {:ok, %{enabled: false}} -> {:error, {:bridge_disabled, bridge_id}}
-      {:error, :not_found} -> {:error, {:bridge_not_found, bridge_id}}
-    end
-  end
-
-  defp ensure_routing_policy(_instance_module, _room_id, policy) when policy in [%{}, nil], do: {:ok, nil}
-
-  defp ensure_routing_policy(instance_module, room_id, policy) when is_map(policy) do
-    attrs = Map.put(policy, :room_id, room_id)
-
-    case put_routing_policy(instance_module, room_id, attrs) do
-      {:ok, routing_policy} -> {:ok, routing_policy}
-      {:error, reason} -> {:error, {:routing_policy_failed, reason}}
-    end
-  end
-
-  defp normalize_bridge_config_attrs(config) when is_map(config) do
-    normalized =
-      Enum.reduce(config, %{}, fn
-        {key, value}, acc when is_atom(key) -> Map.put(acc, key, value)
-        {key, value}, acc when is_binary(key) -> put_bridge_config_string_key(acc, key, value)
-        {_key, _value}, acc -> acc
-      end)
-
-    normalized
-    |> Map.put_new(:enabled, true)
-    |> Map.put_new(:opts, %{})
-    |> Map.put_new(:credentials, %{})
-  end
-
-  defp put_bridge_config_string_key(acc, key, value) when is_map(acc) and is_binary(key) do
-    case bridge_config_key_to_atom(key) do
-      nil -> Map.put(acc, key, value)
-      atom_key -> Map.put(acc, atom_key, value)
-    end
-  end
-
-  defp bridge_config_key_to_atom("id"), do: :id
-  defp bridge_config_key_to_atom("adapter_module"), do: :adapter_module
-  defp bridge_config_key_to_atom("adapter"), do: :adapter_module
-  defp bridge_config_key_to_atom("credentials"), do: :credentials
-  defp bridge_config_key_to_atom("opts"), do: :opts
-  defp bridge_config_key_to_atom("enabled"), do: :enabled
-  defp bridge_config_key_to_atom("capabilities"), do: :capabilities
-  defp bridge_config_key_to_atom("delivery_policy"), do: :delivery_policy
-  defp bridge_config_key_to_atom("revision"), do: :revision
-  defp bridge_config_key_to_atom("inserted_at"), do: :inserted_at
-  defp bridge_config_key_to_atom("updated_at"), do: :updated_at
-  defp bridge_config_key_to_atom(_), do: nil
-
-  defp normalize_binding(binding) when is_map(binding) do
-    channel = map_get(binding, :channel) |> normalize_channel()
-    bridge_id = map_get(binding, :bridge_id) |> normalize_id()
-    external_room_id = map_get(binding, :external_room_id) |> normalize_id()
-    direction = map_get(binding, :direction) |> normalize_direction()
-    enabled = map_get(binding, :enabled) |> normalize_bool()
-
-    with true <- is_atom(channel),
-         true <- is_binary(bridge_id),
-         true <- is_binary(external_room_id) do
-      attrs =
-        binding
-        |> drop_keys([
-          :channel,
-          "channel",
-          :bridge_id,
-          "bridge_id",
-          :external_room_id,
-          "external_room_id",
-          :direction,
-          "direction",
-          :enabled,
-          "enabled"
-        ])
-        |> put_attr(:direction, direction)
-        |> put_attr(:enabled, enabled)
-
-      {:ok,
-       %{
-         channel: channel,
-         bridge_id: bridge_id,
-         external_room_id: external_room_id,
-         attrs: attrs
-       }}
-    else
-      _ -> {:error, {:invalid_binding, binding}}
-    end
-  end
-
-  defp map_get(map, atom_key) when is_map(map) and is_atom(atom_key),
-    do: Map.get(map, atom_key, Map.get(map, Atom.to_string(atom_key)))
-
-  defp drop_keys(map, keys), do: Enum.reduce(keys, map, &Map.delete(&2, &1))
-
-  defp put_attr(attrs, key, value) when is_map(attrs), do: Map.put(attrs, key, value)
-
-  defp normalize_channel(:telegram), do: :telegram
-  defp normalize_channel(:discord), do: :discord
-  defp normalize_channel("telegram"), do: :telegram
-  defp normalize_channel("discord"), do: :discord
-  defp normalize_channel(_), do: nil
-
-  defp normalize_direction(:inbound), do: :inbound
-  defp normalize_direction(:outbound), do: :outbound
-  defp normalize_direction("inbound"), do: :inbound
-  defp normalize_direction("outbound"), do: :outbound
-  defp normalize_direction(_), do: :both
-
-  defp normalize_bool(true), do: true
-  defp normalize_bool(false), do: false
-  defp normalize_bool("true"), do: true
-  defp normalize_bool("false"), do: false
-  defp normalize_bool("1"), do: true
-  defp normalize_bool("0"), do: false
-  defp normalize_bool(1), do: true
-  defp normalize_bool(0), do: false
-  defp normalize_bool(_), do: true
-
-  defp normalize_id(value) when is_binary(value) and value != "", do: value
-  defp normalize_id(value) when is_integer(value), do: Integer.to_string(value)
-  defp normalize_id(value) when is_atom(value), do: Atom.to_string(value)
-  defp normalize_id(_), do: nil
-
-  defp normalize_agent_spec(agent_spec, opts) when is_map(agent_spec) and is_list(opts) do
-    agent_id =
-      map_get(agent_spec, :agent_id) ||
-        map_get(agent_spec, :id) ||
-        raise ArgumentError, "agent_spec requires :agent_id"
-
-    name = map_get(agent_spec, :name) || agent_id
-
-    mention_handles =
-      agent_spec
-      |> map_get(:mention_handles)
-      |> case do
-        handles when is_list(handles) -> handles
-        _ -> [agent_id, name]
-      end
-      |> Enum.map(&normalize_id/1)
-      |> Enum.reject(&is_nil/1)
-      |> Enum.map(&String.downcase/1)
-      |> Enum.uniq()
-
-    agent_spec
-    |> Map.put(:agent_id, normalize_id(agent_id))
-    |> Map.put(:name, normalize_id(name) || to_string(name))
-    |> Map.put(:mention_handles, mention_handles)
-    |> Map.put_new(:trigger, Keyword.get(opts, :trigger, :thread))
-  end
-
-  defp restore_agent_assignments(instance_module, room_id, room_server, agent_spec) do
-    runtime = runtime_name(instance_module)
-    agent_id = agent_spec.agent_id
-
-    with {:ok, threads} <- list_threads(runtime, room_id) do
-      Enum.each(threads, fn
-        %Thread{id: thread_id, assigned_agent_id: ^agent_id} ->
-          case room_server_thread_assignment(room_server, thread_id) do
-            nil ->
-              _ = room_server_assign_thread(room_server, thread_id, agent_id)
-              _ = ensure_agent_runner(instance_module, room_id, thread_id, agent_id, agent_spec)
-
-            ^agent_id ->
-              _ = ensure_agent_runner(instance_module, room_id, thread_id, agent_id, agent_spec)
-
-            _other ->
-              :ok
-          end
-
-        _thread ->
-          :ok
-      end)
-    end
-
-    :ok
-  end
-
-  defp assigned_thread_ids_for_agent(runtime, room_server, room_id, agent_id) do
-    in_memory_thread_ids =
-      case room_server_list_thread_assignments(room_server) do
-        {:ok, assignments} ->
-          Enum.flat_map(assignments, fn
-            {thread_id, ^agent_id} -> [thread_id]
-            {_thread_id, _assigned_agent_id} -> []
-          end)
-
-        {:error, _reason} ->
-          []
-      end
-
-    persisted_thread_ids =
-      case list_threads(runtime, room_id) do
-        {:ok, threads} ->
-          Enum.flat_map(threads, fn
-            %Thread{id: thread_id, assigned_agent_id: ^agent_id} -> [thread_id]
-            _thread -> []
-          end)
-
-        {:error, _reason} ->
-          []
-      end
-
-    Enum.uniq(in_memory_thread_ids ++ persisted_thread_ids)
-  end
-
-  defp ensure_agent_runner(instance_module, room_id, thread_id, agent_id, agent_spec) do
-    case AgentRunner.whereis(instance_module, room_id, thread_id, agent_id) do
-      pid when is_pid(pid) ->
-        {:ok, pid}
-
-      nil ->
-        start_thread_runner(instance_module, room_id, thread_id, agent_id, agent_spec)
-    end
-  end
-
-  defp clear_persisted_thread_assignment(runtime, room_id, thread_id) do
-    with {:ok, thread} <- get_thread(runtime, thread_id),
-         :ok <- ensure_thread_room(thread, room_id) do
-      updated_thread = %{thread | assigned_agent_id: nil, updated_at: DateTime.utc_now()}
-      save_thread_struct(runtime, updated_thread)
-    else
-      _ -> :ok
-    end
-  end
-
-  defp persist_thread_assignment(runtime, %Thread{} = thread) do
-    save_thread_struct(runtime, thread)
-  end
-
-  defp resolve_thread_assignment(instance_module, room_id, thread_id, %Thread{} = thread) do
-    case ensure_room_server(instance_module, room_id) do
-      {:ok, room_server} ->
-        case room_server_thread_assignment_result(room_server, thread_id) do
-          {:ok, assignment} -> assignment || thread.assigned_agent_id
-          {:error, _reason} -> thread.assigned_agent_id
-        end
-
-      {:error, _reason} ->
-        thread.assigned_agent_id
-    end
-  end
-
-  defp assign_thread_state(
-         runtime,
-         room_server,
-         instance_module,
-         room_id,
-         thread_id,
-         agent_id,
-         agent_spec,
-         updated_thread
-       ) do
-    with {:ok, persisted_thread} <- persist_thread_assignment(runtime, updated_thread),
-         :ok <- room_server_assign_thread(room_server, thread_id, agent_id),
-         {:ok, _pid} <- start_thread_runner(instance_module, room_id, thread_id, agent_id, agent_spec) do
-      {:ok, persisted_thread}
-    end
-  end
-
-  defp unassign_thread_state(runtime, room_server, updated_thread) do
-    with {:ok, persisted_thread} <- save_thread_struct(runtime, updated_thread),
-         :ok <- room_server_unassign_thread(room_server, updated_thread.id) do
-      {:ok, persisted_thread}
-    end
-  end
-
-  defp rollback_thread_assignment(
-         instance_module,
-         runtime,
-         room_server,
-         %Thread{} = original_thread,
-         previous_agent_spec
-       ) do
-    with {:ok, _thread} <- save_thread_struct(runtime, original_thread),
-         :ok <- restore_room_server_assignment(room_server, original_thread, previous_agent_spec),
-         :ok <- restore_thread_runner(instance_module, original_thread, previous_agent_spec) do
-      :ok
-    end
-  end
-
-  defp restore_room_server_assignment(room_server, %Thread{assigned_agent_id: agent_id} = thread, agent_spec)
-       when is_binary(agent_id) and is_map(agent_spec) do
-    with {:ok, _registered_agent} <- room_server_register_agent(room_server, agent_spec),
-         :ok <- restore_room_server_assignment(room_server, %{thread | assigned_agent_id: agent_id}, nil) do
-      :ok
-    end
-  end
-
-  defp restore_room_server_assignment(room_server, %Thread{id: thread_id, assigned_agent_id: agent_id}, _agent_spec)
-       when is_binary(agent_id) do
-    room_server_assign_thread(room_server, thread_id, agent_id)
-  end
-
-  defp restore_room_server_assignment(room_server, %Thread{id: thread_id}, _agent_spec) do
-    room_server_unassign_thread(room_server, thread_id)
-  end
-
-  defp restore_thread_runner(_instance_module, %Thread{assigned_agent_id: nil}, _previous_agent_spec), do: :ok
-
-  defp restore_thread_runner(
-         instance_module,
-         %Thread{room_id: room_id, id: thread_id, assigned_agent_id: agent_id},
-         agent_spec
-       )
-       when is_binary(agent_id) and is_map(agent_spec) do
-    case AgentRunner.whereis(instance_module, room_id, thread_id, agent_id) do
-      pid when is_pid(pid) ->
-        :ok
-
-      nil ->
-        case start_thread_runner(instance_module, room_id, thread_id, agent_id, agent_spec) do
-          {:ok, _pid} -> :ok
-          {:error, reason} -> {:error, reason}
-        end
-    end
-  end
-
-  defp restore_thread_runner(_instance_module, %Thread{assigned_agent_id: _agent_id}, _previous_agent_spec), do: :ok
-
-  defp registered_agent_spec(_instance_module, _room_id, _thread_id, _room_server, nil), do: nil
-
-  defp registered_agent_spec(instance_module, room_id, thread_id, room_server, agent_id) when is_binary(agent_id) do
-    case room_server_get_agent(room_server, agent_id) do
-      {:ok, agent_spec} ->
-        agent_spec
-
-      {:error, _reason} ->
-        case AgentRunner.whereis(instance_module, room_id, thread_id, agent_id) do
-          pid when is_pid(pid) ->
-            case runner_agent_spec(pid, agent_id) do
-              {:ok, agent_spec} -> agent_spec
-              {:error, _reason} -> nil
-            end
-
-          nil ->
-            nil
-        end
-    end
-  end
-
-  defp start_thread_runner(instance_module, room_id, thread_id, agent_id, agent_spec) do
-    case AgentSupervisor.start_agent(instance_module, room_id, thread_id, agent_id, agent_spec) do
-      {:ok, pid} -> {:ok, pid}
-      {:error, reason} -> {:error, {:start_agent_failed, reason}}
-    end
-  end
-
-  defp stop_thread_runner(_instance_module, _room_id, _thread_id, nil), do: :ok
-
-  defp stop_thread_runner(instance_module, room_id, thread_id, agent_id) when is_binary(agent_id) do
-    case AgentSupervisor.stop_agent(instance_module, room_id, thread_id, agent_id) do
-      :ok -> :ok
-      {:error, :not_found} -> :ok
-      {:error, reason} -> {:error, {:stop_agent_failed, reason}}
-    end
-  end
-
-  defp room_server_get_agent(room_server, agent_id) do
-    try do
-      RoomServer.get_agent(room_server, agent_id)
-    catch
-      :exit, reason -> {:error, {:room_server_unavailable, reason}}
-    end
-  end
-
-  defp room_server_assign_thread(room_server, thread_id, agent_id) do
-    try do
-      RoomServer.assign_thread(room_server, thread_id, agent_id)
-    catch
-      :exit, reason -> {:error, {:room_server_unavailable, reason}}
-    end
-  end
-
-  defp room_server_unassign_thread(room_server, thread_id) do
-    try do
-      RoomServer.unassign_thread(room_server, thread_id)
-    catch
-      :exit, reason -> {:error, {:room_server_unavailable, reason}}
-    end
-  end
-
-  defp room_server_thread_assignment(room_server, thread_id) do
-    case room_server_thread_assignment_result(room_server, thread_id) do
-      {:ok, assignment} -> assignment
-      {:error, _reason} -> nil
-    end
-  end
-
-  defp room_server_thread_assignment_result(room_server, thread_id) do
-    try do
-      {:ok, RoomServer.thread_assignment(room_server, thread_id)}
-    catch
-      :exit, reason -> {:error, {:room_server_unavailable, reason}}
-    end
-  end
-
-  defp room_server_list_thread_assignments(room_server) do
-    try do
-      {:ok, RoomServer.list_thread_assignments(room_server)}
-    catch
-      :exit, reason -> {:error, {:room_server_unavailable, reason}}
-    end
-  end
-
-  defp room_server_list_agents(room_server) do
-    try do
-      {:ok, RoomServer.list_agents(room_server)}
-    catch
-      :exit, reason -> {:error, {:room_server_unavailable, reason}}
-    end
-  end
-
-  defp room_server_register_agent(room_server, agent_spec) when is_map(agent_spec) do
-    try do
-      RoomServer.register_agent(room_server, agent_spec)
-    catch
-      :exit, reason -> {:error, {:room_server_unavailable, reason}}
-    end
-  end
-
-  defp room_server_unregister_agent(room_server, agent_id) do
-    try do
-      RoomServer.unregister_agent(room_server, agent_id)
-    catch
-      :exit, reason -> {:error, {:room_server_unavailable, reason}}
-    end
-  end
-
-  defp runner_agent_spec(pid, fallback_agent_id) when is_pid(pid) and is_binary(fallback_agent_id) do
-    try do
-      case AgentRunner.get_state(pid) do
-        %AgentRunner{agent_id: agent_id, agent_config: agent_config} when is_map(agent_config) ->
-          {:ok,
-           agent_config
-           |> Map.put(:agent_id, agent_id || fallback_agent_id)
-           |> Map.put_new(:name, fallback_agent_id)}
-
-        _other ->
-          {:error, :runner_state_unavailable}
-      end
-    catch
-      :exit, reason -> {:error, {:runner_unavailable, reason}}
-    end
-  end
-
-  defp maybe_touch_thread_assignment(%Thread{assigned_agent_id: agent_id} = thread, agent_id), do: thread
-
-  defp maybe_touch_thread_assignment(%Thread{} = thread, agent_id) do
-    %{thread | assigned_agent_id: agent_id, updated_at: DateTime.utc_now()}
-  end
-
-  defp ensure_thread_room(%Thread{room_id: room_id}, room_id), do: :ok
-  defp ensure_thread_room(%Thread{}, _room_id), do: {:error, :thread_room_mismatch}
-
-  defp ensure_room_server(instance_module, room_id) do
-    runtime = runtime_name(instance_module)
-
-    with {:ok, room} <- get_room(runtime, room_id) do
-      RoomSupervisor.get_or_start_room(instance_module, room)
-    end
-  end
-
-  defp runtime_name(instance_module), do: Module.concat(instance_module, :Runtime)
-
-  defp build_transcript_entry(
-         instance_module,
-         persistence,
-         persistence_state,
-         participant,
-         message
-       ) do
-    authorship = Identity.authorship_for_message(message, participant)
-    binding = Identity.binding_for_message(persistence, persistence_state, message, authorship)
-
-    Jido.Messaging.TranscriptEntry.new(instance_module, participant, message,
-      authorship: authorship,
-      external_identity_binding: binding
-    )
-  end
-
-  defp validate_history_scope(
-         instance_module,
-         %Jido.Messaging.HistoryScope{instance_module: instance_module, room_ids: room_ids}
-       )
-       when is_list(room_ids),
-       do: :ok
-
-  defp validate_history_scope(_instance_module, %Jido.Messaging.HistoryScope{}) do
-    {:error, :history_scope_instance_mismatch}
-  end
-
-  defp validate_history_scope(_instance_module, _scope), do: {:error, :history_scope_required}
-
-  defp validate_history_room(scope, room_id) do
-    if room_id in scope.room_ids, do: :ok, else: {:error, :history_scope_violation}
-  end
-
-  defp search_projection(instance_module, opts) do
-    projection =
-      Keyword.get(opts, :projection) ||
-        Application.get_env(instance_module, :search_projection) ||
-        Application.get_env(:jido_messaging, :search_projection)
-
-    if is_atom(projection) and not is_nil(projection) do
-      {:ok, projection}
-    else
-      {:error, :search_projection_not_configured}
-    end
-  end
-
-  defp validate_projection(projection) do
-    callbacks = [upsert: 3, delete: 3, search: 3, rebuild: 3]
-
-    if Code.ensure_loaded?(projection) and
-         Enum.all?(callbacks, fn {name, arity} -> function_exported?(projection, name, arity) end) do
-      :ok
-    else
-      {:error, :invalid_search_projection}
-    end
-  end
-
-  defp validate_projection_results(entries, instance_module, scope) when is_list(entries) do
-    allowed_rooms = MapSet.new(scope.room_ids)
-
-    if Enum.all?(entries, fn
-         %Jido.Messaging.TranscriptEntry{instance_module: ^instance_module, room_id: room_id} = entry ->
-           MapSet.member?(allowed_rooms, room_id) and projection_entry_consistent?(entry)
-
-         _other ->
-           false
-       end) do
-      :ok
-    else
-      {:error, :search_projection_scope_violation}
-    end
-  end
-
-  defp validate_projection_results(_entries, _instance_module, _scope) do
-    {:error, :invalid_search_projection_result}
-  end
-
-  defp projection_entry_consistent?(%Jido.Messaging.TranscriptEntry{
-         canonical_message_id: canonical_message_id,
-         canonical_participant_id: canonical_participant_id,
-         room_id: room_id,
-         provider_message_id: provider_message_id,
-         inserted_at: inserted_at,
-         message: %Message{} = message
-       }) do
-    message.id == canonical_message_id and
-      message.sender_id == canonical_participant_id and
-      message.room_id == room_id and
-      message.external_id == provider_message_id and
-      message.inserted_at == inserted_at
-  end
-
-  defp projection_entry_consistent?(_entry), do: false
-
-  defp collect_transcript(instance_module, runtime, participant_id, scope, opts) do
-    batch_size = opts |> Keyword.get(:batch_size, 500) |> normalize_transcript_batch_size()
-
-    page_opts =
-      opts
-      |> Keyword.drop([:projection, :batch_size, :before, :after])
-      |> Keyword.put(:limit, batch_size)
-
-    with {:ok, latest} <- participant_transcript(instance_module, runtime, participant_id, scope, page_opts) do
-      collect_older_transcript(instance_module, runtime, participant_id, scope, page_opts, latest)
-    end
-  end
-
-  defp collect_older_transcript(_instance_module, _runtime, _participant_id, _scope, _opts, []), do: {:ok, []}
-
-  defp collect_older_transcript(instance_module, runtime, participant_id, scope, opts, entries) do
-    before = entries |> List.first() |> Map.fetch!(:canonical_message_id)
-
-    case participant_transcript(instance_module, runtime, participant_id, scope, Keyword.put(opts, :before, before)) do
-      {:ok, []} ->
-        {:ok, entries}
-
-      {:ok, older} ->
-        with {:ok, all_older} <-
-               collect_older_transcript(instance_module, runtime, participant_id, scope, opts, older) do
-          {:ok, all_older ++ entries}
-        end
-
-      {:error, _reason} = error ->
-        error
-    end
-  end
-
-  defp normalize_transcript_batch_size(value) when is_integer(value) and value > 0, do: min(value, 1_000)
-  defp normalize_transcript_batch_size(_value), do: 500
 
   @doc "List running bridge workers for an instance module."
   def list_bridges(instance_module) when is_atom(instance_module) do
@@ -3478,11 +2304,5 @@ defmodule Jido.Messaging do
   def resolve_outbound_routes(instance_module, room_id, opts \\ [])
       when is_atom(instance_module) and is_binary(room_id) and is_list(opts) do
     Jido.Messaging.OutboundRouter.resolve_routes(instance_module, room_id, opts)
-  end
-
-  @doc "Route outbound text through bridge bindings/policy for a room."
-  def route_outbound(instance_module, room_id, text, opts \\ [])
-      when is_atom(instance_module) and is_binary(room_id) and is_binary(text) and is_list(opts) do
-    Jido.Messaging.OutboundRouter.route_outbound(instance_module, room_id, text, opts)
   end
 end

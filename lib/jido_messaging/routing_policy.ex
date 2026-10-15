@@ -40,9 +40,10 @@ defmodule Jido.Messaging.RoutingPolicy do
     struct!(__MODULE__, %{
       id: Map.get(attrs, :id, room_id),
       room_id: room_id,
-      delivery_mode: Map.get(attrs, :delivery_mode, :best_effort),
-      failover_policy: Map.get(attrs, :failover_policy, :next_available),
-      dedupe_scope: Map.get(attrs, :dedupe_scope, :message_id),
+      delivery_mode: normalize_enum(Map.get(attrs, :delivery_mode, :best_effort), [:best_effort, :primary, :broadcast]),
+      failover_policy:
+        normalize_enum(Map.get(attrs, :failover_policy, :next_available), [:none, :next_available, :broadcast]),
+      dedupe_scope: normalize_enum(Map.get(attrs, :dedupe_scope, :message_id), [:message_id, :thread, :room]),
       fallback_order: Map.get(attrs, :fallback_order, []),
       metadata: Map.get(attrs, :metadata, %{}),
       revision: Map.get(attrs, :revision, 0),
@@ -85,4 +86,9 @@ defmodule Jido.Messaging.RoutingPolicy do
   defp key_to_atom("inserted_at"), do: :inserted_at
   defp key_to_atom("updated_at"), do: :updated_at
   defp key_to_atom(_), do: nil
+
+  defp normalize_enum(value, allowed) when is_binary(value),
+    do: Enum.find(allowed, value, &(Atom.to_string(&1) == value))
+
+  defp normalize_enum(value, _allowed), do: value
 end

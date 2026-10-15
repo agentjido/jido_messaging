@@ -8,13 +8,17 @@ defmodule Jido.Messaging.OutboundGatewayTest do
   end
 
   defmodule PartitionChannel do
-    @behaviour Jido.Chat.Adapter
+    use Jido.Chat.Adapter
 
     @impl true
     def channel_type, do: :partition_channel
 
     @impl true
-    def transform_incoming(_raw), do: {:error, :not_implemented}
+    def signal_protocol, do: 1
+    @impl true
+    def configure_binding(opts), do: {:ok, opts}
+    @impl true
+    def normalize_event(binding, _raw), do: Jido.Chat.Delivery.new(binding, "empty", [])
 
     @impl true
     def send_message(room_id, text, _opts), do: {:ok, %{message_id: "#{room_id}:#{text}"}}
@@ -24,24 +28,37 @@ defmodule Jido.Messaging.OutboundGatewayTest do
   end
 
   defmodule SlowChannel do
-    @behaviour Jido.Chat.Adapter
+    use Jido.Chat.Adapter
 
     @impl true
     def channel_type, do: :slow_channel
 
     @impl true
-    def transform_incoming(_raw), do: {:error, :not_implemented}
+    def signal_protocol, do: 1
+    @impl true
+    def configure_binding(opts), do: {:ok, opts}
+    @impl true
+    def normalize_event(binding, _raw), do: Jido.Chat.Delivery.new(binding, "empty", [])
 
     @impl true
     def send_message(_room_id, text, _opts) do
-      Process.sleep(150)
+      if text == "first" do
+        send(Process.whereis(Jido.Messaging.OutboundGatewayTest.Probe), {:outbound_started, self()})
+
+        receive do
+          :release_provider -> :ok
+        after
+          5_000 -> raise "test provider barrier was not released"
+        end
+      end
+
       {:ok, %{message_id: "slow:#{text}"}}
     end
   end
 
   defmodule RetryChannel do
     use Agent
-    @behaviour Jido.Chat.Adapter
+    use Jido.Chat.Adapter
 
     def start_link(_opts) do
       Agent.start_link(fn -> %{} end, name: __MODULE__)
@@ -51,7 +68,11 @@ defmodule Jido.Messaging.OutboundGatewayTest do
     def channel_type, do: :retry_channel
 
     @impl true
-    def transform_incoming(_raw), do: {:error, :not_implemented}
+    def signal_protocol, do: 1
+    @impl true
+    def configure_binding(opts), do: {:ok, opts}
+    @impl true
+    def normalize_event(binding, _raw), do: Jido.Chat.Delivery.new(binding, "empty", [])
 
     @impl true
     def send_message(_room_id, text, _opts) do
@@ -75,30 +96,38 @@ defmodule Jido.Messaging.OutboundGatewayTest do
   end
 
   defmodule SlackSanitizeChannel do
-    @behaviour Jido.Chat.Adapter
+    use Jido.Chat.Adapter
 
     @impl true
     def channel_type, do: :slack
 
     @impl true
-    def transform_incoming(_raw), do: {:error, :not_implemented}
+    def signal_protocol, do: 1
+    @impl true
+    def configure_binding(opts), do: {:ok, opts}
+    @impl true
+    def normalize_event(binding, _raw), do: Jido.Chat.Delivery.new(binding, "empty", [])
 
     @impl true
     def send_message(room_id, text, _opts), do: {:ok, %{message_id: "#{room_id}:#{text}"}}
   end
 
   defmodule BridgeConfigChannel do
-    @behaviour Jido.Chat.Adapter
+    use Jido.Chat.Adapter
 
     @impl true
     def channel_type, do: :bridge_config_channel
 
     @impl true
-    def transform_incoming(_raw), do: {:error, :not_implemented}
+    def signal_protocol, do: 1
+    @impl true
+    def configure_binding(opts), do: {:ok, opts}
+    @impl true
+    def normalize_event(binding, _raw), do: Jido.Chat.Delivery.new(binding, "empty", [])
 
     @impl true
     def send_message(room_id, text, opts) do
-      send(opts[:test_pid], {:bridge_adapter_opts, opts})
+      send(Process.whereis(Jido.Messaging.OutboundGatewayTest.Probe), {:bridge_adapter_opts, opts})
       {:ok, %{message_id: "#{room_id}:#{text}"}}
     end
   end
@@ -113,16 +142,21 @@ defmodule Jido.Messaging.OutboundGatewayTest do
   end
 
   defmodule MediaChannel do
-    @behaviour Jido.Chat.Adapter
+    use Jido.Chat.Adapter
 
     @impl true
     def channel_type, do: :media_channel
 
     @impl true
-    def capabilities, do: [:text, :image]
+    def capabilities, do: %{send_message: :native, edit_message: :native, send_file: :native, delete_message: :native}
+    def content_capabilities, do: [:text, :image]
 
     @impl true
-    def transform_incoming(_raw), do: {:error, :not_implemented}
+    def signal_protocol, do: 1
+    @impl true
+    def configure_binding(opts), do: {:ok, opts}
+    @impl true
+    def normalize_event(binding, _raw), do: Jido.Chat.Delivery.new(binding, "empty", [])
 
     @impl true
     def send_message(room_id, text, _opts), do: {:ok, %{message_id: "#{room_id}:#{text}"}}
@@ -152,6 +186,7 @@ defmodule Jido.Messaging.OutboundGatewayTest do
   end
 
   setup do
+    Process.register(self(), Jido.Messaging.OutboundGatewayTest.Probe)
     original_config = Application.get_env(TestMessaging, :outbound_gateway)
     original_resolver = Application.get_env(TestMessaging, :secret_resolver)
     Application.put_env(TestMessaging, :secret_resolver, BridgeSecretResolver)
@@ -206,8 +241,7 @@ defmodule Jido.Messaging.OutboundGatewayTest do
   end
 
   test "enforces queue bounds and emits pressure transitions" do
-    start_messaging(partition_count: 1, queue_capacity: 1, max_attempts: 1)
-
+    start_messaging(partition_count: 1, queue_capacity: 2, max_attempts: 1)
     test_pid = self()
     handler_id = "outbound-pressure-#{System.unique_integer([:positive])}"
 
@@ -222,27 +256,35 @@ defmodule Jido.Messaging.OutboundGatewayTest do
 
     on_exit(fn -> :telemetry.detach(handler_id) end)
 
-    context = %{
-      channel: SlowChannel,
-      bridge_id: "pressure_inst",
-      external_room_id: "pressure_room"
-    }
+    enqueue_handler_id = handler_id <> "-enqueue"
 
+    :telemetry.attach(
+      enqueue_handler_id,
+      [:jido_messaging, :outbound, :enqueued],
+      fn _event, _measurements, _metadata, _ ->
+        send(test_pid, {:outbound_enqueued, self()})
+      end,
+      nil
+    )
+
+    on_exit(fn -> :telemetry.detach(enqueue_handler_id) end)
+
+    context = %{channel: SlowChannel, bridge_id: "pressure_inst", external_room_id: "pressure_room"}
     task_one = Task.async(fn -> OutboundGateway.send_message(TestMessaging, context, "first") end)
-    Process.sleep(10)
-
-    task_two = Task.async(fn -> OutboundGateway.send_message(TestMessaging, context, "second") end)
-
-    assert Task.yield(task_two, 5) == nil
-
-    assert {:error, queue_full_error} = OutboundGateway.send_message(TestMessaging, context, "third")
-    assert queue_full_error.reason == :queue_full
-    assert queue_full_error.category == :terminal
-
-    assert_receive {:pressure_transition, :shed, 0}, 200
-
-    assert {:ok, _result} = Task.await(task_one, 500)
-    assert {:ok, _result} = Task.await(task_two, 500)
+    assert_receive {:outbound_enqueued, partition}, 1_000
+    assert_receive {:outbound_started, worker}, 1_000
+    assert worker != partition
+    task_two = Task.async(fn -> OutboundGateway.send_message(TestMessaging, context, "second", priority: :high) end)
+    assert_receive {:outbound_enqueued, ^partition}, 1_000
+    assert :sys.get_state(partition).queue_size == 1
+    assert Task.yield(task_two, 0) == nil
+    assert {:error, error} = OutboundGateway.send_message(TestMessaging, context, "third")
+    assert error.reason == :queue_full
+    assert error.category == :terminal
+    assert_receive {:pressure_transition, :shed, 0}, 1_000
+    send(worker, :release_provider)
+    assert {:ok, _} = Task.await(task_one, 1_000)
+    assert {:ok, _} = Task.await(task_two, 1_000)
   end
 
   test "normalizes retryable failures and emits classification telemetry" do
@@ -271,14 +313,21 @@ defmodule Jido.Messaging.OutboundGatewayTest do
 
     {:ok, flaky_result} = OutboundGateway.send_message(TestMessaging, context, "flaky")
     assert flaky_result.attempts == 2
-    assert_receive {:classified_error, :retryable, :network_error, :send}, 200
+    assert Agent.get(RetryChannel, &Map.get(&1, "flaky")) == 2
+
+    assert_receive {:classified_error, :retryable,
+                    %{class: :recoverable, reason: {:provider_operation_failed, "provider_failure"}}, :send},
+                   200
 
     assert {:error, terminal_error} = OutboundGateway.send_message(TestMessaging, context, "always_fail")
     assert terminal_error.category == :retryable
     assert terminal_error.disposition == :terminal
     assert terminal_error.attempt == 2
+    assert Agent.get(RetryChannel, &Map.get(&1, "always_fail")) == 2
 
-    assert_receive {:classified_error, :retryable, :network_error, :send}, 200
+    assert_receive {:classified_error, :retryable,
+                    %{class: :recoverable, reason: {:provider_operation_failed, "provider_failure"}}, :send},
+                   200
   end
 
   test "supports edit operations and validates edit request contract" do

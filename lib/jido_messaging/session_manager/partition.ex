@@ -5,6 +5,9 @@ defmodule Jido.Messaging.SessionManager.Partition do
   Each partition owns an ETS table with TTL and capacity pruning so session
   lookups can resolve exact routes, room-scoped fallbacks, or supplied fallback
   routes without centralizing all traffic in one process.
+
+  Calls return `{:error, :partition_unavailable}` if the partition stops or
+  cannot reply within the call timeout.
   """
   use GenServer
 
@@ -19,7 +22,7 @@ defmodule Jido.Messaging.SessionManager.Partition do
           ttl_ms: pos_integer(),
           max_entries_per_partition: pos_integer(),
           prune_interval_ms: pos_integer(),
-          order: :queue.queue(),
+          order: :gb_trees.tree(non_neg_integer(), SessionManager.session_key()),
           next_seq: non_neg_integer()
         }
 
@@ -46,6 +49,8 @@ defmodule Jido.Messaging.SessionManager.Partition do
       [{pid, _}] -> pid
       [] -> nil
     end
+  rescue
+    ArgumentError -> nil
   end
 
   @spec set(module(), non_neg_integer(), SessionManager.session_key(), SessionManager.route(), keyword(), timeout()) ::
@@ -101,7 +106,7 @@ defmodule Jido.Messaging.SessionManager.Partition do
       ttl_ms: Keyword.fetch!(opts, :ttl_ms),
       max_entries_per_partition: Keyword.fetch!(opts, :max_entries_per_partition),
       prune_interval_ms: Keyword.fetch!(opts, :prune_interval_ms),
-      order: :queue.new(),
+      order: :gb_trees.empty(),
       next_seq: 0
     }
 
@@ -282,6 +287,15 @@ defmodule Jido.Messaging.SessionManager.Partition do
   end
 
   defp store_entry(state, session_key, route, ttl_ms, now) do
+    state =
+      case :ets.lookup(state.table, session_key) do
+        [{^session_key, previous}] ->
+          %{state | order: :gb_trees.delete_any(previous.seq, state.order)}
+
+        [] ->
+          state
+      end
+
     seq = state.next_seq + 1
 
     entry = %{
@@ -293,7 +307,7 @@ defmodule Jido.Messaging.SessionManager.Partition do
 
     :ets.insert(state.table, {session_key, entry})
 
-    state = %{state | order: :queue.in({seq, session_key}, state.order), next_seq: seq}
+    state = %{state | order: :gb_trees.insert(seq, session_key, state.order), next_seq: seq}
     evict_overflow(state, 0)
   end
 
@@ -301,12 +315,13 @@ defmodule Jido.Messaging.SessionManager.Partition do
     if table_size(state) <= state.max_entries_per_partition do
       {state, evicted_count}
     else
-      case :queue.out(state.order) do
-        {:empty, queue} ->
-          {%{state | order: queue}, evicted_count}
+      case :gb_trees.is_empty(state.order) do
+        true ->
+          {state, evicted_count}
 
-        {{:value, {seq, session_key}}, queue} ->
-          state = %{state | order: queue}
+        false ->
+          {seq, session_key, order} = :gb_trees.take_smallest(state.order)
+          state = %{state | order: order}
 
           case :ets.lookup(state.table, session_key) do
             [{^session_key, %{seq: ^seq} = entry}] ->
@@ -334,7 +349,7 @@ defmodule Jido.Messaging.SessionManager.Partition do
         if entry.expires_at_ms > now do
           {state, {:ok, entry}}
         else
-          :ets.delete(state.table, session_key)
+          state = remove_entry(state, session_key, entry)
           emit_stale(state, session_key)
           {state, :expired}
         end
@@ -345,22 +360,27 @@ defmodule Jido.Messaging.SessionManager.Partition do
   end
 
   defp prune_expired(state, now) do
-    pruned =
+    {state, pruned} =
       :ets.foldl(
-        fn {session_key, entry}, acc ->
+        fn {session_key, entry}, {current, count} ->
           if entry.expires_at_ms <= now do
-            :ets.delete(state.table, session_key)
-            emit_stale(state, session_key)
-            acc + 1
+            next = remove_entry(current, session_key, entry)
+            emit_stale(next, session_key)
+            {next, count + 1}
           else
-            acc
+            {current, count}
           end
         end,
-        0,
+        {state, 0},
         state.table
       )
 
     {state, pruned}
+  end
+
+  defp remove_entry(state, session_key, entry) do
+    :ets.delete(state.table, session_key)
+    %{state | order: :gb_trees.delete_any(entry.seq, state.order)}
   end
 
   defp room_scope_key({channel_type, bridge_id, room_id, _thread_id}) do
@@ -435,6 +455,8 @@ defmodule Jido.Messaging.SessionManager.Partition do
       nil -> {:error, :partition_unavailable}
       pid -> fun.(pid)
     end
+  catch
+    :exit, {_reason, {GenServer, :call, _args}} -> {:error, :partition_unavailable}
   end
 
   defp table_size(state) do

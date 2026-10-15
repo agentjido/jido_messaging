@@ -18,7 +18,11 @@ defmodule Jido.Messaging.BridgeManifestBootstrapTest do
     def capabilities, do: [:text, :image, :streaming]
 
     @impl true
-    def transform_incoming(_raw), do: {:error, :not_implemented}
+    def signal_protocol, do: 1
+    @impl true
+    def configure_binding(opts), do: {:ok, opts}
+    @impl true
+    def normalize_event(_binding, _payload), do: Jido.Chat.Signal.Policy.error(:invalid_delivery)
 
     @impl true
     def send_message(_room_id, _text, _opts), do: {:error, :not_implemented}
@@ -34,7 +38,11 @@ defmodule Jido.Messaging.BridgeManifestBootstrapTest do
     def capabilities, do: [:text, :reactions]
 
     @impl true
-    def transform_incoming(_raw), do: {:error, :not_implemented}
+    def signal_protocol, do: 1
+    @impl true
+    def configure_binding(opts), do: {:ok, opts}
+    @impl true
+    def normalize_event(_binding, _payload), do: Jido.Chat.Signal.Policy.error(:invalid_delivery)
 
     @impl true
     def send_message(_room_id, _text, _opts), do: {:error, :not_implemented}

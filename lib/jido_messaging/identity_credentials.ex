@@ -1,6 +1,7 @@
 defmodule Jido.Messaging.IdentityCredentials do
   @moduledoc false
 
+  alias Jido.Chat.{Participant, Room}
   alias Jido.Messaging.{IdentityCredential, IdentityData, Runtime}
 
   @doc false
@@ -13,7 +14,7 @@ defmodule Jido.Messaging.IdentityCredentials do
          :ok <- validate_initial(credential),
          :ok <- validate_participants(persistence, state, credential),
          :ok <- validate_rooms(persistence, state, credential.conditions.room_ids) do
-      persistence.save_identity_credential(state, credential)
+      save_credential(persistence, state, credential)
     end
   rescue
     ArgumentError -> {:error, :invalid_identity_credential}
@@ -25,7 +26,7 @@ defmodule Jido.Messaging.IdentityCredentials do
     {persistence, state} = Runtime.get_persistence(runtime)
 
     with :ok <- require_callbacks(persistence, get_identity_credential: 2) do
-      persistence.get_identity_credential(state, credential_id)
+      read_credential(persistence, state, credential_id)
     end
   end
 
@@ -36,7 +37,13 @@ defmodule Jido.Messaging.IdentityCredentials do
     {persistence, state} = Runtime.get_persistence(runtime)
 
     with :ok <- require_callbacks(persistence, list_identity_credentials: 3) do
-      persistence.list_identity_credentials(state, subject_principal_id, opts)
+      credential_result(
+        fn -> persistence.list_identity_credentials(state, subject_principal_id, opts) end,
+        &(is_list(&1) and
+            Enum.all?(&1, fn record ->
+              valid_credential?(record) and record.subject_principal_id == subject_principal_id
+            end))
+      )
     end
   end
 
@@ -49,10 +56,10 @@ defmodule Jido.Messaging.IdentityCredentials do
     {persistence, state} = Runtime.get_persistence(runtime)
 
     with :ok <- require_callbacks(persistence, get_identity_credential: 2, save_identity_credential: 2),
-         {:ok, credential} <- persistence.get_identity_credential(state, credential_id),
+         {:ok, credential} <- read_credential(persistence, state, credential_id),
          :ok <- expected_revision(credential, expected_revision),
          {:ok, revised} <- transition_record(credential, status, opts) do
-      persistence.save_identity_credential(state, revised)
+      save_credential(persistence, state, revised)
     end
   end
 
@@ -70,14 +77,14 @@ defmodule Jido.Messaging.IdentityCredentials do
              get_identity_credential: 2,
              rotate_identity_credential: 3
            ),
-         {:ok, credential} <- persistence.get_identity_credential(state, credential_id),
+         {:ok, credential} <- read_credential(persistence, state, credential_id),
          :ok <- expected_revision(credential, expected_revision),
          :ok <- rotatable(credential),
          {:ok, replacement} <- replacement_credential(credential, attrs),
          :ok <- validate_rooms(persistence, state, replacement.conditions.room_ids),
          revoked = IdentityCredential.transition(credential, :revoked, reason: "rotated"),
          {:ok, revoked, replacement} <-
-           persistence.rotate_identity_credential(state, revoked, replacement) do
+           rotate_credentials(persistence, state, revoked, replacement) do
       {:ok, %{revoked: revoked, credential: replacement}}
     end
   rescue
@@ -101,15 +108,15 @@ defmodule Jido.Messaging.IdentityCredentials do
   end
 
   defp validate_participants(persistence, state, credential) do
-    with {:ok, _issuer} <- persistence.get_participant(state, credential.issuer_principal_id),
-         {:ok, _subject} <- persistence.get_participant(state, credential.subject_principal_id) do
+    with {:ok, _issuer} <- read_participant(persistence, state, credential.issuer_principal_id),
+         {:ok, _subject} <- read_participant(persistence, state, credential.subject_principal_id) do
       :ok
     end
   end
 
   defp validate_rooms(persistence, state, room_ids) do
     Enum.reduce_while(room_ids, :ok, fn room_id, :ok ->
-      case persistence.get_room(state, room_id) do
+      case credential_result(fn -> persistence.get_room(state, room_id) end, &match?(%Room{id: ^room_id}, &1)) do
         {:ok, _room} -> {:cont, :ok}
         {:error, _reason} = error -> {:halt, error}
       end
@@ -203,4 +210,46 @@ defmodule Jido.Messaging.IdentityCredentials do
       do: :ok,
       else: {:error, :unsupported}
   end
+
+  defp read_participant(persistence, state, id),
+    do: credential_result(fn -> persistence.get_participant(state, id) end, &match?(%Participant{id: ^id}, &1))
+
+  defp read_credential(persistence, state, id),
+    do:
+      credential_result(
+        fn -> persistence.get_identity_credential(state, id) end,
+        &(valid_credential?(&1) and &1.id == id)
+      )
+
+  defp save_credential(persistence, state, record),
+    do: credential_result(fn -> persistence.save_identity_credential(state, record) end, &(&1 == record))
+
+  defp rotate_credentials(persistence, state, revoked, replacement) do
+    case persistence.rotate_identity_credential(state, revoked, replacement) do
+      {:ok, ^revoked, ^replacement} -> {:ok, revoked, replacement}
+      {:error, _} = error -> error
+      _ -> {:error, :persistence_failed}
+    end
+  rescue
+    _ -> {:error, :persistence_failed}
+  catch
+    _, _ -> {:error, :persistence_failed}
+  end
+
+  defp credential_result(callback, valid?) do
+    case callback.() do
+      {:ok, value} -> if valid?.(value), do: {:ok, value}, else: {:error, :persistence_failed}
+      {:error, _} = error -> error
+      _ -> {:error, :persistence_failed}
+    end
+  rescue
+    _ -> {:error, :persistence_failed}
+  catch
+    _, _ -> {:error, :persistence_failed}
+  end
+
+  defp valid_credential?(%IdentityCredential{} = credential),
+    do: IdentityCredential.new(Map.from_struct(credential)) == credential
+
+  defp valid_credential?(_), do: false
 end

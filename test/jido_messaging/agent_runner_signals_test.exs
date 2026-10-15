@@ -3,7 +3,7 @@ defmodule Jido.Messaging.AgentRunnerSignalsTest do
 
   import Jido.Messaging.TestHelpers
 
-  alias Jido.Messaging.{AgentRunner, Message}
+  alias Jido.Messaging.AgentRunner
 
   defmodule TestMessaging do
     use Jido.Messaging, persistence: Jido.Messaging.Persistence.ETS
@@ -48,7 +48,7 @@ defmodule Jido.Messaging.AgentRunnerSignalsTest do
       :ok =
         Jido.Messaging.RoomServer.add_message(
           room_pid,
-          Message.new(%{
+          persisted_message(%{
             room_id: room.id,
             sender_id: "user-1",
             role: :user,
@@ -88,7 +88,7 @@ defmodule Jido.Messaging.AgentRunnerSignalsTest do
       :ok =
         Jido.Messaging.RoomServer.add_message(
           room_pid,
-          Message.new(%{
+          persisted_message(%{
             room_id: room.id,
             sender_id: "user-1",
             role: :user,
@@ -104,6 +104,11 @@ defmodule Jido.Messaging.AgentRunnerSignalsTest do
       assert failed.thread_id == thread.id
       assert failed.error == ":intentional_failure"
     end
+  end
+
+  defp persisted_message(attrs) do
+    {:ok, message} = TestMessaging.save_message(attrs)
+    message
   end
 
   defp room_with_assignment(agent_id, handler) do
@@ -125,6 +130,8 @@ defmodule Jido.Messaging.AgentRunnerSignalsTest do
 
     {:ok, _assigned_thread} = TestMessaging.assign_thread(room.id, thread.id, agent_id)
     {:ok, room_pid} = TestMessaging.get_or_start_room_server(room)
+    runner = AgentRunner.whereis(TestMessaging, room.id, thread.id, agent_id)
+    assert_eventually(fn -> AgentRunner.get_state(runner).subscribed end)
 
     %{room: room, thread: thread, room_pid: room_pid}
   end

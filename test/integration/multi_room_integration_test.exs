@@ -8,7 +8,7 @@ defmodule Jido.Messaging.MultiRoomIntegrationTest do
   @moduletag :integration
 
   alias Jido.Chat.Content.Text
-  alias Jido.Messaging.{Ingest, Deliver, RoomServer, RoomSupervisor, PubSub}
+  alias Jido.Messaging.{Ingest, Deliver, RoomServer, RoomSupervisor}
 
   defmodule MockTelegramChannel do
     @behaviour Jido.Chat.Adapter
@@ -17,19 +17,11 @@ defmodule Jido.Messaging.MultiRoomIntegrationTest do
     def channel_type, do: :telegram
 
     @impl true
-    def transform_incoming(%{message: msg}) do
-      {:ok,
-       %{
-         external_room_id: msg.chat_id,
-         external_user_id: msg.user_id,
-         text: msg.text,
-         username: msg.username,
-         display_name: msg.display_name,
-         external_message_id: msg.message_id,
-         timestamp: msg.date,
-         chat_type: msg[:chat_type] || :group
-       }}
-    end
+    def signal_protocol, do: 1
+    @impl true
+    def configure_binding(opts), do: {:ok, opts}
+    @impl true
+    def normalize_event(_binding, _payload), do: Jido.Chat.Signal.Policy.error(:invalid_delivery)
 
     @impl true
     def send_message(chat_id, text, _opts) do
@@ -38,16 +30,9 @@ defmodule Jido.Messaging.MultiRoomIntegrationTest do
   end
 
   setup do
-    if PubSub.pubsub_available?() do
-      start_supervised!({Phoenix.PubSub, name: Jido.Messaging.TestPubSub})
-      start_supervised!(Jido.Messaging.TestMessagingWithPubSub)
-      Jido.Messaging.TestMessagingWithPubSub.clear_dedupe()
-      {:ok, messaging: Jido.Messaging.TestMessagingWithPubSub, pubsub_enabled: true}
-    else
-      start_supervised!(Jido.Messaging.TestMessaging)
-      Jido.Messaging.TestMessaging.clear_dedupe()
-      {:ok, messaging: Jido.Messaging.TestMessaging, pubsub_enabled: false}
-    end
+    start_supervised!(Jido.Messaging.TestMessaging)
+    Jido.Messaging.TestMessaging.clear_dedupe()
+    {:ok, messaging: Jido.Messaging.TestMessaging}
   end
 
   defp ingest!(messaging, chat_id, user_id, text, msg_id, opts \\ []) do
@@ -74,8 +59,7 @@ defmodule Jido.Messaging.MultiRoomIntegrationTest do
 
   describe "multi-room multi-participant lifecycle" do
     test "full scenario with concurrent messaging and cross-room participants", %{
-      messaging: messaging,
-      pubsub_enabled: pubsub_enabled
+      messaging: messaging
     } do
       # Scenario:
       # - Room A: "project_alpha" with participants alice + bob
@@ -108,14 +92,22 @@ defmodule Jido.Messaging.MultiRoomIntegrationTest do
       assert room_a.id in room_ids
       assert room_b.id in room_ids
 
-      # 4) PubSub subscription for both rooms (if available)
-      # Note: Phase 6 removed PubSub for message_added/participant_joined/left
-      # These events now use Signal Bus instead
-      if pubsub_enabled do
-        assert PubSub.configured?(messaging)
-        :ok = messaging.subscribe(room_a.id)
-        :ok = messaging.subscribe(room_b.id)
-      end
+      # Native room subscriptions use the canonical source and subject.
+      {:ok, _} =
+        messaging.subscribe_signals("jido.messaging.room.**",
+          selector: [
+            source: Jido.Messaging.Events.source(messaging),
+            subject: Jido.Messaging.Signal.Identity.room_subject(room_a.id)
+          ]
+        )
+
+      {:ok, _} =
+        messaging.subscribe_signals("jido.messaging.room.**",
+          selector: [
+            source: Jido.Messaging.Events.source(messaging),
+            subject: Jido.Messaging.Signal.Identity.room_subject(room_b.id)
+          ]
+        )
 
       # 5) Add more participants
       {_msg_a2, ctx_a2} =
@@ -154,7 +146,6 @@ defmodule Jido.Messaging.MultiRoomIntegrationTest do
       #   assert_receive {:message_added, %Jido.Messaging.Message{id: ^reply_a1_id}}, 1_000
       #   assert_receive {:message_added, %Jido.Messaging.Message{id: ^reply_b1_id}}, 1_000
       # end
-      _ = pubsub_enabled
 
       # 7) Verify RoomServer state: participants tracked per room
       pid_a = RoomServer.whereis(messaging, room_a.id)
@@ -294,61 +285,23 @@ defmodule Jido.Messaging.MultiRoomIntegrationTest do
       end
     end
 
-    @tag :skip
-    @tag :phase6_deprecated
-    test "pubsub events are room-scoped", %{messaging: messaging, pubsub_enabled: pubsub_enabled} do
-      # Phase 6: This test is deprecated - message_added/participant_joined/left
-      # events now use Signal Bus instead of PubSub.
-      # The room scoping behavior is still valid but needs to be tested via Signal Bus.
-      unless pubsub_enabled do
-        # Skip this test if PubSub is not available
-        assert true
-      else
-        # Subscribe only to room_subscribed
-        {_msg_sub, ctx_sub} =
-          ingest!(messaging, "room_subscribed", "user_a", "Subscribed room msg", 300,
-            username: "user_a",
-            display_name: "User A"
-          )
+    test "native Signal events are room-scoped", %{messaging: messaging} do
+      {_message, context} = ingest!(messaging, "room_subscribed", "user_a", "Subscribed room msg", 300)
+      {_other, _context} = ingest!(messaging, "room_unsubscribed", "user_b", "Unsubscribed room msg", 301)
 
-        {_msg_unsub, _ctx_unsub} =
-          ingest!(messaging, "room_unsubscribed", "user_b", "Unsubscribed room msg", 301,
-            username: "user_b",
-            display_name: "User B"
-          )
+      {:ok, _} =
+        messaging.subscribe_signals("jido.messaging.room.message_added",
+          selector: [
+            source: Jido.Messaging.Events.source(messaging),
+            subject: Jido.Messaging.Signal.Identity.room_subject(context.room.id)
+          ]
+        )
 
-        # Subscribe only to one room
-        :ok = messaging.subscribe(ctx_sub.room.id)
-
-        # Send message to subscribed room
-        {msg_sub2, _ctx_sub2} =
-          ingest!(messaging, "room_subscribed", "user_c", "Another subscribed msg", 302,
-            username: "user_c",
-            display_name: "User C"
-          )
-
-        # Send message to unsubscribed room
-        {_msg_unsub2, _ctx_unsub2} =
-          ingest!(messaging, "room_unsubscribed", "user_d", "Another unsubscribed msg", 303,
-            username: "user_d",
-            display_name: "User D"
-          )
-
-        # Should receive events only from subscribed room
-        msg_sub2_id = msg_sub2.id
-        assert_receive {:message_added, %Jido.Messaging.Message{id: ^msg_sub2_id}}, 1_000
-        assert_receive {:participant_joined, _}, 1_000
-
-        # Drain any remaining events for subscribed room
-        receive do
-          {:participant_joined, _} -> :ok
-        after
-          100 -> :ok
-        end
-
-        # We should not see any more events (unsubscribed room events don't reach us)
-        refute_receive {:message_added, _}, 100
-      end
+      {selected, _} = ingest!(messaging, "room_subscribed", "user_c", "Another subscribed msg", 302)
+      {_other, _} = ingest!(messaging, "room_unsubscribed", "user_d", "Another unsubscribed msg", 303)
+      selected_id = selected.id
+      assert_receive {:signal, %Jido.Signal{data: %{"message_id" => ^selected_id}}}
+      refute_receive {:signal, _}
     end
 
     test "message reply chain is preserved", %{messaging: messaging} do

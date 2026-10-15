@@ -36,7 +36,11 @@ defmodule Jido.Messaging.AgentDirectoryScope do
           }
         end)
 
-      {:ok, %__MODULE__{instance_module: instance_module, endpoint_principals: normalized, metadata: metadata}}
+      if map_size(normalized) == map_size(endpoint_principals) do
+        {:ok, %__MODULE__{instance_module: instance_module, endpoint_principals: normalized, metadata: metadata}}
+      else
+        {:error, :invalid_agent_directory_scope}
+      end
     rescue
       ArgumentError -> {:error, :invalid_agent_directory_scope}
     end

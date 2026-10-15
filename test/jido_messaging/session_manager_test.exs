@@ -16,7 +16,11 @@ defmodule Jido.Messaging.SessionManagerTest do
     def channel_type, do: :routing
 
     @impl true
-    def transform_incoming(_raw), do: {:error, :not_implemented}
+    def signal_protocol, do: 1
+    @impl true
+    def configure_binding(opts), do: {:ok, opts}
+    @impl true
+    def normalize_event(_binding, _payload), do: Jido.Chat.Signal.Policy.error(:invalid_delivery)
 
     @impl true
     def send_message(room_id, text, _opts), do: {:ok, %{message_id: "#{room_id}:#{text}"}}
@@ -130,6 +134,79 @@ defmodule Jido.Messaging.SessionManagerTest do
 
     assert %{pruned: pruned_count, partitions: 1} = SessionManager.prune(TestMessaging)
     assert pruned_count >= 0
+  end
+
+  test "room and thread routes share an owner while exact routes keep precedence" do
+    start_messaging(
+      session_manager: [
+        partition_count: 4,
+        ttl_ms: 5_000,
+        max_entries_per_partition: 100,
+        prune_interval_ms: 5_000
+      ],
+      outbound_gateway: [partition_count: 1, queue_capacity: 8, max_attempts: 1]
+    )
+
+    parent = {:routing, "bridge-a", "room", nil}
+
+    thread =
+      Enum.find(1..100, fn id ->
+        :erlang.phash2({:routing, "bridge-a", "room", "thread-#{id}"}, 4) !=
+          :erlang.phash2(parent, 4)
+      end)
+
+    child = {:routing, "bridge-a", "room", "thread-#{thread}"}
+    assert :ok = SessionManager.set(TestMessaging, parent, %{external_room_id: "parent"})
+
+    assert SessionManager.partition_pid(TestMessaging, child) ==
+             SessionManager.partition_pid(TestMessaging, parent)
+
+    assert {:ok, %{source: :partition_fallback, external_room_id: "parent"}} =
+             SessionManager.resolve(TestMessaging, child)
+
+    assert :ok = SessionManager.set(TestMessaging, child, %{external_room_id: "exact"})
+
+    assert {:ok, %{source: :state_hit, external_room_id: "exact"}} =
+             SessionManager.resolve(TestMessaging, child)
+
+    assert {:error, :no_route} =
+             SessionManager.resolve(TestMessaging, {:routing, "bridge-b", "room", "thread"})
+
+    assert {:error, :no_route} =
+             SessionManager.resolve(TestMessaging, {:other_channel, "bridge-a", "room", "thread"})
+  end
+
+  test "overwrites and expiration bound the retained eviction order" do
+    start_messaging(
+      session_manager: [
+        partition_count: 1,
+        ttl_ms: 5_000,
+        max_entries_per_partition: 2,
+        prune_interval_ms: 5_000
+      ],
+      outbound_gateway: [partition_count: 1, queue_capacity: 8, max_attempts: 1]
+    )
+
+    a = {:routing, "bridge", "a", nil}
+    b = {:routing, "bridge", "b", nil}
+    c = {:routing, "bridge", "c", nil}
+    route = %{external_room_id: "external"}
+    assert :ok = SessionManager.set(TestMessaging, a, route)
+    assert :ok = SessionManager.set(TestMessaging, b, route)
+    for _ <- 1..100, do: assert(:ok == SessionManager.set(TestMessaging, a, route))
+    pid = SessionManager.partition_pid(TestMessaging, a)
+    assert_order_size(pid, 2)
+    assert :ok = SessionManager.set(TestMessaging, c, route)
+    assert {:error, :not_found} = SessionManager.get(TestMessaging, b)
+    assert {:ok, _} = SessionManager.get(TestMessaging, a)
+    assert_order_size(pid, 2)
+
+    expire_route(pid, a)
+    assert {:error, :expired} = SessionManager.get(TestMessaging, a)
+    assert_order_size(pid, 1)
+    expire_route(pid, c)
+    assert %{pruned: 1} = SessionManager.prune(TestMessaging)
+    assert_order_size(pid, 0)
   end
 
   test "outbound resolution uses session route state and stale-route fallback telemetry" do
@@ -252,6 +329,31 @@ defmodule Jido.Messaging.SessionManagerTest do
 
     start_supervised!(TestMessaging)
     TestMessaging.clear_dedupe()
+  end
+
+  defp assert_order_size(pid, expected) do
+    state = :sys.get_state(pid)
+
+    size =
+      if is_tuple(state.order) and tuple_size(state.order) == 2 and
+           is_integer(elem(state.order, 0)),
+         do: :gb_trees.size(state.order),
+         else: :queue.len(state.order)
+
+    assert size == expected
+  end
+
+  defp expire_route(pid, key) do
+    :sys.replace_state(pid, fn state ->
+      [{^key, entry}] = :ets.lookup(state.table, key)
+
+      :ets.insert(
+        state.table,
+        {key, %{entry | expires_at_ms: System.monotonic_time(:millisecond) - 1}}
+      )
+
+      state
+    end)
   end
 
   defp distinct_partition_keys do

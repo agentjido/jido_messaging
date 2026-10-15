@@ -3,7 +3,7 @@ defmodule Jido.Messaging.WebhookPlugTest do
   import Plug.Conn
   import Plug.Test
 
-  alias Jido.Chat.{EventEnvelope, Incoming, WebhookRequest}
+  alias Jido.Chat.{AdapterTestKit.Factories, WebhookRequest}
   alias Jido.Messaging.WebhookPlug
 
   defmodule ReadBodyErrorAdapter do
@@ -29,18 +29,30 @@ defmodule Jido.Messaging.WebhookPlugTest do
     def channel_type, do: :telegram
 
     @impl true
-    def transform_incoming(%{"kind" => "message"} = payload) do
-      {:ok,
-       Incoming.new(%{
-         external_room_id: payload["room"] || "room",
-         external_user_id: payload["user"] || "user",
-         external_message_id: payload["id"] || "msg",
-         text: payload["text"] || "hello",
-         raw: payload
-       })}
+    def signal_protocol, do: 1
+    @impl true
+    def configure_binding(opts), do: {:ok, Keyword.put(opts, :secret, opts[:settings][:secret])}
+    @impl true
+    def normalize_event(binding, %WebhookRequest{payload: %{"kind" => "noop"}}),
+      do: Jido.Chat.Delivery.new(binding, "noop", [])
+
+    def normalize_event(binding, %WebhookRequest{payload: %{"kind" => "message"} = payload}) do
+      id = payload["id"] || "msg"
+
+      fact =
+        Factories.message_received(binding, %{
+          "delivery_id" => id,
+          "item_id" => id,
+          "room_id" => payload["room"] || "room",
+          "message_id" => id,
+          "sender" => %{"id" => payload["user"] || "user"},
+          "text" => payload["text"] || "hello"
+        })
+
+      Jido.Chat.Delivery.new(binding, id, [fact])
     end
 
-    def transform_incoming(_payload), do: {:error, :unsupported_payload}
+    def normalize_event(_binding, _payload), do: Jido.Chat.Signal.Policy.error(:invalid_delivery)
 
     @impl true
     def send_message(_room_id, _text, _opts), do: {:error, :not_implemented}
@@ -50,25 +62,6 @@ defmodule Jido.Messaging.WebhookPlugTest do
       expected = Keyword.get(opts, :secret, "secret")
       actual = request.headers["x-test-secret"]
       if actual == expected, do: :ok, else: {:error, :invalid_signature}
-    end
-
-    @impl true
-    def parse_event(%WebhookRequest{payload: %{"kind" => "noop"}}, _opts), do: {:ok, :noop}
-
-    def parse_event(%WebhookRequest{payload: payload}, _opts) do
-      with {:ok, incoming} <- transform_incoming(payload) do
-        {:ok,
-         EventEnvelope.new(%{
-           adapter_name: :telegram,
-           event_type: :message,
-           thread_id: "telegram:#{incoming.external_room_id}",
-           channel_id: to_string(incoming.external_room_id),
-           message_id: to_string(incoming.external_message_id),
-           payload: incoming,
-           raw: payload,
-           metadata: %{source: :webhook}
-         })}
-      end
     end
   end
 
@@ -83,7 +76,8 @@ defmodule Jido.Messaging.WebhookPlugTest do
       PlugMessaging.put_bridge_config(%{
         id: "bridge_tg",
         adapter_module: PlugAdapter,
-        enabled: true
+        enabled: true,
+        opts: %{secret: "abc"}
       })
 
     :ok

@@ -55,8 +55,17 @@ defmodule Jido.Messaging.Transcript do
   end
 
   defp order_key(%Message{inserted_at: %DateTime{} = inserted_at, id: id}) do
-    {DateTime.to_iso8601(inserted_at), id}
+    {1, DateTime.to_unix(inserted_at, :microsecond), id}
   end
 
-  defp order_key(%Message{id: id}), do: {"", id}
+  defp order_key(%Message{id: id}), do: {0, 0, id}
+
+  @doc false
+  @spec format_timestamp(DateTime.t()) :: String.t()
+  def format_timestamp(%DateTime{} = timestamp) do
+    timestamp
+    |> DateTime.to_unix(:microsecond)
+    |> DateTime.from_unix!(:microsecond)
+    |> DateTime.to_iso8601()
+  end
 end

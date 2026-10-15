@@ -1,0 +1,17 @@
+{
+  "count": 100000,
+  "elapsed_us": 253649,
+  "ets_entries": 100000,
+  "ets_bytes": 24807416,
+  "beam_total_delta": 57493151,
+  "hit": {
+    "p50_us": 0,
+    "p95_us": 0,
+    "p99_us": 0
+  },
+  "new_claim": {
+    "p50_us": 0,
+    "p95_us": 1,
+    "p99_us": 3
+  }
+}

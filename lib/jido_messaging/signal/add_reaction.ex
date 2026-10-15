@@ -1,0 +1,28 @@
+defmodule Jido.Messaging.Signal.AddReaction do
+  @moduledoc """
+  Typed command definition for `jido.messaging.command.add_reaction`.
+
+  Data uses the protocol version 1 string-key schema. Canonical room subject for room_id, or absent for a non-room request.
+  """
+
+  use Jido.Chat.Signal.Definition,
+    owner: :messaging,
+    kind: :command,
+    type: "jido.messaging.command.add_reaction",
+    dataschema: "urn:jido:messaging:schema:command_add_reaction:1",
+    default_source: "urn:jido:messaging:producer:local",
+    schema:
+      Zoi.map(
+        %{
+          "request_id" => Zoi.string() |> Zoi.min(1),
+          "room_id" => Zoi.string() |> Zoi.min(1),
+          "message_id" => Zoi.string() |> Zoi.min(1),
+          "reaction" => Zoi.string() |> Zoi.min(1),
+          "thread_id" => Zoi.string() |> Zoi.min(1) |> Zoi.optional(),
+          "reply_to_id" => Zoi.string() |> Zoi.min(1) |> Zoi.optional(),
+          "format" => Zoi.enum(["plain", "markdown", "html"]) |> Zoi.optional(),
+          "bridge_id" => Zoi.string() |> Zoi.min(1)
+        },
+        unrecognized_keys: :error
+      )
+end

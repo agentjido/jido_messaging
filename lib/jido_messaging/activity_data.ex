@@ -18,20 +18,32 @@ defmodule Jido.Messaging.ActivityData do
   @spec strict_keys!(map(), [atom()]) :: :ok
   def strict_keys!(attrs, allowed) when is_map(attrs) and is_list(allowed) do
     allowed = allowed |> Enum.flat_map(&[&1, Atom.to_string(&1)]) |> MapSet.new()
+    keys = Map.keys(attrs)
+    logical_keys = Enum.map(keys, &logical_key/1)
 
-    case Enum.reject(Map.keys(attrs), &MapSet.member?(allowed, &1)) do
-      [] -> :ok
-      _unknown -> raise ArgumentError, "activity projection contains unsupported or unsafe fields"
+    cond do
+      Enum.any?(keys, &(not MapSet.member?(allowed, &1))) ->
+        raise ArgumentError, "activity projection contains unsupported or unsafe fields"
+
+      length(logical_keys) != length(Enum.uniq(logical_keys)) ->
+        raise ArgumentError, "activity projection contains duplicate fields"
+
+      true ->
+        :ok
     end
   end
 
   @doc false
   @spec required_ref!(term(), atom()) :: String.t()
   def required_ref!(value, field) when is_binary(value) do
-    case String.trim(value) do
-      "" -> raise ArgumentError, "#{field} is required"
-      normalized when byte_size(normalized) <= @max_reference_bytes -> normalized
-      _normalized -> raise ArgumentError, "#{field} is too long"
+    normalized = String.trim(value)
+
+    cond do
+      normalized == "" -> raise ArgumentError, "#{field} is required"
+      not String.valid?(normalized) -> raise ArgumentError, "#{field} must be valid UTF-8"
+      byte_size(normalized) > @max_reference_bytes -> raise ArgumentError, "#{field} is too long"
+      Regex.match?(~r/[\x00-\x1F\x7F]/, normalized) -> raise ArgumentError, "#{field} contains invalid data"
+      true -> normalized
     end
   end
 
@@ -97,4 +109,7 @@ defmodule Jido.Messaging.ActivityData do
   @spec positive_revision!(term()) :: pos_integer()
   def positive_revision!(revision) when is_integer(revision) and revision > 0, do: revision
   def positive_revision!(_revision), do: raise(ArgumentError, "source_revision must be a positive integer")
+
+  defp logical_key(key) when is_atom(key), do: Atom.to_string(key)
+  defp logical_key(key), do: key
 end

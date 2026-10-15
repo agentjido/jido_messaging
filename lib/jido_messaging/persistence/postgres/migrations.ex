@@ -3,6 +3,16 @@ defmodule Jido.Messaging.Persistence.Postgres.Migrations do
 
   @migration_path Path.expand("../../../../priv/postgres_migrations/001_create_records.sql", __DIR__)
   @external_resource @migration_path
+  @timestamp_migration_path Path.expand(
+                              "../../../../priv/postgres_migrations/002_normalize_message_timestamps.sql",
+                              __DIR__
+                            )
+  @external_resource @timestamp_migration_path
+  @authorization_migration_path Path.expand(
+                                  "../../../../priv/postgres_migrations/003_authorization_indexes.sql",
+                                  __DIR__
+                                )
+  @external_resource @authorization_migration_path
 
   @statements @migration_path
               |> File.read!()
@@ -10,7 +20,23 @@ defmodule Jido.Messaging.Persistence.Postgres.Migrations do
               |> Enum.map(&String.trim/1)
               |> Enum.reject(&(&1 == ""))
 
-  @migrations [{1, "create_records", @statements}]
+  @timestamp_statements @timestamp_migration_path
+                        |> File.read!()
+                        |> String.split("-- jido-messaging-statement", trim: true)
+                        |> Enum.map(&String.trim/1)
+                        |> Enum.reject(&(&1 == ""))
+
+  @authorization_statements @authorization_migration_path
+                            |> File.read!()
+                            |> String.split("-- jido-messaging-statement", trim: true)
+                            |> Enum.map(&String.trim/1)
+                            |> Enum.reject(&(&1 == ""))
+
+  @migrations [
+    {1, "create_records", @statements},
+    {2, "normalize_message_timestamps", @timestamp_statements},
+    {3, "authorization_indexes", @authorization_statements}
+  ]
 
   @doc "Returns ordered package migrations and their SQL statements."
   @spec all() :: [{pos_integer(), String.t(), [String.t()]}]

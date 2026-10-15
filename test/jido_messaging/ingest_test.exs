@@ -22,6 +22,11 @@ defmodule Jido.Messaging.IngestTest do
     def get_message_by_external_id(state, channel, bridge_id, external_id),
       do: ETS.get_message_by_external_id(state, channel, bridge_id, external_id)
 
+    def get_message_by_external_id(state, channel, bridge_id, external_id, room_id),
+      do: ETS.get_message_by_external_id(state, channel, bridge_id, external_id, room_id)
+
+    def get_message(state, message_id), do: ETS.get_message(state, message_id)
+
     def save_message(state, message) do
       Agent.get_and_update(__MODULE__.Switch, fn
         :fail -> {{:error, :temporary_storage_failure}, :pass}
@@ -41,7 +46,11 @@ defmodule Jido.Messaging.IngestTest do
     def channel_type, do: :mock
 
     @impl true
-    def transform_incoming(_), do: {:error, :not_implemented}
+    def signal_protocol, do: 1
+    @impl true
+    def configure_binding(opts), do: {:ok, opts}
+    @impl true
+    def normalize_event(_binding, _payload), do: Jido.Chat.Signal.Policy.error(:invalid_delivery)
 
     @impl true
     def send_message(_chat_id, _text, _opts), do: {:ok, %{message_id: 999}}
@@ -52,7 +61,11 @@ defmodule Jido.Messaging.IngestTest do
     @impl true
     def channel_type, do: :telegram
     @impl true
-    def transform_incoming(_), do: {:error, :not_implemented}
+    def signal_protocol, do: 1
+    @impl true
+    def configure_binding(opts), do: {:ok, opts}
+    @impl true
+    def normalize_event(_binding, _payload), do: Jido.Chat.Signal.Policy.error(:invalid_delivery)
     @impl true
     def send_message(_chat_id, _text, _opts), do: {:ok, %{message_id: 999}}
   end
@@ -62,7 +75,11 @@ defmodule Jido.Messaging.IngestTest do
     @impl true
     def channel_type, do: :discord
     @impl true
-    def transform_incoming(_), do: {:error, :not_implemented}
+    def signal_protocol, do: 1
+    @impl true
+    def configure_binding(opts), do: {:ok, opts}
+    @impl true
+    def normalize_event(_binding, _payload), do: Jido.Chat.Signal.Policy.error(:invalid_delivery)
     @impl true
     def send_message(_chat_id, _text, _opts), do: {:ok, %{message_id: 999}}
   end
@@ -72,7 +89,11 @@ defmodule Jido.Messaging.IngestTest do
     @impl true
     def channel_type, do: :slack
     @impl true
-    def transform_incoming(_), do: {:error, :not_implemented}
+    def signal_protocol, do: 1
+    @impl true
+    def configure_binding(opts), do: {:ok, opts}
+    @impl true
+    def normalize_event(_binding, _payload), do: Jido.Chat.Signal.Policy.error(:invalid_delivery)
     @impl true
     def send_message(_chat_id, _text, _opts), do: {:ok, %{message_id: 999}}
   end
@@ -82,7 +103,11 @@ defmodule Jido.Messaging.IngestTest do
     @impl true
     def channel_type, do: :whatsapp
     @impl true
-    def transform_incoming(_), do: {:error, :not_implemented}
+    def signal_protocol, do: 1
+    @impl true
+    def configure_binding(opts), do: {:ok, opts}
+    @impl true
+    def normalize_event(_binding, _payload), do: Jido.Chat.Signal.Policy.error(:invalid_delivery)
     @impl true
     def send_message(_chat_id, _text, _opts), do: {:ok, %{message_id: 999}}
   end
