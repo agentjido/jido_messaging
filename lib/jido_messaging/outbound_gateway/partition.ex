@@ -4,7 +4,7 @@ defmodule Jido.Messaging.OutboundGateway.Partition do
 
   alias Jido.Messaging.DeadLetter
   alias Jido.Messaging.OutboundGateway
-  alias Jido.Messaging.OutboundGateway.{Operation, Workers}
+  alias Jido.Messaging.OutboundGateway.{Admission, Errors, Operation, Workers}
 
   @default_call_timeout 15_000
 
@@ -53,8 +53,64 @@ defmodule Jido.Messaging.OutboundGateway.Partition do
           | {:error, :partition_unavailable}
   def dispatch(instance_module, partition, request, timeout \\ @default_call_timeout) do
     case whereis(instance_module, partition) do
-      nil -> {:error, :partition_unavailable}
-      pid -> GenServer.call(pid, {:dispatch, request}, timeout)
+      nil ->
+        {:error, :partition_unavailable}
+
+      coordinator ->
+        with {:ok, _epoch, snapshot} <- Admission.snapshot(instance_module, partition, coordinator) do
+          case Errors.validate(request) do
+            :ok ->
+              case Admission.reserve(instance_module, partition, coordinator) do
+                {:ok, permit} ->
+                  try do
+                    GenServer.call(coordinator, {:dispatch, request, permit}, timeout)
+                  after
+                    Admission.abandon(permit)
+                  end
+
+                {:error, :queue_full} ->
+                  {:error, reject(instance_module, request, Errors.queue_full(request, snapshot), snapshot)}
+
+                error ->
+                  error
+              end
+
+            {:error, reason} ->
+              {:error, reject(instance_module, request, Errors.invalid(request, reason, snapshot), snapshot)}
+          end
+        end
+    end
+  end
+
+  defp reject(instance, request, error, snapshot) do
+    request = if is_map(request), do: request, else: %{}
+
+    if error.reason == :queue_full do
+      :telemetry.execute(
+        [:jido_messaging, :outbound, :queue_full],
+        %{queue_depth: snapshot.queue_capacity, queue_capacity: snapshot.queue_capacity, occupancy_ratio: 1.0},
+        %{
+          component: :outbound_gateway,
+          instance_module: instance,
+          partition: snapshot.partition,
+          operation: request[:operation] || :send
+        }
+      )
+    end
+
+    diagnostics = %{
+      pressure_level: snapshot.pressure_level,
+      queue_size: snapshot.queue_size,
+      queue_capacity: snapshot.queue_capacity
+    }
+
+    if dead_letter_replay_request?(request) do
+      error
+    else
+      case DeadLetter.capture_rejection(instance, request, error, diagnostics) do
+        {:ok, record} -> Map.put(error, :dead_letter_id, record.id)
+        _ -> error
+      end
     end
   end
 
@@ -82,47 +138,70 @@ defmodule Jido.Messaging.OutboundGateway.Partition do
       sent_cache_size: Keyword.fetch!(opts, :sent_cache_size)
     }
 
-    {:ok, state}
+    epoch =
+      Admission.open(
+        state.instance_module,
+        state.partition,
+        Map.take(state, [:queue_capacity, :max_attempts, :partition, :pressure_policy])
+      )
+
+    Process.send_after(self(), {:reap_reservations, epoch}, 100)
+    {:ok, Map.put(state, :admission_epoch, epoch)}
   end
 
   @impl true
   def handle_call({:dispatch, request}, from, state) do
-    case validate_request(request) do
+    case Admission.reserve(state.instance_module, state.partition, self(), elem(from, 0)) do
+      {:ok, permit} ->
+        handle_call({:dispatch, request, permit}, from, state)
+
+      {:error, :queue_full} ->
+        {:reply, {:error, reject(state.instance_module, request, Errors.queue_full(request, state), state)}, state}
+
+      error ->
+        {:reply, error, state}
+    end
+  end
+
+  def handle_call({:dispatch, request, permit}, from, state) do
+    case Admission.accept(permit, elem(from, 0)) do
+      :ok -> admit(request, from, permit, state)
+      error -> {:reply, error, state}
+    end
+  end
+
+  defp admit(request, from, permit, state) do
+    case Errors.validate(request) do
       :ok ->
-        if queue_full?(state) do
-          saturated_state = maybe_emit_pressure_transition(state, state.queue_capacity)
-          error = queue_full_error(request, saturated_state)
+        case maybe_apply_pressure_policy(state, request) do
+          {:ok, next_state, delay} ->
+            job = %{request: request, from: from, delay: delay, permit: permit}
+            new_queue = :queue.in(job, next_state.queue)
+            new_size = next_state.queue_size + 1
 
-          {:reply, {:error, maybe_attach_dead_letter_id(saturated_state, request, error)}, saturated_state}
-        else
-          case maybe_apply_pressure_policy(state, request) do
-            {:ok, next_state, delay} ->
-              job = %{request: request, from: from, delay: delay}
-              new_queue = :queue.in(job, next_state.queue)
-              new_size = next_state.queue_size + 1
+            queued_state =
+              %{next_state | queue: new_queue, queue_size: new_size} |> maybe_emit_pressure_transition(new_size)
 
-              queued_state =
-                %{next_state | queue: new_queue, queue_size: new_size} |> maybe_emit_pressure_transition(new_size)
+            emit_outbound_event(:enqueued, %{queue_depth: new_size}, queued_state, request, %{})
 
-              emit_outbound_event(:enqueued, %{queue_depth: new_size}, queued_state, request, %{})
+            final_state =
+              if queued_state.processing do
+                queued_state
+              else
+                send(self(), :process_next)
+                %{queued_state | processing: true}
+              end
 
-              final_state =
-                if queued_state.processing do
-                  queued_state
-                else
-                  send(self(), :process_next)
-                  %{queued_state | processing: true}
-                end
+            {:noreply, final_state}
 
-              {:noreply, final_state}
-
-            {:error, policy_error, policy_state} ->
-              {:reply, {:error, maybe_attach_dead_letter_id(policy_state, request, policy_error)}, policy_state}
-          end
+          {:error, policy_error, policy_state} ->
+            Admission.release(permit)
+            {:reply, {:error, maybe_attach_dead_letter_id(policy_state, request, policy_error)}, policy_state}
         end
 
       {:error, reason} ->
-        error = invalid_request_error(request, reason, state)
+        Admission.release(permit)
+        error = Errors.invalid(request, reason, state)
         {:reply, {:error, maybe_attach_dead_letter_id(state, request, error)}, state}
     end
   end
@@ -176,10 +255,19 @@ defmodule Jido.Messaging.OutboundGateway.Partition do
   def handle_info({:EXIT, workers, reason}, %{workers: workers} = state),
     do: {:stop, {:provider_workers_stopped, reason}, state}
 
+  def handle_info({:reap_reservations, epoch}, %{admission_epoch: epoch} = state) do
+    Admission.reap(state.instance_module, state.partition, epoch)
+    Process.send_after(self(), {:reap_reservations, epoch}, 100)
+    {:noreply, state}
+  end
+
   def handle_info(_message, state), do: {:noreply, state}
 
   @impl true
-  def terminate(_reason, state), do: Workers.stop(state.workers)
+  def terminate(_reason, state) do
+    Admission.close(state.instance_module, state.partition, state.admission_epoch)
+    Workers.stop(state.workers)
+  end
 
   defp attempt(state), do: continue_operation(state, Operation.prepare(state.instance_module, state.active.request))
 
@@ -278,6 +366,7 @@ defmodule Jido.Messaging.OutboundGateway.Partition do
   end
 
   defp finish_job(state, reply) do
+    Admission.release(state.active.permit)
     GenServer.reply(state.active.from, reply)
     state = %{state | active: nil}
 
@@ -349,8 +438,6 @@ defmodule Jido.Messaging.OutboundGateway.Partition do
     min(exponential, max_backoff_ms)
   end
 
-  defp queue_full?(state), do: current_load(state) >= state.queue_capacity
-
   defp maybe_apply_pressure_policy(state, request) do
     projected_load = current_load(state) + min(mailbox_backlog(), 1) + 1
     ratio = projected_load / max(state.queue_capacity, 1)
@@ -365,7 +452,7 @@ defmodule Jido.Messaging.OutboundGateway.Partition do
 
       :shed_drop ->
         emit_pressure_action(projected_state, request, projected_level, :shed_drop, 0, ratio)
-        {:error, load_shed_error(request, projected_state), projected_state}
+        {:error, Errors.load_shed(request, projected_state), projected_state}
 
       :allow ->
         {:ok, projected_state, 0}
@@ -451,95 +538,6 @@ defmodule Jido.Messaging.OutboundGateway.Partition do
         priority: request[:priority] || :normal
       }
     )
-  end
-
-  defp validate_request(request) when is_map(request) do
-    cond do
-      request[:operation] not in [:send, :edit, :send_media, :edit_media] ->
-        {:error, {:invalid_request, :operation}}
-
-      not is_atom(request[:channel]) ->
-        {:error, {:invalid_request, :channel}}
-
-      is_nil(request[:external_room_id]) ->
-        {:error, {:invalid_request, :external_room_id}}
-
-      not valid_payload?(request[:operation], request[:payload]) ->
-        {:error, {:invalid_request, :payload}}
-
-      request[:priority] not in [:critical, :high, :normal, :low] ->
-        {:error, {:invalid_request, :priority}}
-
-      request[:operation] in [:edit, :edit_media] and is_nil(request[:external_message_id]) ->
-        {:error, :missing_external_message_id}
-
-      true ->
-        :ok
-    end
-  end
-
-  defp validate_request(_request), do: {:error, :invalid_request}
-
-  defp valid_payload?(operation, payload) when operation in [:send, :edit], do: is_binary(payload)
-  defp valid_payload?(operation, payload) when operation in [:send_media, :edit_media], do: is_map(payload)
-  defp valid_payload?(_operation, _payload), do: false
-
-  defp invalid_request_error(request, reason, state) do
-    %{
-      type: :outbound_error,
-      category: OutboundGateway.classify_error(reason),
-      disposition: :terminal,
-      operation: request[:operation] || :send,
-      reason: reason,
-      attempt: 1,
-      max_attempts: state.max_attempts,
-      partition: state.partition,
-      routing_key: request[:routing_key] || "unknown:unknown",
-      retryable: false
-    }
-  end
-
-  defp queue_full_error(request, state) do
-    ratio = state.queue_capacity / max(state.queue_capacity, 1)
-
-    :telemetry.execute(
-      [:jido_messaging, :outbound, :queue_full],
-      %{queue_depth: state.queue_capacity, queue_capacity: state.queue_capacity, occupancy_ratio: ratio},
-      %{
-        component: :outbound_gateway,
-        instance_module: state.instance_module,
-        partition: state.partition,
-        operation: request[:operation] || :send
-      }
-    )
-
-    %{
-      type: :outbound_error,
-      category: :terminal,
-      disposition: :terminal,
-      operation: request[:operation] || :send,
-      reason: :queue_full,
-      attempt: 1,
-      max_attempts: state.max_attempts,
-      partition: state.partition,
-      routing_key: request[:routing_key] || "unknown:unknown",
-      retryable: false
-    }
-  end
-
-  defp load_shed_error(request, state) do
-    %{
-      type: :outbound_error,
-      category: :terminal,
-      disposition: :terminal,
-      operation: request[:operation] || :send,
-      reason: :load_shed,
-      attempt: 1,
-      max_attempts: state.max_attempts,
-      partition: state.partition,
-      routing_key: request[:routing_key] || "unknown:unknown",
-      retryable: false
-    }
   end
 
   defp maybe_attach_dead_letter_id(state, request, error) do

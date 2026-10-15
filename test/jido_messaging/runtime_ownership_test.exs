@@ -124,7 +124,9 @@ defmodule Jido.Messaging.RuntimeOwnershipTest do
     eventually(fn ->
       try do
         replacement = Partition.whereis(Instance, 0)
-        is_pid(replacement) and replacement != partition
+
+        is_pid(replacement) and replacement != partition and
+          match?({:ok, _, _}, Jido.Messaging.OutboundGateway.Admission.snapshot(Instance, 0, replacement))
       rescue
         ArgumentError -> false
       end
@@ -159,7 +161,9 @@ defmodule Jido.Messaging.RuntimeOwnershipTest do
 
     eventually(fn ->
       replacement = Partition.whereis(Instance, 0)
-      is_pid(replacement) and replacement != partition
+
+      is_pid(replacement) and replacement != partition and
+        match?({:ok, _, _}, Jido.Messaging.OutboundGateway.Admission.snapshot(Instance, 0, replacement))
     end)
 
     assert {:ok, binding} = Runtime.binding(runtime, "uncertain")

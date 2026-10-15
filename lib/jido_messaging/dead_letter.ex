@@ -9,7 +9,7 @@ defmodule Jido.Messaging.DeadLetter do
   use GenServer
 
   alias Jido.Messaging.OutboundGateway
-  alias Jido.Messaging.DeadLetter.ReplayWorker
+  alias Jido.Messaging.DeadLetter.{RejectionBuffer, ReplayWorker}
 
   @default_max_records 5_000
   @default_replay_partitions max(2, System.schedulers_online())
@@ -114,6 +114,11 @@ defmodule Jido.Messaging.DeadLetter do
     call(instance_module, {:capture_outbound_failure, request, error, diagnostics})
   end
 
+  @doc false
+  def capture_rejection(instance, request, error, diagnostics) do
+    RejectionBuffer.put(instance, build_record(instance, request, error, diagnostics))
+  end
+
   @doc """
   List dead-letter records.
 
@@ -185,6 +190,12 @@ defmodule Jido.Messaging.DeadLetter do
   def init(opts) do
     instance_module = Keyword.fetch!(opts, :instance_module)
     config = config(instance_module)
+    # Load timestamp code before exposing the concurrent rejection buffer. A cold
+    # burst otherwise queues thousands of callers behind the code loader.
+    Code.ensure_loaded!(DateTime)
+    Code.ensure_loaded!(Calendar.ISO)
+    RejectionBuffer.new(instance_module, config[:max_records])
+    Process.send_after(self(), :drain_rejections, 10)
 
     {:ok,
      %{
@@ -196,26 +207,36 @@ defmodule Jido.Messaging.DeadLetter do
   end
 
   @impl true
-  def handle_call({:capture_outbound_failure, request, error, diagnostics}, _from, state) do
+  def handle_call(message, from, state) do
+    batches = div(state.max_records + 99, 100)
+    request(message, from, drain_rejections(state, batches))
+  end
+
+  @impl true
+  def handle_info(:drain_rejections, state) do
+    state = drain_rejections(state, 1)
+    Process.send_after(self(), :drain_rejections, 10)
+    {:noreply, state}
+  end
+
+  defp drain_rejections(state, batches) do
+    Enum.reduce(RejectionBuffer.take(state.instance_module, batches), state, fn record, state ->
+      next = insert_record(state, record)
+      emit_capture(next, record)
+      next
+    end)
+  end
+
+  defp request({:capture_outbound_failure, request, error, diagnostics}, _from, state) do
     record = build_record(state.instance_module, request, error, diagnostics)
     next_state = insert_record(state, record)
 
-    :telemetry.execute(
-      [:jido_messaging, :dead_letter, :captured],
-      %{dead_letter_count: map_size(next_state.records)},
-      %{
-        instance_module: state.instance_module,
-        dead_letter_id: record.id,
-        category: record.category,
-        operation: record.request[:operation],
-        partition: record.partition
-      }
-    )
+    emit_capture(next_state, record)
 
     {:reply, {:ok, record}, next_state}
   end
 
-  def handle_call({:list, opts}, _from, state) do
+  defp request({:list, opts}, _from, state) do
     status_filter = opts |> Keyword.get(:status, :all) |> normalize_status_filter()
     limit = normalize_limit(Keyword.get(opts, :limit))
 
@@ -229,14 +250,14 @@ defmodule Jido.Messaging.DeadLetter do
     {:reply, {:ok, records}, state}
   end
 
-  def handle_call({:get, dead_letter_id}, _from, state) do
+  defp request({:get, dead_letter_id}, _from, state) do
     case Map.fetch(state.records, dead_letter_id) do
       {:ok, record} -> {:reply, {:ok, record}, state}
       :error -> {:reply, {:error, :not_found}, state}
     end
   end
 
-  def handle_call({:archive, dead_letter_id}, _from, state) do
+  defp request({:archive, dead_letter_id}, _from, state) do
     case Map.fetch(state.records, dead_letter_id) do
       {:ok, record} ->
         now = DateTime.utc_now()
@@ -248,7 +269,7 @@ defmodule Jido.Messaging.DeadLetter do
     end
   end
 
-  def handle_call({:purge, opts}, _from, state) do
+  defp request({:purge, opts}, _from, state) do
     status_filter = opts |> Keyword.get(:status, :archived) |> normalize_status_filter()
     older_than_ms = normalize_older_than_ms(Keyword.get(opts, :older_than_ms))
     now_ms = System.system_time(:millisecond)
@@ -271,7 +292,7 @@ defmodule Jido.Messaging.DeadLetter do
     {:reply, {:ok, length(removable_ids)}, next_state}
   end
 
-  def handle_call({:prepare_replay, dead_letter_id, force?}, _from, state) do
+  defp request({:prepare_replay, dead_letter_id, force?}, _from, state) do
     case Map.fetch(state.records, dead_letter_id) do
       :error ->
         {:reply, {:error, :not_found}, state}
@@ -316,7 +337,7 @@ defmodule Jido.Messaging.DeadLetter do
     end
   end
 
-  def handle_call({:complete_replay, dead_letter_id, replay_result}, _from, state) do
+  defp request({:complete_replay, dead_letter_id, replay_result}, _from, state) do
     case Map.fetch(state.records, dead_letter_id) do
       :error ->
         {:reply, {:error, :not_found}, state}
@@ -353,6 +374,20 @@ defmodule Jido.Messaging.DeadLetter do
 
         {:reply, {:ok, updated}, put_record(state, updated)}
     end
+  end
+
+  defp emit_capture(next_state, record) do
+    :telemetry.execute(
+      [:jido_messaging, :dead_letter, :captured],
+      %{dead_letter_count: map_size(next_state.records)},
+      %{
+        instance_module: next_state.instance_module,
+        dead_letter_id: record.id,
+        category: record.category,
+        operation: record.request[:operation],
+        partition: record.partition
+      }
+    )
   end
 
   defp call(instance_module, message) do

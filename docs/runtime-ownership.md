@@ -122,8 +122,29 @@ accepted work. Result resources still belong to the coordinator, not its tempora
 worker. Media upload and delete use the same stable stage IDs and replacement
 metadata rules. Direct execution, tools, Streaming, and Sender keep their paths.
 
-C12 makes admission callbacks responsive during provider and retry waits. It does
-not yet bound dispatch messages that wait in the mailbox. C13 adds that bound.
+C13 reserves each dispatch slot in Runtime-owned ETS before it sends a call to
+this coordinator. A generation and token identify each reservation. One atomic
+compare-and-swap covers the count and bounded token map. Reserved, queued, active,
+and retry-wait jobs together cannot exceed `queue_capacity` for one partition.
+No admission server mailbox exists. A 100 ms sweep removes dead callers only
+from unaccepted reservations. Timeout after acceptance keeps the slot until job
+completion. Old generations and repeated release cannot free a new job's slot.
+
+A full partition returns the existing queue-full error without a coordinator
+call. Invalid requests keep validation precedence. Rejection records enter a
+fixed ETS ring owned by DeadLetter. The ring holds at most `max_records` pending
+records, in addition to the existing `max_records` stored records. Overload can
+replace older pending records, as stored-record trimming already permits.
+DeadLetter drains batches of 100 records and flushes pending records before
+get, list, archive, purge, and replay calls. It retains the same record fields.
+A missing DeadLetter process gives no record ID. Its restart loses its volatile
+records. No extra unbounded mailbox or rejection-record index is introduced.
+
+This bounds admitted gateway work, not all control messages, caller processes,
+payload bytes, or direct calls outside the gateway. Public request construction
+can still wait for ConfigStore and route resolution before admission. User
+telemetry handlers can also delay their calling process. See the queue
+measurement for separate rejection and accepted-completion timings.
 
 ## Request retention
 

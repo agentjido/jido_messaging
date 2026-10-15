@@ -96,6 +96,7 @@ defmodule Jido.Messaging.Runtime do
 
   @impl true
   def init(opts) do
+    Jido.Messaging.OutboundGateway.Admission.new(Keyword.fetch!(opts, :instance_module))
     instance_module = Keyword.fetch!(opts, :instance_module)
     persistence = Keyword.fetch!(opts, :persistence)
 

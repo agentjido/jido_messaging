@@ -295,6 +295,88 @@ defmodule Jido.Messaging.GatewayCoordinatorTest do
              OutboundGateway.send_message(Instance, context.context, "held", request_id: "shutdown-active")
   end
 
+  test "a reservation timeout before acceptance cannot invoke a provider", context do
+    :ok = :sys.suspend(context.partition)
+
+    task =
+      Task.async(fn ->
+        try do
+          Partition.dispatch(Instance, 0, request("abandoned"), 20)
+        catch
+          :exit, {:timeout, _} -> :caller_timeout
+        end
+      end)
+
+    assert Task.await(task) == :caller_timeout
+    assert {:ok, _, %{load: 0}} = Jido.Messaging.OutboundGateway.Admission.snapshot(Instance, 0, context.partition)
+    :ok = :sys.resume(context.partition)
+    assert :sys.get_state(context.partition).active == nil
+    refute_received {:entered, _, "abandoned", _}
+    assert {:ok, _} = Partition.dispatch(Instance, 0, request("next"))
+  end
+
+  test "invalid payload keeps precedence and rejection does not wait for DeadLetter", context do
+    first = Task.async(fn -> Partition.dispatch(Instance, 0, request("held")) end)
+    assert_receive {:entered, worker, "held", 1}, 1_000
+    later = Task.async(fn -> Partition.dispatch(Instance, 0, request("later")) end)
+    assert_eventually(fn -> :sys.get_state(context.partition).queue_size == 1 end, timeout: 1_000)
+    dead_letter = Process.whereis(Jido.Messaging.DeadLetter.server_name(Instance))
+    :ok = :sys.suspend(dead_letter)
+
+    assert {:error, %{reason: {:invalid_request, :payload}, dead_letter_id: invalid_id}} =
+             Partition.dispatch(Instance, 0, %{request("bad") | payload: 1})
+
+    assert {:error, %{reason: :queue_full, dead_letter_id: id}} = Partition.dispatch(Instance, 0, request("full"))
+    :ok = :sys.resume(dead_letter)
+
+    assert {:ok, %{id: ^invalid_id, reason: {:invalid_request, :payload}}} =
+             Jido.Messaging.DeadLetter.get(Instance, invalid_id)
+
+    assert {:ok, %{id: ^id, diagnostics: %{queue_capacity: 2, pressure_level: :shed}}} =
+             Jido.Messaging.DeadLetter.get(Instance, id)
+
+    send(worker, :release)
+    assert {:ok, _} = Task.await(first)
+    assert {:ok, _} = Task.await(later)
+  end
+
+  @tag gateway: [queue_capacity: 64]
+  test "10,000 dispatch calls reject overflow before the held provider is released", context do
+    first = Task.async(fn -> Partition.dispatch(Instance, 0, request("held"), 30_000) end)
+    assert_receive {:entered, worker, "held", 1}, 1_000
+    parent = self()
+
+    callers =
+      for index <- 1..10_000 do
+        spawn(fn ->
+          receive do
+            :start -> send(parent, {:burst_result, Partition.dispatch(Instance, 0, request("queued-#{index}"), 30_000)})
+          end
+        end)
+      end
+
+    Enum.each(callers, &send(&1, :start))
+
+    for _ <- 1..9_937 do
+      assert_receive {:burst_result, {:error, %{reason: :queue_full}}}, 15_000
+    end
+
+    state = :sys.get_state(context.partition)
+    assert state.queue_size == 63
+    assert state.active.worker == worker
+    assert {:ok, _, %{load: 64}} = Jido.Messaging.OutboundGateway.Admission.snapshot(Instance, 0, context.partition)
+    send(worker, :release)
+    assert {:ok, _} = Task.await(first, 30_000)
+    for _ <- 1..63, do: assert_receive({:burst_result, {:ok, _}}, 15_000)
+
+    assert_eventually(
+      fn ->
+        match?({:ok, _, %{load: 0}}, Jido.Messaging.OutboundGateway.Admission.snapshot(Instance, 0, context.partition))
+      end,
+      timeout: 1_000
+    )
+  end
+
   defp request(text),
     do: %{
       operation: :send,
