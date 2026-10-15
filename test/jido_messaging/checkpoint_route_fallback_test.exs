@@ -1,7 +1,7 @@
 defmodule Jido.Messaging.CheckpointRouteFallbackTest do
   use ExUnit.Case, async: false
 
-  alias Jido.Messaging.{Runtime, SessionManager}
+  alias Jido.Messaging.{SessionManager}
 
   defmodule Instance do
     use Jido.Messaging, persistence: Jido.Messaging.Persistence.ETS, runtime_profile: :core
@@ -71,7 +71,7 @@ defmodule Jido.Messaging.CheckpointRouteFallbackTest do
     assert {:ok, %{source: :state_hit, stale: false, route: ^replacement}} =
              SessionManager.resolve(Instance, key("thread"))
 
-    assert :ets.info(Runtime.request_table(Instance.__jido_messaging__(:runtime)), :size) == 0
+    assert Jido.Messaging.TestHelpers.runtime_entry_count(Instance.__jido_messaging__(:runtime)) == 0
   end
 
   test "periodic pruning removes expired state and retains fresh state", %{pid: pid} do

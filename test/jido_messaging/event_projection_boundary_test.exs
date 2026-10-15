@@ -214,7 +214,7 @@ defmodule Jido.Messaging.EventProjectionBoundaryTest do
     for original <- context.messages, do: assert({:ok, original} == Instance.get_message(original.id))
     assert {:ok, participant} = Instance.get_participant(context.participant.id)
     assert participant == context.participant
-    assert :ets.info(Runtime.request_table(context.runtime), :size) == 0
+    assert Jido.Messaging.TestHelpers.runtime_entry_count(context.runtime) == 0
     assert Instance.count_agents() == 0
     assert {:ok, []} = Instance.list_memberships(context.room.id)
     assert {:ok, []} = Instance.list_principal_grants(context.participant.id)

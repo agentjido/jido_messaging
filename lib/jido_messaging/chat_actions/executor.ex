@@ -87,31 +87,23 @@ defmodule Jido.Messaging.ChatActions.Executor do
     principal = audit.authorization.verified_principal_id
     key = {principal, "tool:" <> opts[:request_id]}
 
-    digest =
-      :crypto.hash(
-        :sha256,
-        :erlang.term_to_binary({action, params, target.bridge_id, target.channel_id, target.thread_id}, [:deterministic])
-      )
-
+    payload = {action, params, target.bridge_id, target.channel_id, target.thread_id}
     authority = Map.take(audit.authorization, [:grant, :invocation_policy, :constraints, :effective_scope])
 
-    if :ets.insert_new(table, {key, digest, authority, {:running, self()}}) do
-      result = invoke_tool(action, params, target, scope, audit, opts)
-      :ets.insert(table, {key, digest, authority, {:done, result}})
-      result
-    else
-      case :ets.lookup(table, key) do
-        [{^key, ^digest, ^authority, {:done, result}}] ->
-          result
+    case Jido.Messaging.RequestLedger.claim(table, key, payload, authority) do
+      {:ok, claim} ->
+        result = invoke_tool(action, params, target, scope, audit, opts)
 
-        [{^key, ^digest, ^authority, {:running, owner}}] ->
-          Jido.Chat.Signal.Policy.error(
-            if(Process.alive?(owner), do: :request_in_progress, else: :request_outcome_unknown)
-          )
+        case Jido.Messaging.RequestLedger.complete(table, claim, result) do
+          :ok -> result
+          error -> error
+        end
 
-        _ ->
-          Jido.Chat.Signal.Policy.error(:request_conflict)
-      end
+      {:cached, result} ->
+        result
+
+      error ->
+        error
     end
   end
 

@@ -88,9 +88,34 @@ defmodule Jido.Messaging.TypedExecutionTest do
     assert MockTransport.calls(context.transport) == []
   end
 
-  test "grant revocation is checked before a cached result is returned", context do
+  test "exact replay and grant revocation survive cache eviction and store recovery", context do
     parent = request(context)
-    assert {:ok, %{type: "jido.messaging.operation.completed"}} = Instance.execute(parent, actor(context))
+    assert {:ok, %{type: "jido.messaging.operation.completed"} = original} = Instance.execute(parent, actor(context))
+    runtime = Instance.__jido_messaging__(:runtime)
+    runtime_pid = Process.whereis(runtime)
+    table = Runtime.request_table(runtime)
+
+    for index <- 1..1_001 do
+      {:ok, claim} = Jido.Messaging.RequestLedger.claim(table, {:eviction, index}, :payload, :authority)
+      :ok = Jido.Messaging.RequestLedger.complete(table, claim, index)
+    end
+
+    [{Jido.Messaging.RequestStore, store}] = :ets.lookup(table, Jido.Messaging.RequestStore)
+    {:ok, stat} = Jido.Messaging.RequestStore.call(store, :stats)
+    Process.exit(stat.worker, :kill)
+
+    Jido.Messaging.TestHelpers.assert_eventually(
+      fn ->
+        case Jido.Messaging.RequestStore.call(store, :stats) do
+          {:ok, %{worker: worker}} -> worker != stat.worker
+          _ -> false
+        end
+      end,
+      timeout: 2_000
+    )
+
+    assert {:ok, ^original} = Instance.execute(parent, actor(context))
+    assert Process.whereis(runtime) == runtime_pid
     assert {:ok, _} = Instance.revoke_principal_grant(context.grant.id, context.grant.revision)
     assert {:ok, denied} = Instance.execute(parent, actor(context))
     assert denied.data["code"] == "authorization_denied"

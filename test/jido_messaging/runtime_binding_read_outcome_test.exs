@@ -76,7 +76,7 @@ defmodule Jido.Messaging.RuntimeBindingReadOutcomeTest do
       assert Process.alive?(Process.whereis(context.runtime))
       refute_received :configured
       assert Runtime.get_state(context.runtime).bindings == %{}
-      assert :ets.info(Runtime.request_table(context.runtime), :size) == 0
+      assert Jido.Messaging.TestHelpers.runtime_entry_count(context.runtime) == 0
       assert {:ok, stored} = ETS.get_bridge_config(context.state, "owned")
       assert stored == context.config
     end

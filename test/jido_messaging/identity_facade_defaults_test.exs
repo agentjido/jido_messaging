@@ -1,7 +1,6 @@
 defmodule Jido.Messaging.IdentityFacadeDefaultsTest do
   use ExUnit.Case, async: false
   alias Jido.Messaging
-  alias Jido.Messaging.Runtime
 
   defmodule ETSInstance do
     use Messaging, persistence: Messaging.Persistence.ETS, runtime_profile: :core
@@ -129,7 +128,7 @@ defmodule Jido.Messaging.IdentityFacadeDefaultsTest do
   end
 
   defp assert_no_communication(instance, subject, room) do
-    assert :ets.info(Runtime.request_table(instance.__jido_messaging__(:runtime)), :size) == 0
+    assert Jido.Messaging.TestHelpers.runtime_entry_count(instance.__jido_messaging__(:runtime)) == 0
     assert instance.count_agents() == 0
     assert {:ok, []} = instance.list_principal_grants(subject)
     assert {:ok, []} = instance.list_memberships(room)

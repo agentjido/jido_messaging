@@ -86,7 +86,8 @@ defmodule Jido.Messaging.RuntimeOwnershipTest do
     assert {:ok, restarted} = Supervisor.restart_child(supervisor, Runtime)
     assert restarted != owner
     replacement = Runtime.request_table(runtime)
-    assert :ets.info(replacement, :size) == 0
+    assert :ets.info(replacement, :size) == 1
+    assert {:ok, _} = RequestLedger.claim(replacement, {"principal", "request"}, :payload, :authority)
     assert {:error, :binding_not_found} = Runtime.binding(runtime, "created")
     assert {:error, :binding_not_found} = Runtime.binding(runtime, "external")
   end

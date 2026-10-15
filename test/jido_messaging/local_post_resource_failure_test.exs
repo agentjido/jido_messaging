@@ -174,8 +174,9 @@ defmodule Jido.Messaging.LocalPostResourceFailureTest do
     assert {:ok, foreign} = Instance.get_message(context.foreign.id)
     assert foreign == context.foreign
     assert MockTransport.calls(context.transport) == []
-    admissions = :ets.tab2list(Runtime.request_table(context.runtime)) |> Enum.filter(&(tuple_size(&1) == 4))
-    assert length(admissions) == 1
+    table = Runtime.request_table(context.runtime)
+    [{Jido.Messaging.RequestStore, store}] = :ets.lookup(table, Jido.Messaging.RequestStore)
+    assert {:ok, %{disk_entries: 1}} = Jido.Messaging.RequestStore.call(store, :stats)
     assert Instance.count_agents() == 0
   end
 end

@@ -1,7 +1,7 @@
 defmodule Jido.Messaging.DirectoryInputBoundaryTest do
   use ExUnit.Case, async: false
 
-  alias Jido.Messaging.{AgentDirectoryProjection, AgentDirectoryScope, Runtime}
+  alias Jido.Messaging.{AgentDirectoryProjection, AgentDirectoryScope}
 
   defmodule ETSInstance do
     use Jido.Messaging, persistence: Jido.Messaging.Persistence.ETS, runtime_profile: :core
@@ -135,7 +135,7 @@ defmodule Jido.Messaging.DirectoryInputBoundaryTest do
 
   defp assert_no_authority(instance) do
     runtime = instance.__jido_messaging__(:runtime)
-    assert :ets.info(Runtime.request_table(runtime), :size) == 0
+    assert Jido.Messaging.TestHelpers.runtime_entry_count(runtime) == 0
     assert instance.count_agents() == 0
     assert {:ok, []} = instance.list_principal_grants("directory-owner")
     assert {:ok, []} = instance.list_rooms()

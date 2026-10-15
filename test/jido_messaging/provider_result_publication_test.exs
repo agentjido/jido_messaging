@@ -146,7 +146,7 @@ defmodule Jido.Messaging.ProviderResultPublicationTest do
     assert {:ok, %{"complete" => "unrelated"}} = Instance.resolve_resource(context.old_result)
     assert {:ok, %Jido.Chat.FileUpload{}} = Instance.resolve_resource(context.input_file)
     for original <- context.messages, do: assert({:ok, original} == Instance.get_message(original.id))
-    assert :ets.info(Runtime.request_table(context.runtime), :size) == 1
+    assert Jido.Messaging.TestHelpers.runtime_entry_count(context.runtime) == 1
     assert Instance.count_agents() == 0
     assert {:ok, []} = Instance.list_memberships(context.room.id)
   end

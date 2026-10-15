@@ -72,7 +72,7 @@ defmodule Jido.Messaging.TypedRequestAdmissionTest do
   defp assert_no_effects(context, before) do
     assert snapshot(context) == before
     assert MockTransport.calls(context.transport) == []
-    assert :ets.tab2list(Runtime.request_table(context.runtime)) == []
+    assert Jido.Messaging.TestHelpers.runtime_entry_count(context.runtime) == 0
   end
 
   test "all 36 public requests remain observations when published on the Bus", context do

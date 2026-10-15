@@ -1,7 +1,7 @@
 defmodule Jido.Messaging.FacadeRecordOwnershipTest do
   use ExUnit.Case, async: false
   alias Jido.Messaging
-  alias Jido.Messaging.{AuthorizationScope, Runtime}
+  alias Jido.Messaging.{AuthorizationScope}
 
   defmodule ETSInstance do
     use Messaging, persistence: Messaging.Persistence.ETS, runtime_profile: :core
@@ -62,8 +62,7 @@ defmodule Jido.Messaging.FacadeRecordOwnershipTest do
   end
 
   defp no_communication(instance) do
-    table = Runtime.request_table(runtime(instance))
-    assert :ets.tab2list(table) == []
+    assert Jido.Messaging.TestHelpers.runtime_entry_count(runtime(instance)) == 0
     assert instance.count_agents() == 0
     refute_received {:signal, _}
   end

@@ -291,3 +291,34 @@ During group downtime, worker lookup returns nil, count returns zero, and flow
 operations use the existing worker-unavailable result. Recovery waits for stale
 external registrations and Runtime availability. Failed starts are not retained.
 Six new tests verify these rules, 16-flow recovery, and unchanged unrelated PIDs.
+
+## Request history after C9
+
+Runtime still owns the public resource ETS table. That table now holds one
+private request-store locator. Typed execution and tool execution use the same
+private SQLite store. Each store has a Runtime lifetime, a linked owner, and a
+replaceable database worker. The owner retains the file and lifetime identifier.
+Worker replacement reopens the same file. A persisted generation makes earlier
+running claims unknown without scanning all request IDs.
+
+The memory cache holds at most 1,000 completed entries or 16 MiB of encoded entry
+data, whichever is reached first. All request indexes remain on disk. SQLite has
+a separate 2 MiB page-cache setting. Claims are written before provider execution;
+completion is written before acknowledgement. Unknown outcomes have no expiry.
+Read or write failure stops new execution through that ledger until recovery.
+Missing or invalid history never becomes an empty replacement ledger. Late
+completion of an uncertain claim cannot release its ID.
+
+Files use a private directory and restricted file permissions. Orderly Runtime
+shutdown closes and removes them. A new Runtime gets a new file and lifetime.
+Stored results and private causes are excluded from status and failure logs.
+Resource rows stay in their current table and keep their owner and TTL rules.
+
+Tests cover duplicate admission, authority conflicts, revocation, exact replay,
+cache limits, worker replacement, read/write failure, full disk, missing files,
+shutdown, and storage failure before and after a provider effect. The full suite
+also retains earlier authorization and caller-timeout checks. See the
+[retention measurement](request-retention-measurement.md) for separate ETS, BEAM,
+native SQLite, file-size, and latency results. Disk use remains unbounded.
+C10 will cover Runtime-created Chat binding history; external bindings retain
+their existing owner and backend.

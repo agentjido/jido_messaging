@@ -1,5 +1,6 @@
 defmodule Jido.Messaging.ExecutionAdmissionFailureTest do
   use ExUnit.Case, async: false
+  import Jido.Messaging.TestHelpers
 
   alias Jido.Chat.AdapterTestKit.{MockAdapter, MockTransport}
   alias Jido.Chat.Errors.Contract
@@ -29,13 +30,33 @@ defmodule Jido.Messaging.ExecutionAdmissionFailureTest do
       :ok = MockTransport.request(opts[:transport], :send_message, %{room: room, text: text}, :ok)
 
       case opts[:mode] do
-        :raise -> raise "private provider detail"
-        :throw -> throw({:private, "provider detail"})
-        :exit -> exit({:private, "provider detail"})
-        :invalid -> {:ok, %{id: nil, token: "private provider detail"}}
-        :unsafe -> {:ok, %{id: "sent", text: self()}}
-        :error -> {:error, {:network_error, "private provider detail"}}
-        :complete -> {:ok, %{id: "sent", text: text, token: "private provider detail", raw: self()}}
+        :raise ->
+          raise "private provider detail"
+
+        :throw ->
+          throw({:private, "provider detail"})
+
+        :exit ->
+          exit({:private, "provider detail"})
+
+        :invalid ->
+          {:ok, %{id: nil, token: "private provider detail"}}
+
+        :unsafe ->
+          {:ok, %{id: "sent", text: self()}}
+
+        :error ->
+          {:error, {:network_error, "private provider detail"}}
+
+        :complete ->
+          {:ok, %{id: "sent", text: text, token: "private provider detail", raw: self()}}
+
+        {:hold, caller} ->
+          send(caller, {:effect, self()})
+
+          receive do
+            :release -> {:ok, %{id: "sent", text: text}}
+          end
       end
     end
   end
@@ -165,8 +186,58 @@ defmodule Jido.Messaging.ExecutionAdmissionFailureTest do
     refute Jason.encode!(Jido.Signal.to_map(result)) =~ "private provider detail"
     assert {:ok, ^result} = Instance.execute(parent, actor(context))
     assert length(MockTransport.calls(context.transport)) == 1
-    assert :ets.info(Runtime.request_table(context.runtime), :size) == 1
+    assert Jido.Messaging.TestHelpers.runtime_entry_count(context.runtime) == 1
     assert {:ok, []} = Instance.list_messages(context.room.id)
+  end
+
+  test "failed claim storage prevents provider invocation", context do
+    stat = request_store_stats(context)
+    db = :sys.get_state(stat.worker).db
+    :ok = Exqlite.Sqlite3.execute(db, "PRAGMA query_only=ON")
+    assert {:error, %Contract{code: :request_outcome_unknown}} = Instance.execute(request(context), actor(context))
+    assert MockTransport.calls(context.transport) == []
+    assert Process.alive?(Process.whereis(context.runtime))
+  end
+
+  test "completion storage failure after a provider effect does not repeat it", context do
+    {:ok, binding} =
+      Jido.Chat.bind(Adapter, id: context.binding.id, transport: context.transport, mode: {:hold, self()})
+
+    :ok = Runtime.register_binding(context.runtime, binding)
+    parent = request(context)
+    task = Task.async(fn -> Instance.execute(parent, actor(context)) end)
+    assert_receive {:effect, provider}, 1_000
+    stat = request_store_stats(context)
+    db = :sys.get_state(stat.worker).db
+    :ok = Exqlite.Sqlite3.execute(db, "PRAGMA query_only=ON")
+    send(provider, :release)
+    assert {:error, %Contract{code: :request_outcome_unknown}} = Task.await(task)
+
+    assert_eventually(
+      fn ->
+        case Jido.Messaging.RequestStore.call(request_store(context), :stats) do
+          {:ok, %{worker: worker}} -> worker != stat.worker
+          _ -> false
+        end
+      end,
+      timeout: 2_000
+    )
+
+    assert {:error, %Contract{code: :request_outcome_unknown}} = Instance.execute(parent, actor(context))
+    assert length(MockTransport.calls(context.transport)) == 1
+    assert Process.alive?(Process.whereis(context.runtime))
+  end
+
+  defp request_store(context) do
+    [{Jido.Messaging.RequestStore, store}] =
+      :ets.lookup(Runtime.request_table(context.runtime), Jido.Messaging.RequestStore)
+
+    store
+  end
+
+  defp request_store_stats(context) do
+    {:ok, stat} = Jido.Messaging.RequestStore.call(request_store(context), :stats)
+    stat
   end
 
   defp request(context, overrides \\ %{}) do
@@ -186,7 +257,7 @@ defmodule Jido.Messaging.ExecutionAdmissionFailureTest do
   defp actor(context), do: [principal_id: context.participant.id, authorization_scope: context.scope]
 
   defp assert_no_admission(context) do
-    assert :ets.info(Runtime.request_table(context.runtime), :size) == 0
+    assert Jido.Messaging.TestHelpers.runtime_entry_count(context.runtime) == 0
     assert :ets.info(context.binding.resources, :size) == 0
     assert MockTransport.calls(context.transport) == []
     assert {:ok, []} = Instance.list_messages(context.room.id)
@@ -197,7 +268,7 @@ defmodule Jido.Messaging.ExecutionAdmissionFailureTest do
     assert result.type == "jido.messaging.operation.failed"
     assert result.data["code"] == code
     assert {:ok, ^result} = Instance.execute(parent, actor(context))
-    assert :ets.info(Runtime.request_table(context.runtime), :size) == 1
+    assert Jido.Messaging.TestHelpers.runtime_entry_count(context.runtime) == 1
     assert {:ok, []} = Instance.list_messages(context.room.id)
     result
   end

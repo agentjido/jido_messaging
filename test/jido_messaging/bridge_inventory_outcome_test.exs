@@ -151,7 +151,7 @@ defmodule Jido.Messaging.BridgeInventoryOutcomeTest do
 
     assert {:ok, configs} = ETS.list_bridge_configs(context.state, [])
     assert configs == context.configs
-    assert :ets.info(Runtime.request_table(context.runtime), :size) == 0
+    assert Jido.Messaging.TestHelpers.runtime_entry_count(context.runtime) == 0
     assert Instance.count_agents() == 0
   end
 end

@@ -198,7 +198,7 @@ defmodule Jido.Messaging.ExecutionCanonicalScopeTest do
 
   defp assert_empty_effects(context) do
     assert MockTransport.calls(context.transport) == []
-    assert :ets.info(Runtime.request_table(context.runtime), :size) == 0
+    assert Jido.Messaging.TestHelpers.runtime_entry_count(context.runtime) == 0
     assert_records(context)
   end
 

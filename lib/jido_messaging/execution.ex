@@ -217,8 +217,11 @@ defmodule Jido.Messaging.Execution do
     case RequestLedger.claim(table, key, {request.type, request.data}, authority) do
       {:ok, claim} ->
         result = run(instance, runtime, request, definition, operation, decision, opts)
-        :ok = RequestLedger.complete(table, claim, result)
-        result
+
+        case RequestLedger.complete(table, claim, result) do
+          :ok -> result
+          error -> error
+        end
 
       {:cached, result} ->
         result

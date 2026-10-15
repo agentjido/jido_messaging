@@ -1,7 +1,7 @@
 defmodule Jido.Messaging.DurableRecordInputBoundaryTest do
   use ExUnit.Case, async: false
 
-  alias Jido.Messaging.{AuthorizationScope, Persistence.ETS, Runtime}
+  alias Jido.Messaging.{AuthorizationScope, Persistence.ETS}
 
   defmodule Store do
     @behaviour Jido.Messaging.Persistence
@@ -181,7 +181,7 @@ defmodule Jido.Messaging.DurableRecordInputBoundaryTest do
   end
 
   defp assert_no_communication(context) do
-    assert :ets.info(Runtime.request_table(context.runtime), :size) == 0
+    assert Jido.Messaging.TestHelpers.runtime_entry_count(context.runtime) == 0
     assert Instance.count_agents() == 0
     assert {:ok, []} = Instance.list_memberships(context.room.id)
     assert {:ok, []} = Instance.list_messages(context.room.id)

@@ -220,7 +220,7 @@ defmodule Jido.Messaging.ReadReceiptCallbackOutcomeTest do
     data = Agent.get(Control, & &1)
     assert data.provider_calls == [{"provider-room", "provider-message"}]
     assert data.attempts == 1 and data.writes == 1
-    assert :ets.info(Runtime.request_table(context.runtime), :size) == 2
+    assert Jido.Messaging.TestHelpers.runtime_entry_count(context.runtime) == 2
     assert_records(context, true)
     refute_receive {:signal, _}
   end
@@ -246,7 +246,7 @@ defmodule Jido.Messaging.ReadReceiptCallbackOutcomeTest do
     assert data.provider_calls == [{"provider-room", "provider-message"}]
     assert data.attempts == 1
     assert data.writes == writes
-    assert :ets.info(Runtime.request_table(context.runtime), :size) == 1
+    assert Jido.Messaging.TestHelpers.runtime_entry_count(context.runtime) == 1
   end
 
   defp assert_records(context, written) do

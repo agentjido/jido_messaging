@@ -26,7 +26,8 @@ defmodule Jido.Messaging.Subscription do
 
   @spec current?(module(), pid(), pid()) :: boolean()
   def current?(instance, consumer, worker) do
-    Registry.lookup(Module.concat(instance, Registry.Subscriptions), consumer) == [{worker, nil}]
+    Process.alive?(worker) and
+      Registry.lookup(Module.concat(instance, Registry.Subscriptions), consumer) == [{worker, nil}]
   rescue
     ArgumentError -> false
   end

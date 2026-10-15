@@ -216,7 +216,7 @@ defmodule Jido.Messaging.RouteResultResourceTest do
     end
 
     for message <- context.messages, do: assert({:ok, message} == Instance.get_message(message.id))
-    assert :ets.info(Runtime.request_table(context.runtime), :size) == 1
+    assert Jido.Messaging.TestHelpers.runtime_entry_count(context.runtime) == 1
     assert Instance.count_agents() == 0
     assert {:ok, []} = Instance.list_memberships(context.room.id)
   end

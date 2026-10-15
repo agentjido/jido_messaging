@@ -222,6 +222,6 @@ defmodule Jido.Messaging.IngressSubscriptionStoreOutcomeTest do
   defp assert_foreign(context) do
     assert {:ok, [foreign]} = ETS.list_ingress_subscriptions(context.state, "foreign", [])
     assert foreign == context.foreign
-    assert :ets.info(Runtime.request_table(context.runtime), :size) == 0
+    assert Jido.Messaging.TestHelpers.runtime_entry_count(context.runtime) == 0
   end
 end

@@ -3,6 +3,14 @@ defmodule Jido.Messaging.TestHelpers do
   Shared test helpers for Jido.Messaging tests.
   """
 
+  @doc "Counts retained requests and resource rows, excluding the private store locator."
+  def runtime_entry_count(runtime) do
+    table = Jido.Messaging.Runtime.request_table(runtime)
+    [{Jido.Messaging.RequestStore, store}] = :ets.lookup(table, Jido.Messaging.RequestStore)
+    {:ok, stats} = Jido.Messaging.RequestStore.call(store, :stats)
+    stats.disk_entries + :ets.info(table, :size) - 1
+  end
+
   @doc """
   Asserts that a condition becomes true within a timeout.
 

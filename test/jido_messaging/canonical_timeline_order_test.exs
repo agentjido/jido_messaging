@@ -1,7 +1,7 @@
 defmodule Jido.Messaging.CanonicalTimelineOrderTest do
   use ExUnit.Case, async: false
 
-  alias Jido.Messaging.{Message, Persistence, Query, Runtime}
+  alias Jido.Messaging.{Message, Persistence, Query}
   alias Jido.Messaging.Test.PersistenceConformanceFactory, as: Factory
 
   defmodule ETSInstance do
@@ -77,7 +77,7 @@ defmodule Jido.Messaging.CanonicalTimelineOrderTest do
       assert timeline.messages == [root, second]
       assert timeline.threads == %{root.id => [reply], "missing-root" => [orphan]}
       assert {:error, :cursor_not_found} = instance.room_timeline("owned-room", before: "missing")
-      assert :ets.info(Runtime.request_table(runtime), :size) == 0
+      assert Jido.Messaging.TestHelpers.runtime_entry_count(runtime) == 0
       assert instance.count_agents() == 0
       assert {:ok, []} = instance.list_memberships("owned-room")
       assert {:ok, []} = instance.list_principal_grants("sender")

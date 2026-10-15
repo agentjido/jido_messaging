@@ -3,7 +3,7 @@ defmodule Jido.Messaging.CheckpointFacadeDefaultsTest do
 
   alias Jido.Chat.{AdapterTestKit.MockAdapter, Room}
   alias Jido.Messaging
-  alias Jido.Messaging.{Runtime, Thread}
+  alias Jido.Messaging.{Thread}
 
   defmodule Instance do
     use Messaging, persistence: Messaging.Persistence.ETS
@@ -43,7 +43,7 @@ defmodule Jido.Messaging.CheckpointFacadeDefaultsTest do
     assert {:ok, []} = Messaging.list_threads(runtime, "foreign")
     assert {:error, :agent_directory_scope_required} = Messaging.directory_lookup(runtime, :agent, %{})
     assert {:error, :agent_directory_scope_required} = Messaging.directory_search(runtime, :agent, %{})
-    assert :ets.info(Runtime.request_table(runtime), :size) == 0
+    assert Jido.Messaging.TestHelpers.runtime_entry_count(runtime) == 0
   end
 
   test "stored configuration input keeps declared fields and rejects private credential storage" do

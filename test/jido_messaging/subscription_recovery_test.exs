@@ -48,14 +48,8 @@ defmodule Jido.Messaging.SubscriptionRecoveryTest do
     table = Runtime.request_table(runtime)
     {:ok, claim} = RequestLedger.claim(table, :completed, :payload, :authority)
     :ok = RequestLedger.complete(table, claim, :exact_result)
-    dead = spawn(fn -> :ok end)
-    assert_eventually(fn -> not Process.alive?(dead) end)
-
-    :ets.insert(
-      table,
-      {:unknown, :crypto.hash(:sha256, :erlang.term_to_binary(:payload, [:deterministic])), :authority,
-       {:running, dead}}
-    )
+    task = Task.async(fn -> RequestLedger.claim(table, :unknown, :payload, :authority) end)
+    assert {:ok, _} = Task.await(task)
 
     {:ok, worker} = Subscription.ensure(Instance, consumer, "subscription.probe", [])
     assert_receive {:consumer, {:messaging_subscription_status, ^worker, true}}

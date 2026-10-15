@@ -160,6 +160,6 @@ defmodule Jido.Messaging.AssignmentInventoryOutcomeTest do
     {_store, state} = Runtime.get_persistence(Instance.__jido_messaging__(:runtime))
     assert :ets.info(state.principal_grants, :size) == 0
     assert :ets.info(state.messages, :size) == 0
-    assert :ets.info(Runtime.request_table(Instance.__jido_messaging__(:runtime)), :size) == 0
+    assert Jido.Messaging.TestHelpers.runtime_entry_count(Instance.__jido_messaging__(:runtime)) == 0
   end
 end

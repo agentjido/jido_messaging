@@ -192,7 +192,7 @@ defmodule Jido.Messaging.Demo.TopologyCallbackOutcomeTest do
     assert foreign == context.foreign
     assert {:ok, []} = ETS.list_room_bindings(context.state, context.foreign.id)
     assert {:error, :not_found} = Instance.get_routing_policy(context.room.id)
-    assert :ets.info(Runtime.request_table(context.runtime), :size) == 0
+    assert Jido.Messaging.TestHelpers.runtime_entry_count(context.runtime) == 0
     assert :ets.info(context.state.memberships, :size) == 0
     assert :ets.info(context.state.principal_grants, :size) == 0
     assert Instance.count_agents() == 0

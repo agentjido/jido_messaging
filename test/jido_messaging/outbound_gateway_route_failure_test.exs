@@ -168,7 +168,7 @@ defmodule Jido.Messaging.OutboundGatewayRouteFailureTest do
     assert MockTransport.calls(context.transport) == []
     runtime = Instance.__jido_messaging__(:runtime)
     assert Runtime.get_state(runtime).bindings == %{}
-    assert :ets.info(Runtime.request_table(runtime), :size) == 0
+    assert Jido.Messaging.TestHelpers.runtime_entry_count(runtime) == 0
   end
 
   defp await_partition_removed(attempts \\ 1_000)

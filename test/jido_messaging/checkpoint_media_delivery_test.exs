@@ -2,7 +2,7 @@ defmodule Jido.Messaging.CheckpointMediaDeliveryTest do
   use ExUnit.Case, async: false
 
   alias Jido.Chat.Content.{Audio, File, Video}
-  alias Jido.Messaging.{Deliver, MediaPolicy, OutboundGateway, Runtime}
+  alias Jido.Messaging.{Deliver, MediaPolicy, OutboundGateway}
 
   defmodule Instance do
     use Jido.Messaging, persistence: Jido.Messaging.Persistence.ETS, runtime_profile: :core
@@ -193,6 +193,6 @@ defmodule Jido.Messaging.CheckpointMediaDeliveryTest do
     assert {:ok, original} = Instance.get_message(context.message.id)
     assert original == context.message
     assert Enum.map(calls(), &elem(&1, 0)) == [:upload]
-    assert :ets.info(Runtime.request_table(Instance.__jido_messaging__(:runtime)), :size) == 0
+    assert Jido.Messaging.TestHelpers.runtime_entry_count(Instance.__jido_messaging__(:runtime)) == 0
   end
 end

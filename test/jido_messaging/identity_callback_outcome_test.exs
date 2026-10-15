@@ -244,7 +244,7 @@ defmodule Jido.Messaging.IdentityCallbackOutcomeTest do
     assert :ets.info(context.state.principal_grants, :size) == 0
     assert :ets.info(context.state.memberships, :size) == 0
     assert :ets.info(context.state.messages, :size) == 0
-    assert :ets.info(Runtime.request_table(context.runtime), :size) == 0
+    assert Jido.Messaging.TestHelpers.runtime_entry_count(context.runtime) == 0
     assert Instance.count_agents() == 0
   end
 end
