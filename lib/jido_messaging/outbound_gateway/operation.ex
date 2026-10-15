@@ -1,6 +1,12 @@
 defmodule Jido.Messaging.OutboundGateway.Operation do
   @moduledoc false
   require Logger
+
+  # Keep the three existing dynamic media-boundary annotations after extraction.
+  # Dialyzer infers no return through adapter capability checks at this boundary.
+  @dialyzer {:nowarn_function, prepare_adapter: 3}
+  @dialyzer {:nowarn_function, media_preflight: 1}
+  @dialyzer {:nowarn_function, media_text_fallback: 3}
   alias Jido.Messaging.{MediaPolicy, ProviderCall, Security}
   alias Jido.Messaging.AdapterBridge.Media
 

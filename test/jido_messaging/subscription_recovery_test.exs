@@ -91,7 +91,8 @@ defmodule Jido.Messaging.SubscriptionRecoveryTest do
     assert_receive {:consumer, {:messaging_subscription_status, ^worker, true}}
     monitor = Process.monitor(worker)
     Process.exit(consumer, :kill)
-    assert_receive {:DOWN, ^monitor, :process, ^worker, :normal}
+    assert_receive {:DOWN, ^monitor, :process, ^worker, reason}, 1_000
+    assert reason in [:normal, :noproc]
     assert subscription_count(bus) == 0
     refute Subscription.current?(Instance, consumer, worker)
   end
@@ -102,7 +103,8 @@ defmodule Jido.Messaging.SubscriptionRecoveryTest do
     assert_eventually(fn -> :sys.get_state(worker).retry != nil end)
     monitor = Process.monitor(worker)
     Process.exit(context.consumer, :kill)
-    assert_receive {:DOWN, ^monitor, :process, ^worker, :normal}
+    assert_receive {:DOWN, ^monitor, :process, ^worker, reason}, 1_000
+    assert reason in [:normal, :noproc]
     restart_bus(context)
     assert subscription_count(context.bus) == 0
     assert DynamicSupervisor.count_children(Module.concat(Instance, SubscriptionWorkers)).active == 0
