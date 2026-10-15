@@ -52,7 +52,7 @@ Jidoka integration; C5 does not split packages.
 | Agent subscription and handled-message window | AgentRunner / Bus | Runner subscribes at startup; window retains at most 1,000 IDs |
 | Room cache and timers | RoomServer | Room state is read from persistence; room restart restores supervisor-owned agent assignments |
 | Session route table and prune timer | SessionManager partition | Private ETS and timer end with partition |
-| Outbound queue, reply handles, success cache | OutboundGateway partition | Volatile; provider call and retry wait run in the same process |
+| Outbound queue, reply handles, success cache | OutboundGateway partition | Volatile; coordinator owns FIFO and timers; monitored workers invoke providers |
 | Dead-letter records and order | DeadLetter | Volatile; default limit is 5,000 records |
 | Replay work and registry | Replay workers and their registry under replay supervisor | Depends on replay registry and DeadLetter |
 | Inbound dedupe table and sweep timer | Deduper | Private ETS; default normal TTL is one hour, sweep is one minute |
@@ -107,6 +107,23 @@ worker loss, even if the coordinator stays alive. Late results cannot change an
 unknown outcome. A replaced store worker also makes an unfinished claim unknown.
 `ProviderCall` has the same private boundary and retains its result aliases and
 safe diagnostics. C11 does not change gateway scheduling.
+
+C12 keeps one active gateway operation per partition. The coordinator prepares
+Chat requests and completes results. A private Task supervisor owns invocation
+workers. Retry and pressure throttle waits use generation-tagged timer messages.
+Later jobs remain in FIFO order behind the active job. Worker loss marks the
+claim unknown and does not cause an automatic retry. Late worker results, DOWN
+messages, and timer messages cannot complete a different job.
+
+Runtime retains one private worker-supervisor locator per partition. A replacement
+coordinator stops and waits for the previous worker group before it starts work.
+Partition shutdown stops its workers. Caller timeout or death does not cancel
+accepted work. Result resources still belong to the coordinator, not its temporary
+worker. Media upload and delete use the same stable stage IDs and replacement
+metadata rules. Direct execution, tools, Streaming, and Sender keep their paths.
+
+C12 makes admission callbacks responsive during provider and retry waits. It does
+not yet bound dispatch messages that wait in the mailbox. C13 adds that bound.
 
 ## Request retention
 

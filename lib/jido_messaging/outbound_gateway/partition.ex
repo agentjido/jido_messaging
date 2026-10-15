@@ -2,17 +2,9 @@ defmodule Jido.Messaging.OutboundGateway.Partition do
   @moduledoc false
   use GenServer
 
-  require Logger
-
-  @dialyzer {:nowarn_function, do_attempt: 3}
-  @dialyzer {:nowarn_function, media_preflight: 1}
-  @dialyzer {:nowarn_function, media_text_fallback: 3}
-
-  alias Jido.Messaging.AdapterBridge
   alias Jido.Messaging.DeadLetter
-  alias Jido.Messaging.MediaPolicy
   alias Jido.Messaging.OutboundGateway
-  alias Jido.Messaging.Security
+  alias Jido.Messaging.OutboundGateway.{Operation, Workers}
 
   @default_call_timeout 15_000
 
@@ -68,7 +60,12 @@ defmodule Jido.Messaging.OutboundGateway.Partition do
 
   @impl true
   def init(opts) do
+    Process.flag(:trap_exit, true)
+    {:ok, workers} = Workers.start_link(Keyword.fetch!(opts, :instance_module), Keyword.fetch!(opts, :partition))
+
     state = %{
+      workers: workers,
+      active: nil,
       instance_module: Keyword.fetch!(opts, :instance_module),
       partition: Keyword.fetch!(opts, :partition),
       queue: :queue.new(),
@@ -99,8 +96,8 @@ defmodule Jido.Messaging.OutboundGateway.Partition do
           {:reply, {:error, maybe_attach_dead_letter_id(saturated_state, request, error)}, saturated_state}
         else
           case maybe_apply_pressure_policy(state, request) do
-            {:ok, next_state} ->
-              job = %{request: request, from: from}
+            {:ok, next_state, delay} ->
+              job = %{request: request, from: from, delay: delay}
               new_queue = :queue.in(job, next_state.queue)
               new_size = next_state.queue_size + 1
 
@@ -131,126 +128,164 @@ defmodule Jido.Messaging.OutboundGateway.Partition do
   end
 
   @impl true
-  def handle_info(:process_next, state) do
+  def handle_info(:process_next, %{active: nil} = state) do
     case :queue.out(state.queue) do
       {:empty, _} ->
-        next_state = %{state | processing: false} |> maybe_emit_pressure_transition(0)
-        {:noreply, next_state}
+        {:noreply, %{state | processing: false} |> maybe_emit_pressure_transition(0)}
 
-      {{:value, job}, remaining_queue} ->
-        new_size = max(state.queue_size - 1, 0)
-        state = %{state | queue: remaining_queue, queue_size: new_size} |> maybe_emit_pressure_transition(new_size + 1)
-        {reply, post_state} = process_job(job.request, state)
-        GenServer.reply(job.from, reply)
+      {{:value, job}, queue} ->
+        active =
+          Map.merge(job, %{attempt: 1, token: make_ref(), worker: nil, monitor: nil, completion: nil, timer: nil})
 
-        if post_state.queue_size > 0 do
-          send(self(), :process_next)
-          {:noreply, %{post_state | processing: true} |> maybe_emit_pressure_transition(post_state.queue_size + 1)}
-        else
-          {:noreply, %{post_state | processing: false} |> maybe_emit_pressure_transition(0)}
+        state = %{state | active: active, queue: queue, queue_size: state.queue_size - 1, processing: true}
+
+        case maybe_cached_success(job.request[:idempotency_key], state) do
+          {:ok, cached} ->
+            response = Map.put(cached, :idempotent, true)
+
+            emit_outbound_event(:skipped_duplicate, %{attempts: 0}, state, job.request, %{
+              message_id: response.message_id
+            })
+
+            {:noreply, finish_job(state, {:ok, response})}
+
+          :miss ->
+            {:noreply, if(job.delay > 0, do: wait(state, job.delay, :throttle), else: attempt(state))}
         end
     end
   end
 
-  defp process_job(request, state) do
-    idempotency_key = request[:idempotency_key]
+  def handle_info({:provider_result, tag, outcome}, %{active: %{worker_tag: tag, monitor: monitor} = active} = state)
+      when is_reference(monitor) do
+    Process.demonitor(active.monitor, [:flush])
+    state = %{state | active: active |> Map.put(:worker, nil) |> Map.put(:monitor, nil) |> Map.put(:worker_tag, nil)}
+    {:noreply, continue_operation(state, Operation.complete(active.completion, outcome))}
+  end
 
-    case maybe_cached_success(idempotency_key, state) do
-      {:ok, cached_response} ->
-        response = Map.put(cached_response, :idempotent, true)
-        emit_outbound_event(:skipped_duplicate, %{attempts: 0}, state, request, %{message_id: response.message_id})
-        {{:ok, response}, state}
+  def handle_info(
+        {:DOWN, monitor, :process, worker, _reason},
+        %{active: %{worker: worker, monitor: monitor} = active} = state
+      ) do
+    state = %{state | active: active |> Map.put(:worker, nil) |> Map.put(:monitor, nil) |> Map.put(:worker_tag, nil)}
+    {:noreply, continue_operation(state, Operation.unknown(active.completion))}
+  end
 
-      :miss ->
-        {result, state_after} = do_attempt(request, state, 1)
+  def handle_info({:continue_job, token}, %{active: %{timer: token} = active} = state),
+    do: {:noreply, attempt(%{state | active: %{active | timer: nil}})}
 
-        case {result, idempotency_key} do
-          {{:ok, response}, key} when is_binary(key) and key != "" ->
-            {{:ok, response}, cache_success(state_after, key, response)}
+  def handle_info({:EXIT, workers, reason}, %{workers: workers} = state),
+    do: {:stop, {:provider_workers_stopped, reason}, state}
 
-          _ ->
-            {result, state_after}
-        end
+  def handle_info(_message, state), do: {:noreply, state}
+
+  @impl true
+  def terminate(_reason, state), do: Workers.stop(state.workers)
+
+  defp attempt(state), do: continue_operation(state, Operation.prepare(state.instance_module, state.active.request))
+
+  defp continue_operation(state, {:invoke, invocation, completion}) do
+    owner = self()
+    tag = make_ref()
+
+    case Task.Supervisor.start_child(
+           state.workers,
+           fn ->
+             send(owner, {:provider_result, tag, Jido.Messaging.ProviderCall.invoke_operation(invocation)})
+           end,
+           shutdown: :brutal_kill
+         ) do
+      {:ok, worker} ->
+        monitor = Process.monitor(worker)
+
+        %{
+          state
+          | active:
+              Map.merge(state.active, %{worker: worker, monitor: monitor, worker_tag: tag, completion: completion})
+        }
+
+      {:error, _} ->
+        continue_operation(state, Operation.unknown(completion))
     end
   end
 
-  defp do_attempt(request, state, attempt) do
+  defp continue_operation(state, {:done, {:ok, provider, security}}),
+    do: succeeded(state, provider, security, %{})
+
+  defp continue_operation(state, {:done, {:ok, provider, security, metadata}}),
+    do: succeeded(state, provider, security, metadata)
+
+  defp continue_operation(state, {:done, {:error, reason}}), do: failed_attempt(state, reason)
+
+  defp succeeded(state, provider, security, metadata) do
+    %{request: request, attempt: attempt} = state.active
+    message_id = extract_message_id(provider)
+    response = build_success(state, request, attempt, message_id, provider, security, metadata)
+    emit_outbound_event(:completed, %{attempts: attempt}, state, request, %{message_id: message_id})
+
+    state =
+      case request[:idempotency_key] do
+        key when is_binary(key) and key != "" -> cache_success(state, key, response)
+        _ -> state
+      end
+
+    finish_job(state, {:ok, response})
+  end
+
+  defp failed_attempt(state, reason) do
+    %{request: request, attempt: attempt} = state.active
     max_attempts = sanitize_attempts(request[:max_attempts], state.max_attempts)
+    category = OutboundGateway.classify_error(reason)
 
-    case perform_operation(state.instance_module, request) do
-      {:ok, provider_result, security_result} ->
-        message_id = extract_message_id(provider_result)
-        success = build_success(state, request, attempt, message_id, provider_result, security_result, %{})
+    emit_classification_event(state, request, %{
+      category: category,
+      reason: reason,
+      attempt: attempt,
+      max_attempts: max_attempts
+    })
 
-        emit_outbound_event(:completed, %{attempts: attempt}, state, request, %{message_id: message_id})
-        {{:ok, success}, state}
+    if category == :retryable and attempt < max_attempts do
+      backoff = calculate_backoff(request, state, attempt)
+      emit_outbound_event(:retry_scheduled, %{attempt: attempt, next_in_ms: backoff}, state, request, %{reason: reason})
+      wait(%{state | active: %{state.active | attempt: attempt + 1}}, backoff, :retry)
+    else
+      error = %{
+        type: :outbound_error,
+        category: category,
+        disposition: :terminal,
+        operation: request.operation,
+        reason: reason,
+        attempt: attempt,
+        max_attempts: max_attempts,
+        partition: state.partition,
+        routing_key: request.routing_key,
+        retryable: category == :retryable
+      }
 
-      {:ok, provider_result, security_result, operation_metadata} ->
-        message_id = extract_message_id(provider_result)
+      emit_outbound_event(:failed, %{attempts: attempt}, state, request, %{
+        reason: reason,
+        category: category,
+        disposition: :terminal
+      })
 
-        success =
-          build_success(
-            state,
-            request,
-            attempt,
-            message_id,
-            provider_result,
-            security_result,
-            operation_metadata
-          )
+      finish_job(state, {:error, maybe_attach_dead_letter_id(state, request, error)})
+    end
+  end
 
-        emit_outbound_event(:completed, %{attempts: attempt}, state, request, %{message_id: message_id})
-        {{:ok, success}, state}
+  defp wait(state, delay, _phase) do
+    token = make_ref()
+    Process.send_after(self(), {:continue_job, token}, delay)
+    %{state | active: %{state.active | timer: token}}
+  end
 
-      {:error, reason} ->
-        category = OutboundGateway.classify_error(reason)
+  defp finish_job(state, reply) do
+    GenServer.reply(state.active.from, reply)
+    state = %{state | active: nil}
 
-        emit_classification_event(state, request, %{
-          category: category,
-          reason: reason,
-          attempt: attempt,
-          max_attempts: max_attempts
-        })
-
-        if category == :retryable and attempt < max_attempts do
-          backoff_ms = calculate_backoff(request, state, attempt)
-
-          emit_outbound_event(
-            :retry_scheduled,
-            %{attempt: attempt, next_in_ms: backoff_ms},
-            state,
-            request,
-            %{reason: reason}
-          )
-
-          Process.sleep(backoff_ms)
-          do_attempt(request, state, attempt + 1)
-        else
-          disposition = if category == :retryable, do: :terminal, else: :terminal
-
-          error = %{
-            type: :outbound_error,
-            category: category,
-            disposition: disposition,
-            operation: request.operation,
-            reason: reason,
-            attempt: attempt,
-            max_attempts: max_attempts,
-            partition: state.partition,
-            routing_key: request.routing_key,
-            retryable: category == :retryable
-          }
-
-          emit_outbound_event(
-            :failed,
-            %{attempts: attempt},
-            state,
-            request,
-            %{reason: reason, category: category, disposition: disposition}
-          )
-
-          {{:error, maybe_attach_dead_letter_id(state, request, error)}, state}
-        end
+    if state.queue_size > 0 do
+      send(self(), :process_next)
+      %{state | processing: true} |> maybe_emit_pressure_transition(state.queue_size)
+    else
+      %{state | processing: false} |> maybe_emit_pressure_transition(0)
     end
   end
 
@@ -276,217 +311,6 @@ defmodule Jido.Messaging.OutboundGateway.Partition do
       security: %{sanitize: security_result}
     }
     |> maybe_put(:media, operation_metadata[:media])
-  end
-
-  defp perform_operation(instance_module, request) do
-    with {:ok, adapter_opts} <- adapter_opts(instance_module, request) do
-      perform_operation_with_opts(instance_module, request, adapter_opts)
-    end
-  end
-
-  defp perform_operation_with_opts(instance_module, %{operation: :send} = request, adapter_opts) do
-    with {:ok, sanitized_payload, security_result} <-
-           Security.sanitize_outbound(instance_module, request.channel, request.payload, adapter_opts),
-         {:ok, provider_result} <-
-           invoke_channel(fn ->
-             AdapterBridge.send_message(
-               request.channel,
-               request.external_room_id,
-               sanitized_payload,
-               adapter_opts
-             )
-           end) do
-      {:ok, provider_result, security_result}
-    end
-  end
-
-  defp perform_operation_with_opts(instance_module, %{operation: :edit} = request, adapter_opts) do
-    with {:ok, sanitized_payload, security_result} <-
-           Security.sanitize_outbound(instance_module, request.channel, request.payload, adapter_opts),
-         {:ok, provider_result} <-
-           invoke_channel(fn ->
-             AdapterBridge.edit_message(
-               request.channel,
-               request.external_room_id,
-               request.external_message_id,
-               sanitized_payload,
-               adapter_opts
-             )
-           end) do
-      {:ok, provider_result, security_result}
-    end
-  end
-
-  defp perform_operation_with_opts(instance_module, %{operation: :send_media} = request, adapter_opts) do
-    case media_preflight(request) do
-      {:ok_media, payload, media_metadata} ->
-        with {:ok, sanitized_payload, security_result} <-
-               Security.sanitize_outbound(instance_module, request.channel, payload, adapter_opts),
-             {:ok, provider_result} <-
-               invoke_channel(fn ->
-                 AdapterBridge.send_media(
-                   request.channel,
-                   request.external_room_id,
-                   sanitized_payload,
-                   adapter_opts
-                 )
-               end) do
-          {:ok, provider_result, security_result, %{media: media_metadata}}
-        end
-
-      {:fallback_text, fallback_text, media_metadata} ->
-        with {:ok, sanitized_payload, security_result} <-
-               Security.sanitize_outbound(instance_module, request.channel, fallback_text, adapter_opts),
-             {:ok, provider_result} <-
-               invoke_channel(fn ->
-                 AdapterBridge.send_message(
-                   request.channel,
-                   request.external_room_id,
-                   sanitized_payload,
-                   adapter_opts
-                 )
-               end) do
-          {:ok, provider_result, security_result, %{media: media_metadata}}
-        end
-
-      {:error, reason} ->
-        {:error, reason}
-    end
-  end
-
-  defp perform_operation_with_opts(instance_module, %{operation: :edit_media} = request, adapter_opts) do
-    case media_preflight(request) do
-      {:ok_media, payload, media_metadata} ->
-        with {:ok, sanitized_payload, security_result} <-
-               Security.sanitize_outbound(instance_module, request.channel, payload, adapter_opts),
-             {:ok, provider_result} <-
-               invoke_channel(fn ->
-                 AdapterBridge.edit_media(
-                   request.channel,
-                   request.external_room_id,
-                   request.external_message_id,
-                   sanitized_payload,
-                   adapter_opts
-                 )
-               end) do
-          {:ok, provider_result, security_result, %{media: media_metadata}}
-        end
-
-      {:fallback_text, fallback_text, media_metadata} ->
-        with {:ok, sanitized_payload, security_result} <-
-               Security.sanitize_outbound(instance_module, request.channel, fallback_text, adapter_opts),
-             {:ok, provider_result} <-
-               invoke_channel(fn ->
-                 AdapterBridge.edit_message(
-                   request.channel,
-                   request.external_room_id,
-                   request.external_message_id,
-                   sanitized_payload,
-                   adapter_opts
-                 )
-               end) do
-          {:ok, provider_result, security_result, %{media: media_metadata}}
-        end
-
-      {:error, reason} ->
-        {:error, reason}
-    end
-  end
-
-  defp perform_operation_with_opts(_instance_module, %{operation: operation}, _adapter_opts) do
-    {:error, {:unsupported_operation, operation}}
-  end
-
-  defp adapter_opts(instance_module, request) do
-    runtime = instance_module.__jido_messaging__(:runtime)
-
-    with {:ok, binding} <-
-           Jido.Messaging.Runtime.ensure_binding(runtime, request.channel, request.bridge_id, request.opts) do
-      {:ok,
-       request.opts
-       |> Keyword.merge(binding.options)
-       |> Keyword.put(:binding, binding)
-       |> Keyword.put(:instance_module, instance_module)
-       |> Keyword.put(:bridge_id, request.bridge_id)}
-    end
-  end
-
-  defp media_preflight(request) do
-    media_opts = media_policy_opts(request.opts)
-
-    case MediaPolicy.prepare_outbound(request.payload, request.channel, request.operation, media_opts) do
-      {:ok, payload, metadata} ->
-        {:ok_media, payload, Map.put(metadata, :operation, request.operation)}
-
-      {:fallback_text, fallback_text, metadata} ->
-        Logger.warning(
-          "[Jido.Messaging.OutboundGateway] Media fallback applied for #{inspect(request.channel)}: #{inspect(metadata.rejected)}"
-        )
-
-        case media_text_fallback(request, fallback_text, metadata) do
-          {:ok, text_payload, fallback_metadata} ->
-            {:fallback_text, text_payload, fallback_metadata}
-
-          {:error, reason} ->
-            {:error, reason}
-        end
-
-      {:error, reason, metadata} ->
-        Logger.warning(
-          "[Jido.Messaging.OutboundGateway] Media dispatch rejected for #{inspect(request.channel)}: #{inspect(reason)} metadata=#{inspect(metadata)}"
-        )
-
-        {:error, reason}
-    end
-  end
-
-  defp media_text_fallback(request, fallback_text, metadata) do
-    case request do
-      %{operation: :send_media} ->
-        {:ok, fallback_text,
-         Map.merge(metadata, %{
-           fallback: true,
-           fallback_mode: :text_send,
-           fallback_operation: :send
-         })}
-
-      %{operation: :edit_media, external_message_id: nil} ->
-        {:error, :missing_external_message_id}
-
-      %{operation: :edit_media} ->
-        {:ok, fallback_text,
-         Map.merge(metadata, %{
-           fallback: true,
-           fallback_mode: :text_edit,
-           fallback_operation: :edit
-         })}
-    end
-  end
-
-  defp media_policy_opts(opts) when is_list(opts) do
-    case Keyword.get(opts, :media_policy, []) do
-      value when is_list(value) -> value
-      value when is_map(value) -> Map.to_list(value)
-      _ -> []
-    end
-  end
-
-  defp invoke_channel(fun) when is_function(fun, 0) do
-    try do
-      case fun.() do
-        {:ok, result} when is_map(result) ->
-          {:ok, result}
-
-        {:error, reason} ->
-          {:error, reason}
-      end
-    rescue
-      exception ->
-        {:error, {:exception, exception}}
-    catch
-      kind, reason ->
-        {:error, {kind, reason}}
-    end
   end
 
   defp maybe_cached_success(key, state) when is_binary(key) and key != "" do
@@ -537,15 +361,14 @@ defmodule Jido.Messaging.OutboundGateway.Partition do
     case pressure_action(projected_level, priority, projected_state.pressure_policy) do
       {:throttle, throttle_ms} ->
         emit_pressure_action(projected_state, request, projected_level, :throttle, throttle_ms, ratio)
-        Process.sleep(throttle_ms)
-        {:ok, projected_state}
+        {:ok, projected_state, throttle_ms}
 
       :shed_drop ->
         emit_pressure_action(projected_state, request, projected_level, :shed_drop, 0, ratio)
         {:error, load_shed_error(request, projected_state), projected_state}
 
       :allow ->
-        {:ok, projected_state}
+        {:ok, projected_state, 0}
     end
   end
 
@@ -796,7 +619,7 @@ defmodule Jido.Messaging.OutboundGateway.Partition do
   defp sanitize_attempts(_value, default), do: default
 
   defp current_load(state) do
-    state.queue_size + if(state.processing, do: 1, else: 0)
+    state.queue_size + if(is_nil(state.active), do: 0, else: 1)
   end
 
   defp mailbox_backlog do

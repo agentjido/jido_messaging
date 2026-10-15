@@ -241,8 +241,7 @@ defmodule Jido.Messaging.OutboundGatewayTest do
   end
 
   test "enforces queue bounds and emits pressure transitions" do
-    start_messaging(partition_count: 1, queue_capacity: 1, max_attempts: 1)
-
+    start_messaging(partition_count: 1, queue_capacity: 2, max_attempts: 1)
     test_pid = self()
     handler_id = "outbound-pressure-#{System.unique_integer([:positive])}"
 
@@ -264,62 +263,28 @@ defmodule Jido.Messaging.OutboundGatewayTest do
       [:jido_messaging, :outbound, :enqueued],
       fn _event, _measurements, _metadata, _ ->
         send(test_pid, {:outbound_enqueued, self()})
-
-        receive do
-          :release_enqueue -> :ok
-        after
-          5_000 -> raise "test enqueue barrier was not released"
-        end
       end,
       nil
     )
 
     on_exit(fn -> :telemetry.detach(enqueue_handler_id) end)
 
-    context = %{
-      channel: SlowChannel,
-      bridge_id: "pressure_inst",
-      external_room_id: "pressure_room"
-    }
-
+    context = %{channel: SlowChannel, bridge_id: "pressure_inst", external_room_id: "pressure_room"}
     task_one = Task.async(fn -> OutboundGateway.send_message(TestMessaging, context, "first") end)
     assert_receive {:outbound_enqueued, partition}, 1_000
-    send(partition, :release_enqueue)
-    assert_receive {:outbound_started, ^partition}, 1_000
-
-    task_two = Task.async(fn -> OutboundGateway.send_message(TestMessaging, context, "second") end)
-    await_dispatch_queued(partition)
-    assert Task.yield(task_two, 0) == nil
-    send(partition, :release_provider)
+    assert_receive {:outbound_started, worker}, 1_000
+    assert worker != partition
+    task_two = Task.async(fn -> OutboundGateway.send_message(TestMessaging, context, "second", priority: :high) end)
     assert_receive {:outbound_enqueued, ^partition}, 1_000
-
-    task_three = Task.async(fn -> OutboundGateway.send_message(TestMessaging, context, "third") end)
-    await_dispatch_queued(partition)
-    send(partition, :release_enqueue)
-
-    assert {:error, queue_full_error} = Task.await(task_three, 1_000)
-    assert queue_full_error.reason == :queue_full
-    assert queue_full_error.category == :terminal
-
-    assert_receive {:pressure_transition, :shed, 0}, 200
-
-    assert {:ok, _result} = Task.await(task_one, 500)
-    assert {:ok, _result} = Task.await(task_two, 500)
-  end
-
-  defp await_dispatch_queued(partition, attempts \\ 1_000)
-
-  defp await_dispatch_queued(_partition, 0), do: flunk("dispatch did not reach the partition")
-
-  defp await_dispatch_queued(partition, attempts) do
-    {:messages, messages} = Process.info(partition, :messages)
-
-    if Enum.any?(messages, &match?({:"$gen_call", _, {:dispatch, _}}, &1)) do
-      :ok
-    else
-      Process.sleep(1)
-      await_dispatch_queued(partition, attempts - 1)
-    end
+    assert :sys.get_state(partition).queue_size == 1
+    assert Task.yield(task_two, 0) == nil
+    assert {:error, error} = OutboundGateway.send_message(TestMessaging, context, "third")
+    assert error.reason == :queue_full
+    assert error.category == :terminal
+    assert_receive {:pressure_transition, :shed, 0}, 1_000
+    send(worker, :release_provider)
+    assert {:ok, _} = Task.await(task_one, 1_000)
+    assert {:ok, _} = Task.await(task_two, 1_000)
   end
 
   test "normalizes retryable failures and emits classification telemetry" do

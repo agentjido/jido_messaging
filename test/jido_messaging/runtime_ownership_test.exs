@@ -150,9 +150,12 @@ defmodule Jido.Messaging.RuntimeOwnershipTest do
         end
       end)
 
-    assert_receive {:effect_before_reply, partition}, 1_000
+    assert_receive {:effect_before_reply, worker}, 1_000
+    partition = Partition.whereis(Instance, 0)
+    monitor = Process.monitor(worker)
     Process.exit(partition, :kill)
     assert {:caller_exit, _} = Task.await(task, 1_000)
+    assert_receive {:DOWN, ^monitor, :process, ^worker, _}, 1_000
 
     eventually(fn ->
       replacement = Partition.whereis(Instance, 0)

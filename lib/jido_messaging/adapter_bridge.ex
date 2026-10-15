@@ -7,7 +7,8 @@ defmodule Jido.Messaging.AdapterBridge do
   and compatibility failure normalization.
   """
 
-  alias Jido.Chat.{Binding, Capabilities, FileUpload, PostPayload}
+  alias Jido.Chat.{Binding, Capabilities}
+  alias Jido.Messaging.AdapterBridge.Media
   alias Jido.Messaging.ProviderCall
 
   @type failure_class :: :recoverable | :degraded | :fatal
@@ -88,8 +89,8 @@ defmodule Jido.Messaging.AdapterBridge do
   @spec send_media(module(), term(), map(), keyword()) :: {:ok, map()} | {:error, term()}
   def send_media(adapter, room, payload, opts \\ []) do
     with {:ok, binding} <- configured_binding(adapter, opts),
-         file <- media_payload_to_post_payload(payload) |> PostPayload.upload_candidates() |> List.first(),
-         {:ok, ref} <- media_resource(binding, file, opts[:request_id]) do
+         file <- Media.payload(payload) |> Jido.Chat.PostPayload.upload_candidates() |> List.first(),
+         {:ok, ref} <- Media.resource(binding, file, opts[:request_id]) do
       operation(
         adapter,
         :send_file,
@@ -102,50 +103,16 @@ defmodule Jido.Messaging.AdapterBridge do
   @doc false
   @spec edit_media(module(), term(), term(), map(), keyword()) :: {:ok, map()} | {:error, term()}
   def edit_media(adapter, room, message, payload, opts \\ []) do
-    with {:ok, replacement} <- send_media(adapter, room, payload, stage_options(opts, :upload)) do
+    with {:ok, replacement} <- send_media(adapter, room, payload, Media.stage_options(opts, :upload)) do
       deleted =
         operation(
           adapter,
           :delete_message,
           %{"room_id" => to_string(room), "message_id" => to_string(message)},
-          stage_options(opts, :delete)
+          Media.stage_options(opts, :delete)
         )
 
-      {:ok, attach_replacement_metadata(replacement, message, deleted)}
-    end
-  end
-
-  defp stage_options(opts, stage) do
-    case opts[:request_id] do
-      id when is_binary(id) ->
-        stage_id = :crypto.hash(:sha256, :erlang.term_to_binary({:media_replacement, id, stage}))
-        Keyword.put(opts, :request_id, "media:" <> Base.url_encode64(stage_id, padding: false))
-
-      _ ->
-        opts
-    end
-  end
-
-  defp media_resource(binding, file, nil), do: Jido.Chat.put_resource(binding, "file", file)
-
-  defp media_resource(binding, file, request_id) do
-    key = {:messaging_media_resource, request_id}
-    digest = :crypto.hash(:sha256, :erlang.term_to_binary(file, [:deterministic]))
-
-    case Jido.Chat.RequestStore.claim(binding, key, digest) do
-      {:ok, {:cached, result}} ->
-        result
-
-      {:ok, {:claimed, claim}} ->
-        result = Jido.Chat.put_resource(binding, "file", file)
-
-        case Jido.Chat.RequestStore.complete(binding, claim, result) do
-          :ok -> result
-          error -> error
-        end
-
-      error ->
-        error
+      {:ok, Media.replacement(replacement, message, deleted)}
     end
   end
 
@@ -364,84 +331,4 @@ defmodule Jido.Messaging.AdapterBridge do
       reason: reason
     }
   end
-
-  defp media_payload_to_post_payload(payload) when is_map(payload) do
-    metadata = media_payload_metadata(payload)
-
-    file =
-      FileUpload.new(%{
-        kind: media_kind(payload[:kind] || payload["kind"]),
-        url: payload[:url] || payload["url"],
-        path: payload[:path] || payload["path"],
-        data: payload[:data] || payload["data"],
-        media_type: payload[:media_type] || payload["media_type"],
-        filename: payload[:filename] || payload["filename"],
-        size_bytes: payload[:size_bytes] || payload["size_bytes"],
-        width: payload[:width] || payload["width"],
-        height: payload[:height] || payload["height"],
-        duration: payload[:duration] || payload["duration"],
-        metadata: metadata
-      })
-
-    attrs =
-      %{
-        files: [file],
-        metadata: metadata
-      }
-      |> maybe_put_post_text(media_payload_caption(payload))
-
-    PostPayload.new(attrs)
-  end
-
-  defp media_kind(kind) when is_binary(kind),
-    do: Enum.find([:image, :audio, :video, :file], kind, &(Atom.to_string(&1) == kind))
-
-  defp media_kind(kind), do: kind
-
-  defp media_payload_metadata(payload) when is_map(payload) do
-    (payload[:metadata] || payload["metadata"] || %{})
-    |> maybe_put_map_value(:thumbnail_url, payload[:thumbnail_url] || payload["thumbnail_url"])
-    |> maybe_put_map_value(:alt_text, payload[:alt_text] || payload["alt_text"])
-    |> maybe_put_map_value(:transcript, payload[:transcript] || payload["transcript"])
-  end
-
-  defp media_payload_caption(payload) when is_map(payload) do
-    payload[:alt_text] || payload["alt_text"] || payload[:transcript] || payload["transcript"]
-  end
-
-  defp maybe_put_post_text(attrs, nil), do: attrs
-  defp maybe_put_post_text(attrs, ""), do: attrs
-
-  defp maybe_put_post_text(attrs, text) when is_binary(text) do
-    Map.merge(attrs, %{text: text, formatted: text, fallback_text: text})
-  end
-
-  defp attach_replacement_metadata(result, replaced_message_id, delete_result) when is_map(result) do
-    metadata =
-      result
-      |> Map.get(:metadata, %{})
-      |> Map.put(:replacement, replacement_metadata(replaced_message_id, delete_result))
-
-    result
-    |> Map.put(:metadata, metadata)
-    |> Map.put(:status, :edited)
-  end
-
-  defp replacement_metadata(replaced_message_id, {:ok, _ack}) do
-    %{
-      replaced_message_id: replaced_message_id,
-      delete_status: :deleted
-    }
-  end
-
-  defp replacement_metadata(replaced_message_id, {:error, reason}) do
-    %{
-      replaced_message_id: replaced_message_id,
-      delete_status: :delete_failed,
-      delete_reason: reason
-    }
-  end
-
-  defp maybe_put_map_value(map, _key, nil), do: map
-  defp maybe_put_map_value(map, key, value), do: Map.put(map, key, value)
 end

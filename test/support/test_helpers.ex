@@ -9,7 +9,8 @@ defmodule Jido.Messaging.TestHelpers do
     [{Jido.Messaging.RequestStore, store}] = :ets.lookup(table, Jido.Messaging.RequestStore)
     {:ok, stats} = Jido.Messaging.RequestStore.call(store, :stats)
     db = :sys.get_state(stats.worker).db
-    outer_request_count(db, 0, 0) + :ets.info(table, :size) - 1
+    resources = Enum.count(:ets.tab2list(table), &match?({{:resource, _}, _, _, _, _, _}, &1))
+    outer_request_count(db, 0, 0) + resources
   end
 
   # Test inspection only. Read bounded batches; production does not scan IDs.
