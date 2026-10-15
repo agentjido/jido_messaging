@@ -172,6 +172,28 @@ defmodule Jido.Messaging.BridgeRegistryIsolationTest do
     assert_owners(context)
   end
 
+  test "pending configuration reconciliation stops with its ConfigStore owner", context do
+    resource = {BridgeSupervisor, Instance}
+    lock = {resource, self()}
+    assert :global.set_lock(lock)
+    config_store = Process.whereis(Module.concat(Instance, :ConfigStore))
+    {:links, original_links} = Process.info(config_store, :links)
+
+    try do
+      configured_bridge("pending")
+      {:links, links} = Process.info(config_store, :links)
+      [task] = links -- original_links
+      ref = Process.monitor(task)
+      :ok = Supervisor.terminate_child(context.root, Jido.Messaging.ConfigStore)
+      assert_receive {:DOWN, ^ref, :process, ^task, :shutdown}, 1_000
+      assert {:ok, _} = Supervisor.restart_child(context.root, Jido.Messaging.ConfigStore)
+    after
+      :global.del_lock(lock)
+    end
+
+    assert_owners(context)
+  end
+
   defp configured_bridge(id) do
     {:ok, config} = Instance.put_bridge_config(%{id: id, adapter_module: Adapter, enabled: true})
     config

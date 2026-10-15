@@ -551,13 +551,13 @@ defmodule Jido.Messaging.ConfigStore do
 
   defp trigger_reconcile(instance_module) do
     _ =
-      Task.start(fn ->
+      Task.start_link(fn ->
         try do
           reconcile_bridges(instance_module)
         catch
-          :exit, {:noproc, _call} -> :ok
-          :exit, {:normal, _call} -> :ok
-          :exit, {:shutdown, _call} -> :ok
+          # Reconciliation is best effort. Its failure must not stop ConfigStore,
+          # and its lifetime must not cross into a replacement instance.
+          _kind, _reason -> :ok
         end
       end)
 
