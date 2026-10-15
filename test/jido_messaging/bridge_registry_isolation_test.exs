@@ -68,7 +68,7 @@ defmodule Jido.Messaging.BridgeRegistryIsolationTest do
       assert status.listener_count == 1
     end
 
-    for pid <- listeners, do: refute(Process.alive?(pid))
+    assert_eventually(fn -> Enum.all?(listeners, &(not Process.alive?(&1))) end, timeout: 1_000)
     refute BridgeServer.whereis(Instance, "disabled")
     assert RequestLedger.claim(table, :retained, :payload, :authority) == {:cached, {:original, 42}}
     assert unrelated_pids() == unrelated
