@@ -127,6 +127,38 @@ defmodule Jido.Messaging.RequestStore do
     end
   end
 
+  defp request({:outcome, {key, digest, authority}}, {owner, _tag}, state) do
+    case read(state, encode(key)) do
+      {:ok, {^key, ^digest, ^authority, {:running, ^owner}}} -> {:reply, :ok, state}
+      {:ok, {^key, ^digest, ^authority, {:done, result}}} -> {:reply, {:cached, result}, state}
+      {:ok, _} -> {:reply, Policy.error(:request_outcome_unknown), state}
+      _ -> unavailable(state)
+    end
+  end
+
+  defp request({:unknown, {key, digest, authority}}, {owner, _tag}, state) do
+    encoded_key = encode(key)
+
+    case read(state, encoded_key) do
+      {:ok, {^key, ^digest, ^authority, {:running, ^owner}}} ->
+        entry = {key, digest, authority, :unknown}
+
+        case store_call(state, {:write, encoded_key, encode(entry), 2}) do
+          {:ok, []} -> {:reply, :ok, drop_cache(state, encoded_key)}
+          _ -> unavailable(state)
+        end
+
+      {:ok, {^key, ^digest, ^authority, {:done, _}}} ->
+        {:reply, :ok, state}
+
+      {:ok, _} ->
+        {:reply, Policy.error(:request_outcome_unknown), state}
+
+      _ ->
+        unavailable(state)
+    end
+  end
+
   defp request({:remember, key, value}, _from, state) do
     encoded_key = encode(key)
     entry = {key, :metadata, :metadata, {:done, value}}

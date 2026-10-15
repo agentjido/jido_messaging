@@ -40,61 +40,102 @@ defmodule Jido.Messaging.ProviderCall do
   @doc false
   @spec operation(module(), atom(), map(), keyword()) :: {:ok, map()} | {:error, term()}
   def operation(adapter, operation, data, opts) do
-    with {:ok, binding} <- configured_binding(adapter, opts) do
-      {_type, {definition, ^operation, _fields, _shape, _schema}} =
-        Enum.find(Jido.Chat.Operations.Definitions.all(), fn {_type, {_module, name, _fields, _shape, _schema}} ->
-          name == operation
-        end)
+    case prepare_operation(adapter, operation, data, opts) do
+      {:done, result} -> result
+      {:invoke, invocation, completion} -> complete_operation(completion, invoke_operation(invocation))
+    end
+  end
 
-      id = opts[:request_id] || Jido.Chat.ID.generate!()
+  @doc false
+  def prepare_operation(adapter, operation, data, opts) do
+    with {:ok, binding} <- configured_binding(adapter, opts),
+         {:ok, request} <- operation_request(operation, data, opts) do
+      completion = %{binding: binding, request: request, operation: operation, started: System.monotonic_time()}
 
-      data =
-        Enum.reduce([:thread_id, :reply_to_id, :format, :cursor, :limit, :direction, :topic_name], data, fn option,
-                                                                                                            data ->
-          key = Atom.to_string(option)
-
-          value =
-            if option == :thread_id,
-              do: opts[:external_thread_id] || opts[:thread_id],
-              else: opts[option]
-
-          value =
-            if is_atom(value) and not is_nil(value) and key in ["direction", "format"],
-              do: Atom.to_string(value),
-              else: value
-
-          allowed =
-            cond do
-              key == "topic_name" ->
-                operation == :open_thread
-
-              key == "direction" ->
-                operation in [:fetch_messages, :fetch_channel_messages, :list_threads]
-
-              key in ["cursor", "limit"] ->
-                operation in [:fetch_messages, :fetch_channel_messages, :list_threads, :load_options]
-
-              true ->
-                true
-            end
-
-          if is_nil(value) or not allowed, do: data, else: Map.put_new(data, key, value)
-        end)
-
-      data = Map.put(data, "request_id", id)
-      {:ok, request} = definition.new(data)
-      {:ok, request} = Jido.Messaging.Signal.Context.attach(request, parent_signal: opts[:parent_signal])
-
-      case execute(binding, request) do
-        {:ok, %{type: "jido.chat.operation.completed"} = result} ->
-          {:ok, private_result(result.data["result"], operation)}
-
-        {:ok, %{type: "jido.chat.operation.failed"} = result} ->
-          {:error, failure_reason(binding, result)}
-
-        error ->
-          error
+      case Jido.Chat.Operations.Executor.prepare(binding, request) do
+        {:ok, {:cached, result}} -> {:done, finish(completion, result)}
+        {:ok, {:prepared, claim, invocation}} -> {:invoke, invocation, Map.put(completion, :claim, claim)}
+        error -> {:done, finish(completion, error)}
       end
+    else
+      error -> {:done, error}
+    end
+  end
+
+  @doc false
+  def invoke_operation(invocation), do: Jido.Chat.Operations.Executor.invoke(invocation)
+
+  @doc false
+  def complete_operation(completion, outcome),
+    do: finish(completion, Jido.Chat.Operations.Executor.complete(completion.claim, outcome))
+
+  @doc false
+  def unknown_operation(completion),
+    do: finish(completion, Jido.Chat.Operations.Executor.unknown(completion.claim))
+
+  defp operation_request(operation, data, opts) do
+    {_type, {definition, ^operation, _fields, _shape, _schema}} =
+      Enum.find(Jido.Chat.Operations.Definitions.all(), fn {_type, {_module, name, _fields, _shape, _schema}} ->
+        name == operation
+      end)
+
+    id = opts[:request_id] || Jido.Chat.ID.generate!()
+
+    data =
+      Enum.reduce([:thread_id, :reply_to_id, :format, :cursor, :limit, :direction, :topic_name], data, fn option,
+                                                                                                          data ->
+        key = Atom.to_string(option)
+
+        value =
+          if option == :thread_id,
+            do: opts[:external_thread_id] || opts[:thread_id],
+            else: opts[option]
+
+        value =
+          if is_atom(value) and not is_nil(value) and key in ["direction", "format"],
+            do: Atom.to_string(value),
+            else: value
+
+        allowed =
+          cond do
+            key == "topic_name" ->
+              operation == :open_thread
+
+            key == "direction" ->
+              operation in [:fetch_messages, :fetch_channel_messages, :list_threads]
+
+            key in ["cursor", "limit"] ->
+              operation in [:fetch_messages, :fetch_channel_messages, :list_threads, :load_options]
+
+            true ->
+              true
+          end
+
+        if is_nil(value) or not allowed, do: data, else: Map.put_new(data, key, value)
+      end)
+
+    data = Map.put(data, "request_id", id)
+    {:ok, request} = definition.new(data)
+    Jido.Messaging.Signal.Context.attach(request, parent_signal: opts[:parent_signal])
+  end
+
+  defp finish(completion, result) do
+    Diagnostics.provider_result(
+      completion.binding,
+      completion.request,
+      result,
+      System.monotonic_time() - completion.started
+    )
+
+    case result do
+      {:ok, %{type: "jido.chat.operation.completed"} = result} ->
+        {:ok, private_result(result.data["result"], completion.operation)}
+
+      {:ok, %{type: "jido.chat.operation.failed"} = result} ->
+        {:error, failure_reason(completion.binding, result)}
+
+      error ->
+        error
     end
   end
 

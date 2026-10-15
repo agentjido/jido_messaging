@@ -28,6 +28,7 @@ defmodule Jido.Messaging.ChatRequestRetentionTest do
       case text do
         "degraded" -> {:error, {:unsupported_method, :old}}
         "tagged" -> {:error, :queue_full}
+        "large" -> {:ok, %{id: "large", room_id: room, text: String.duplicate("large", 60_000)}}
         "held" -> receive do: (:release -> {:ok, %{id: "held", room_id: room, text: text}})
         _ -> {:ok, %{id: text, room_id: room, text: text}}
       end
@@ -222,6 +223,78 @@ defmodule Jido.Messaging.ChatRequestRetentionTest do
 
     assert {:error, %Contract{code: :request_conflict}} =
              Jido.Messaging.AdapterBridge.send_media(MockAdapter, "room", %{payload | data: "changed"}, opts)
+  end
+
+  test "private provider boundary marks worker death unknown without stopping its owner", context do
+    data = %{"room_id" => "room", "text" => "held"}
+
+    assert {:invoke, invocation, completion} =
+             ProviderCall.prepare_operation(Adapter, :send_message, data,
+               binding: context.binding,
+               request_id: "worker-death"
+             )
+
+    {worker, monitor} = spawn_monitor(fn -> ProviderCall.invoke_operation(invocation) end)
+    assert_receive {:provider, ^worker, "held", _}, 1_000
+    Process.exit(worker, :kill)
+    assert_receive {:DOWN, ^monitor, :process, ^worker, :killed}, 1_000
+    assert {:error, %Contract{code: :request_outcome_unknown}} = ProviderCall.unknown_operation(completion)
+
+    assert {:error, %Contract{code: :request_outcome_unknown}} =
+             ProviderCall.complete_operation(completion, {:ok, %{id: "late"}})
+
+    restart_store(context.store)
+
+    assert {:error, %Contract{code: :request_outcome_unknown}} =
+             ProviderCall.operation(Adapter, :send_message, data, binding: context.binding, request_id: "worker-death")
+
+    assert Process.alive?(Process.whereis(context.runtime))
+    assert {:ok, _} = Jido.Chat.execute(context.binding, request("next-job", "next"))
+    assert_received {:provider, _, "next", _}
+    refute_received {:provider, _, _, _}
+  end
+
+  test "private completion owns large result handles and ignores duplicate outcomes", context do
+    text = String.duplicate("large", 60_000)
+    data = %{"room_id" => "room", "text" => "large"}
+
+    assert {:invoke, invocation, completion} =
+             ProviderCall.prepare_operation(Adapter, :send_message, data,
+               binding: context.binding,
+               request_id: "large-boundary"
+             )
+
+    outcome = Task.async(fn -> ProviderCall.invoke_operation(invocation) end) |> Task.await()
+    assert {:ok, result} = ProviderCall.complete_operation(completion, outcome)
+    ref = result["resource_ref"]
+    assert {:ok, value} = Resources.resolve(context.binding, ref)
+    assert value["text"] == text
+    before = :ets.tab2list(context.binding.resources) |> Enum.sort()
+    assert {:ok, ^result} = ProviderCall.complete_operation(completion, {:error, :late})
+    assert :ets.tab2list(context.binding.resources) |> Enum.sort() == before
+
+    assert {:error, %Contract{code: :request_outcome_unknown}} =
+             Task.async(fn -> ProviderCall.complete_operation(completion, outcome) end) |> Task.await()
+
+    assert {:ok, ^value} = Resources.resolve(context.binding, ref)
+  end
+
+  test "store replacement between invocation and completion leaves no projected resource", context do
+    data = %{"room_id" => "room", "text" => "ready"}
+
+    assert {:invoke, invocation, completion} =
+             ProviderCall.prepare_operation(Adapter, :send_message, data,
+               binding: context.binding,
+               request_id: "store-loss"
+             )
+
+    outcome = Task.async(fn -> ProviderCall.invoke_operation(invocation) end) |> Task.await()
+    restart_store(context.store)
+    assert {:error, %Contract{code: :request_outcome_unknown}} = ProviderCall.complete_operation(completion, outcome)
+    assert :ets.info(context.binding.resources, :size) == 1
+
+    assert {:error, %Contract{code: :request_outcome_unknown}} =
+             ProviderCall.operation(Adapter, :send_message, data, binding: context.binding, request_id: "store-loss")
   end
 
   defp request(id, text), do: SendMessage.new!(%{"request_id" => id, "room_id" => "room", "text" => text})

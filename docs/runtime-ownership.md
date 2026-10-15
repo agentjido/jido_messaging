@@ -93,6 +93,21 @@ and includes typed validation and cached lookups. It is not a network latency
 metric. Diagnostics omit payloads, credentials, private causes, and stack traces.
 Public error codes and retry flags remain unchanged.
 
+The private Chat executor has three phases. Preparation validates and claims the
+request, then resolves input resources in the caller. Invocation uses the
+prepared adapter arguments and the existing native or fallback operation.
+Completion runs in the original owner. It projects the result, creates result
+resources, and records the exact returned term. `Jido.Chat.execute/2` remains a
+synchronous wrapper over these phases.
+
+A private completion token carries the owner and claim. Another process cannot
+complete it. A duplicate completion returns the first recorded result without
+creating another resource. The explicit unknown path retains the claim after
+worker loss, even if the coordinator stays alive. Late results cannot change an
+unknown outcome. A replaced store worker also makes an unfinished claim unknown.
+`ProviderCall` has the same private boundary and retains its result aliases and
+safe diagnostics. C11 does not change gateway scheduling.
+
 ## Request retention
 
 `RequestLedger` uses a private SQLite store with a bounded memory cache. A typed

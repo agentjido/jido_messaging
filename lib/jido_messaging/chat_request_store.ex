@@ -8,6 +8,9 @@ defmodule Jido.Messaging.ChatRequestStore do
   def complete({store, _generation}, claim, result),
     do: RequestStore.call(store, {:complete, claim, result})
 
+  def outcome({store, _generation}, claim), do: RequestStore.call(store, {:outcome, claim})
+  def unknown({store, _generation}, claim), do: RequestStore.call(store, {:unknown, claim})
+
   def remember({store, generation}, result_id, class, tag),
     do: RequestStore.call(store, {:remember, {:chat_failure, generation, result_id}, {class, tag}})
 
