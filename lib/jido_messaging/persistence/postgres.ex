@@ -36,10 +36,16 @@ defmodule Jido.Messaging.Persistence.Postgres do
   options, SQL parameters, or credentials.
   """
 
-  @behaviour Jido.Messaging.Persistence
+  @behaviour Jido.Messaging.Persistence.Contracts.Lifecycle
+  @behaviour Jido.Messaging.Persistence.Contracts.Transactions
+  @behaviour Jido.Messaging.Persistence.Contracts.Records
+  @behaviour Jido.Messaging.Persistence.Contracts.ProviderBindings
+  @behaviour Jido.Messaging.Persistence.Contracts.ControlPlane
+  @behaviour Jido.Messaging.Persistence.Contracts.Authorization
   @behaviour Jido.Messaging.Directory
 
   alias Jido.Chat.{Participant, Room}
+  alias Jido.Messaging.Persistence.{Payload, RecordRules}
 
   alias Jido.Messaging.{
     AuthorizationScope,
@@ -307,7 +313,13 @@ defmodule Jido.Messaging.Persistence.Postgres do
   @impl true
   def save_membership(state, %Membership{} = membership) do
     with_authorization_lock(state, fn transaction_state ->
-      with :ok <- validate_authorization_revision(transaction_state, "membership", membership, &membership_identity?/2),
+      with :ok <-
+             validate_authorization_revision(
+               transaction_state,
+               "membership",
+               membership,
+               &RecordRules.membership_identity?/2
+             ),
            :ok <- validate_membership_scope(transaction_state, membership) do
         persist(transaction_state, "membership", membership.id, membership,
           room_id: membership.room_id,
@@ -341,7 +353,13 @@ defmodule Jido.Messaging.Persistence.Postgres do
   @impl true
   def save_principal_grant(state, %Grant{} = grant) do
     with_authorization_lock(state, fn transaction_state ->
-      with :ok <- validate_authorization_revision(transaction_state, "principal_grant", grant, &grant_identity?/2) do
+      with :ok <-
+             validate_authorization_revision(
+               transaction_state,
+               "principal_grant",
+               grant,
+               &RecordRules.grant_identity?/2
+             ) do
         persist(transaction_state, "principal_grant", grant.id, grant,
           room_id: grant.scope.room_id,
           thread_id: grant.scope.thread_id,
@@ -373,7 +391,13 @@ defmodule Jido.Messaging.Persistence.Postgres do
     scope_key = AuthorizationScope.key(policy.scope)
 
     with_authorization_lock(state, fn transaction_state ->
-      with :ok <- validate_authorization_revision(transaction_state, "invocation_policy", policy, &policy_identity?/2),
+      with :ok <-
+             validate_authorization_revision(
+               transaction_state,
+               "invocation_policy",
+               policy,
+               &RecordRules.policy_identity?/2
+             ),
            :ok <- validate_policy_scope(transaction_state, policy, scope_key) do
         persist(transaction_state, "invocation_policy", policy.id, policy,
           room_id: policy.scope.room_id,
@@ -430,7 +454,7 @@ defmodule Jido.Messaging.Persistence.Postgres do
     thread_id = Keyword.get(opts, :thread_id)
 
     with true <- is_integer(limit) and limit > 0,
-         {:ok, direction} <- cursor_direction(opts),
+         {:ok, direction} <- RecordRules.cursor_direction(opts),
          {scope_where, scope_params} <- message_scope(room_id, thread_id),
          {where, params} <- with_instance_scope(state, scope_where, scope_params),
          {:ok, cursor} <- resolve_message_cursor(state, where, params, direction),
@@ -494,7 +518,7 @@ defmodule Jido.Messaging.Persistence.Postgres do
   def get_thread_by_external_id(state, room_id, external_thread_id) do
     fetch_one(state, "thread", [
       {"room_id", room_id},
-      {"external_id", normalize_term(external_thread_id)}
+      {"external_id", RecordRules.normalize_term(external_thread_id)}
     ])
   end
 
@@ -598,18 +622,18 @@ defmodule Jido.Messaging.Persistence.Postgres do
   @impl true
   def get_message_by_external_id(state, channel, bridge_id, external_id) do
     fetch_one(state, "message", [
-      {"channel", normalize_term(channel)},
-      {"bridge_id", normalize_term(bridge_id)},
-      {"external_id", normalize_term(external_id)}
+      {"channel", RecordRules.normalize_term(channel)},
+      {"bridge_id", RecordRules.normalize_term(bridge_id)},
+      {"external_id", RecordRules.normalize_term(external_id)}
     ])
   end
 
   @impl true
   def get_message_by_external_id(state, channel, bridge_id, external_id, room_id) do
     fetch_one(state, "message", [
-      {"channel", normalize_term(channel)},
-      {"bridge_id", normalize_term(bridge_id)},
-      {"external_id", normalize_term(external_id)},
+      {"channel", RecordRules.normalize_term(channel)},
+      {"bridge_id", RecordRules.normalize_term(bridge_id)},
+      {"external_id", RecordRules.normalize_term(external_id)},
       {"room_id", room_id}
     ])
   end
@@ -648,8 +672,8 @@ defmodule Jido.Messaging.Persistence.Postgres do
         Map.merge(attrs, %{
           room_id: room_id,
           channel: channel,
-          bridge_id: normalize_term(bridge_id),
-          external_room_id: normalize_term(external_id)
+          bridge_id: RecordRules.normalize_term(bridge_id),
+          external_room_id: RecordRules.normalize_term(external_id)
         })
       )
 
@@ -669,11 +693,11 @@ defmodule Jido.Messaging.Persistence.Postgres do
                state.instance_id,
                binding.id,
                room_id,
-               normalize_term(channel),
+               RecordRules.normalize_term(channel),
                binding.bridge_id,
                binding.external_room_id,
-               format_datetime(binding.inserted_at),
-               :erlang.term_to_binary(binding)
+               RecordRules.format_datetime(binding.inserted_at),
+               Payload.encode(binding)
              ],
              :create_room_binding
            ),
@@ -916,20 +940,9 @@ defmodule Jido.Messaging.Persistence.Postgres do
 
   defp validate_authorization_revision(state, kind, record, identity?) do
     case fetch_record(state, kind, record.id) do
-      {:error, :not_found} when record.revision == 1 -> :ok
-      {:error, :not_found} -> {:error, {:invalid_initial_revision, record.revision}}
-      {:ok, stored} when stored == record -> :ok
-      {:ok, stored} -> validate_revision_transition(stored, record, identity?)
+      {:error, :not_found} -> RecordRules.authorization_revision(nil, record, identity?)
+      {:ok, stored} -> RecordRules.authorization_revision(stored, record, identity?)
       {:error, _reason} = error -> error
-    end
-  end
-
-  defp validate_revision_transition(stored, record, identity?) do
-    cond do
-      not identity?.(stored, record) -> {:error, :authorization_identity_immutable}
-      stored.status == :revoked and record.status != :revoked -> {:error, :authorization_revocation_terminal}
-      record.revision == stored.revision + 1 -> :ok
-      true -> {:error, {:stale_revision, stored.revision}}
     end
   end
 
@@ -949,20 +962,6 @@ defmodule Jido.Messaging.Persistence.Postgres do
       {:error, :not_found} -> :ok
       {:error, _reason} = error -> error
     end
-  end
-
-  defp membership_identity?(stored, record) do
-    stored.principal_id == record.principal_id and stored.room_id == record.room_id and
-      stored.issuer_principal_id == record.issuer_principal_id
-  end
-
-  defp grant_identity?(stored, record) do
-    stored.principal_id == record.principal_id and stored.issuer_principal_id == record.issuer_principal_id
-  end
-
-  defp policy_identity?(stored, record) do
-    stored.target_principal_id == record.target_principal_id and
-      stored.issuer_principal_id == record.issuer_principal_id and stored.scope == record.scope
   end
 
   defp filter_authorization_record(records, _field, nil), do: records
@@ -1233,22 +1232,6 @@ defmodule Jido.Messaging.Persistence.Postgres do
     Migrations.all() |> Enum.map(&elem(&1, 0))
   end
 
-  defp cursor_direction(opts) do
-    case {Keyword.get(opts, :before), Keyword.get(opts, :after)} do
-      {nil, nil} ->
-        {:ok, :none}
-
-      {before, nil} when is_binary(before) and before != "" ->
-        {:ok, {:before, before}}
-
-      {nil, after_cursor} when is_binary(after_cursor) and after_cursor != "" ->
-        {:ok, {:after, after_cursor}}
-
-      {_before, _after_cursor} ->
-        {:error, :invalid_cursor_options}
-    end
-  end
-
   defp message_scope(room_id, thread_id) when is_binary(thread_id) do
     {"kind = $1 AND room_id = $2 AND thread_id = $3", ["message", room_id, thread_id]}
   end
@@ -1409,7 +1392,7 @@ defmodule Jido.Messaging.Persistence.Postgres do
   end
 
   defp participant_cursor_direction(opts) do
-    case cursor_direction(opts) do
+    case RecordRules.cursor_direction(opts) do
       {:ok, direction} -> direction
       {:error, _reason} = error -> error
     end
@@ -1443,16 +1426,8 @@ defmodule Jido.Messaging.Persistence.Postgres do
       [
         state.instance_id,
         kind,
-        id,
-        Keyword.get(opts, :room_id),
-        Keyword.get(opts, :thread_id),
-        Keyword.get(opts, :sender_id),
-        format_datetime(Keyword.get(opts, :inserted_at)),
-        opts |> Keyword.get(:channel) |> normalize_nullable(),
-        opts |> Keyword.get(:bridge_id) |> normalize_nullable(),
-        opts |> Keyword.get(:external_id) |> normalize_nullable(),
-        :erlang.term_to_binary(record)
-      ],
+        id
+      ] ++ RecordRules.index_columns(opts) ++ [Payload.encode(record)],
       :upsert_record
     )
   end
@@ -1572,7 +1547,7 @@ defmodule Jido.Messaging.Persistence.Postgres do
              RETURNING id
              """,
              [
-               :erlang.term_to_binary(updated),
+               Payload.encode(updated),
                state.instance_id,
                message_id,
                old_payload
@@ -1636,9 +1611,9 @@ defmodule Jido.Messaging.Persistence.Postgres do
 
   defp find_room_binding(state, channel, bridge_id, external_id) do
     fetch_one(state, "room_binding", [
-      {"channel", normalize_term(channel)},
-      {"bridge_id", normalize_term(bridge_id)},
-      {"external_id", normalize_term(external_id)}
+      {"channel", RecordRules.normalize_term(channel)},
+      {"bridge_id", RecordRules.normalize_term(bridge_id)},
+      {"external_id", RecordRules.normalize_term(external_id)}
     ])
   end
 
@@ -1663,16 +1638,16 @@ defmodule Jido.Messaging.Persistence.Postgres do
 
   defp find_participant_binding_record(state, channel, bridge_id, external_id) do
     fetch_one(state, "participant_binding", [
-      {"channel", normalize_term(channel)},
-      {"bridge_id", normalize_term(bridge_id)},
-      {"external_id", normalize_term(external_id)}
+      {"channel", RecordRules.normalize_term(channel)},
+      {"bridge_id", RecordRules.normalize_term(bridge_id)},
+      {"external_id", RecordRules.normalize_term(external_id)}
     ])
   end
 
   defp find_unclaimed_legacy_participant(state, channel, external_id) do
     case fetch_one(state, "participant_binding", [
-           {"channel", normalize_term(channel)},
-           {"external_id", normalize_term(external_id)}
+           {"channel", RecordRules.normalize_term(channel)},
+           {"external_id", RecordRules.normalize_term(external_id)}
          ]) do
       {:ok, _binding} -> {:error, :not_found}
       {:error, :not_found} -> find_participant_by_external_id(state, channel, external_id)
@@ -1680,9 +1655,9 @@ defmodule Jido.Messaging.Persistence.Postgres do
   end
 
   defp save_participant_binding(state, participant_id, channel, bridge_id, external_id) do
-    normalized_channel = normalize_term(channel)
-    normalized_bridge_id = normalize_term(bridge_id)
-    normalized_external_id = normalize_term(external_id)
+    normalized_channel = RecordRules.normalize_term(channel)
+    normalized_bridge_id = RecordRules.normalize_term(bridge_id)
+    normalized_external_id = RecordRules.normalize_term(external_id)
 
     binding = %{
       participant_id: participant_id,
@@ -1709,7 +1684,7 @@ defmodule Jido.Messaging.Persistence.Postgres do
                normalized_channel,
                normalized_bridge_id,
                normalized_external_id,
-               :erlang.term_to_binary(binding)
+               Payload.encode(binding)
              ],
              :bind_participant
            ),
@@ -1756,7 +1731,11 @@ defmodule Jido.Messaging.Persistence.Postgres do
     delete_record(
       state,
       "participant_binding",
-      participant_binding_id(normalize_term(channel), normalize_term(bridge_id), normalize_term(external_id))
+      participant_binding_id(
+        RecordRules.normalize_term(channel),
+        RecordRules.normalize_term(bridge_id),
+        RecordRules.normalize_term(external_id)
+      )
     )
   end
 
@@ -1812,11 +1791,12 @@ defmodule Jido.Messaging.Persistence.Postgres do
         false
 
       true ->
-        expected_channel = normalize_term(channel)
-        expected_external_id = normalize_term(external_id)
+        expected_channel = RecordRules.normalize_term(channel)
+        expected_external_id = RecordRules.normalize_term(external_id)
 
         Enum.any?(participant.external_ids || %{}, fn {key, value} ->
-          normalize_term(key) == expected_channel and normalize_term(value) == expected_external_id
+          RecordRules.normalize_term(key) == expected_channel and
+            RecordRules.normalize_term(value) == expected_external_id
         end)
     end
   end
@@ -1845,7 +1825,7 @@ defmodule Jido.Messaging.Persistence.Postgres do
   defp id_matches?(id, query) do
     case query_value(query, :id) do
       nil -> true
-      expected_id -> normalize_term(id) == normalize_term(expected_id)
+      expected_id -> RecordRules.normalize_term(id) == RecordRules.normalize_term(expected_id)
     end
   end
 
@@ -1857,7 +1837,7 @@ defmodule Jido.Messaging.Persistence.Postgres do
   end
 
   defp contains_ci?(value, expected) when is_binary(value) do
-    String.contains?(String.downcase(value), String.downcase(normalize_term(expected)))
+    String.contains?(String.downcase(value), String.downcase(RecordRules.normalize_term(expected)))
   end
 
   defp contains_ci?(_value, _expected), do: false
@@ -1905,7 +1885,7 @@ defmodule Jido.Messaging.Persistence.Postgres do
     filters
     |> Enum.with_index(1)
     |> Enum.reduce({[], []}, fn {{column, value}, index}, {clauses, params} ->
-      {["#{column} = $#{index}" | clauses], params ++ [normalize_nullable(value)]}
+      {["#{column} = $#{index}" | clauses], params ++ [RecordRules.normalize_nullable(value)]}
     end)
     |> then(fn {clauses, params} -> {clauses |> Enum.reverse() |> Enum.join(" AND "), params} end)
   end
@@ -1914,7 +1894,7 @@ defmodule Jido.Messaging.Persistence.Postgres do
     Enum.map(rows, fn [payload] -> decode_payload(payload) end)
   end
 
-  defp decode_payload(payload), do: :erlang.binary_to_term(payload, [:safe])
+  defp decode_payload(payload), do: Payload.decode(payload, [:safe])
 
   defp run(state, sql, params, operation) do
     case query(state, sql, params, operation) do
@@ -1975,18 +1955,6 @@ defmodule Jido.Messaging.Persistence.Postgres do
   defp ingress_subscription_key(bridge_id, subscription_id) do
     "#{bridge_id}:#{subscription_id}"
   end
-
-  defp format_datetime(nil), do: nil
-  defp format_datetime(%DateTime{} = value), do: Jido.Messaging.Transcript.format_timestamp(value)
-  defp format_datetime(value), do: to_string(value)
-
-  defp normalize_nullable(nil), do: nil
-  defp normalize_nullable(value), do: normalize_term(value)
-
-  defp normalize_term(value) when is_binary(value), do: value
-  defp normalize_term(value) when is_atom(value), do: Atom.to_string(value)
-  defp normalize_term(value) when is_integer(value), do: Integer.to_string(value)
-  defp normalize_term(value), do: inspect(value)
 
   defp normalize_instance_id(value) do
     case value |> to_string() |> String.trim() do

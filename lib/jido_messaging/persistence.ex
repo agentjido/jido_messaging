@@ -16,6 +16,10 @@ defmodule Jido.Messaging.Persistence do
   pools or nodes can write safely. These capabilities do not imply RFC 0001's
   broader `:transactional_delivery` guarantee.
 
+  Feature contracts are defined in `Jido.Messaging.Persistence.Contracts`.
+  Built-in adapters declare each complete feature group. This aggregate keeps
+  all existing callback signatures and optional callbacks for compatibility.
+
   ## Implementing an Adapter
 
       defmodule MyApp.CustomAdapter do

@@ -9,8 +9,8 @@ record formats stable. Do not combine all review changes in one checkpoint.
 | --- | --- | --- | --- |
 | C1 | R1, R2 | Add PostgreSQL principal and authorization storage. Run all PostgreSQL tests in CI. Test a typed command with a real database. | Complete; local tests and CI passed |
 | C2 | R3 | Reuse native Zoi schemas and operation metadata. Prove payload compatibility. | Complete; local tests and CI passed |
-| C3 | R4, R5 | Extract entry-module workflows and ingest stages. Keep public forwarding functions and commit rules. | Implemented; local tests passed |
-| C4 | R6 | Separate storage feature contracts and shared pure rules. Define stored-record compatibility. | Pending |
+| C3 | R4, R5 | Extract entry-module workflows and ingest stages. Keep public forwarding functions and commit rules. | Complete; local tests and CI passed |
+| C4 | R6 | Separate storage feature contracts and shared pure rules. Define stored-record compatibility. | Complete; local checks passed; final CI result in saved report |
 | C5 | R7, R8 | Define process ownership, provider-call boundaries, and request retention. Measure queue behavior before concurrency changes. | Pending |
 
 ## C1 scope and checks
@@ -137,3 +137,59 @@ Credo checks passed.
 
 The saved C3 report contains the final commit and CI results. C4 and C5 remain
 pending.
+
+## C4 scope and checks
+
+Define small storage feature behaviours. Keep all 93 aggregate callback
+signatures and optional callbacks for existing custom adapters. Require every
+callback in each declared feature. Preserve the existing support matrix:
+ETS has 91 callbacks, SQLite has 93, and PostgreSQL has 61. ETS does not add
+transactions or connection release. PostgreSQL does not add optional features.
+
+Extract only pure rules: immutable identity, revision transitions, terminal
+revocation, directory and activity revisions, cursor options, index values,
+and the existing payload codec. Keep SQL, scoped reads, writes, locks,
+transactions, cleanup, and connection ownership in each adapter.
+
+Define the current unwrapped Erlang record format as v1. Save pre-C4 record
+fixtures before edits. Test old record fields and values, database reopen,
+unchanged stored bytes on reads, message order, and ID cursors. Define the
+contract for a future version change without changing the current write format.
+
+Compare public exports, aggregate callback signatures, and SQL. Run shared
+storage contracts, the complete Messaging suite, PostgreSQL tests, coverage,
+format, compilation with warnings treated as errors, static checks, and CI.
+
+See [Storage feature contracts](../storage-contracts.md) and
+[Stored-record compatibility](../stored-record-compatibility.md).
+Stop after C4 and report its results. Do not begin C5 without a new instruction.
+
+## C4 local result
+
+Thirteen feature behaviours now define complete storage groups. The built-in
+adapters declare the groups they support. Fixed tests require an exact
+partition of the aggregate behaviour and the existing support matrix.
+The reusable conformance suite also checks every declared feature.
+
+Shared pure rules replace repeated authorization, credential, directory, and
+activity logic. The payload codec retains the existing Erlang encoder and
+each adapter's decoder options. No record shape, database migration, SQL
+statement, runtime capability, dependency, or package version changes.
+
+All public exports match for 12 checked modules. All 93 aggregate callback
+signatures and optional callbacks match the baseline. The source comparison
+confirms 662 unchanged adapter function clauses after shared helper call
+changes are accounted for. Every SQL statement matches.
+
+Fixed samples cover 23 stored struct shapes. Eight core samples use public
+constructors and are read from reopened SQLite and PostgreSQL stores. Reads
+preserve the stored payload bytes. A write and read cycle preserves record
+values; Erlang map entry order is not a byte equality guarantee across VMs.
+
+All 251 focused storage tests and all 2,253 Messaging tests passed. The full
+suite includes local integration, story, and PostgreSQL tests. Production-source
+coverage is 90.0% (11,449 of 12,708 lines; the unrounded ratio is above 90%).
+The new pure rule module covers 66 of 67 lines. The contract registry and payload
+codec have full line coverage. Format, compilation, and 16 Credo checks passed.
+
+The saved C4 report contains the final commit and CI results. C5 remains pending.

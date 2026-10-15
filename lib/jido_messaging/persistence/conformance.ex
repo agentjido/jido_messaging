@@ -76,6 +76,14 @@ defmodule Jido.Messaging.Persistence.Conformance do
         assert :ok = @persistence_adapter.health_check(state)
       end
 
+      test "implements every callback in each declared storage feature" do
+        alias Jido.Messaging.Persistence.Contracts
+
+        for contract <- Contracts.declared(@persistence_adapter) do
+          assert Contracts.missing_callbacks(@persistence_adapter, contract) == [], inspect(contract)
+        end
+      end
+
       test "keeps adapter instances isolated", %{persistence: first} do
         {:ok, second} = Jido.Messaging.Persistence.Conformance.start(@persistence_factory)
 
