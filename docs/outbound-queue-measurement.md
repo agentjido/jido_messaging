@@ -111,3 +111,19 @@ construction still waits for configuration before it reaches admission. This
 limit is explicit. Direct execution, ChatActions, Streaming, and Sender also
 remain outside gateway admission. The bound does not cover arbitrary process
 mailboxes or payload bytes. Runtime and VM restart end request replay retention.
+
+
+## C14 repeat
+
+The final five capacity-64 trials again admitted 63 burst jobs behind one active
+provider, rejected 9,937 calls before provider release, and drained to zero
+permits. Rejection p95 was 0.227–0.261 ms; p99 was 0.342–0.589 ms. All five pass
+the local target. With DeadLetter suspended, p95 was 0.241 ms and p99 0.387 ms.
+
+The capacity-two C5 repeat rejected twelve public overload calls before provider
+release. Maximum rejection time was 0.988 ms. The timed-out accepted call sent
+once. Retry overflow returned in 0.071 ms; later accepted completion took
+207.613 ms behind the retry. With 100 ms added to ConfigStore, public total time
+was 103.056 ms; prebuilt admission took 0.033 ms. This confirms the same remaining
+pre-admission configuration wait. Raw values and per-trial accepted-completion
+latency are in [the C14 result](benchmarks/c14-queue.json).

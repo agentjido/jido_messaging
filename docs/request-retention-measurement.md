@@ -81,3 +81,20 @@ Disk use still grows with unique IDs. Resource values retain their existing
 owner and TTL rules. C10 covers the second ledger in Runtime-created Chat
 bindings. External bindings retain their own backend. Runtime or VM restart
 ends replay history; this store is not a durable command log.
+
+
+## C14 repeat
+
+The final 100,000-ID run completed in 18.908 s. The resource table still held one
+locator (2,552 bytes). The cache held 1,000 entries and 340,000 encoded bytes.
+Database plus WAL used 45,072,080 bytes. SQLite allocator current/peak values were
+2,231,136/2,243,000 bytes; connection page cache used 2,155,184 bytes. The oldest
+exact result replayed after worker replacement. The cache and locator bounds did
+not grow with request count.
+
+Cache-hit p50/p95/p99 was 1/14/15 microseconds. Disk-hit values were 28/99/133;
+new-claim values were 70/97/142. Whole-VM BEAM growth after store collection was
+102,089,811 bytes. As with C9, this includes code and other application loading.
+It does not prove a whole-VM memory reduction. The durable write boundary costs
+more than the old ETS-only path. Disk still grows with unique IDs. Raw values are
+in [the C14 result](benchmarks/c14-retention.json).

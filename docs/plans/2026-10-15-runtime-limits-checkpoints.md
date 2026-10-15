@@ -86,8 +86,8 @@ stored records. Compare public contracts separately from those internal details.
 | C10 | Complete | Chat: 374 tests, 2,401/2,610 lines (91.9%). Messaging: 2,333 tests with PostgreSQL, integration, and story tests; 11,832/13,112 lines (90.2%). Public contracts: 159 modules unchanged. Format, compilation, and configured Credo checks passed. Chat CI: 20 passed, one expected skip on `45ee718`. Messaging pins that commit. |
 | C11 | Complete | Chat: 402 tests, 2,429/2,651 lines (91.6%). Messaging: 2,336 tests with PostgreSQL, integration, and story tests; 11,858/13,145 lines (90.2%). Contract comparison: 160 modules, only eight specified private exports added. Format, compilation, and configured Credo checks passed. Chat CI: 20 passed, one expected skip on `9a07c7e`. |
 | C12 | Complete; CI passed | Full Messaging suite: 2,343 passed with PostgreSQL, integration, and story tests; 11,886/13,170 lines (90.2%). Final focused suite: 45 passed, including one added shutdown test. Contract comparison: 160 modules unchanged. Format, compilation, and 16 Credo checks passed. Provider waits, retry waits, and throttle waits leave admission responsive. |
-| C13 | Local verification complete; CI pending | Full suite: 2,352 passed, including PostgreSQL; 11,998/13,298 lines (90.2%). Final focused suite: 46 passed, including buffer startup failure handling. Contract baseline: 160 modules unchanged. Format, warnings-as-errors, and 16 Credo checks passed. Five capacity-64 bursts meet the latency target. See queue measurement and raw C13 JSON. |
-| C14 | Pending | |
+| C13 | Complete; CI passed on `a4b0fcd` | Full suite: 2,352 passed, including PostgreSQL; 11,998/13,298 lines (90.2%). Final focused suite: 46 passed, including buffer startup failure handling. Contract baseline: 160 modules unchanged. Format, warnings-as-errors, and 16 Credo checks passed. Five capacity-64 bursts meet the latency target. See queue measurement and raw C13 JSON. |
+| C14 | Local verification complete; CI pending | Two combined-fault scenarios passed in the full Messaging suite: 2,355 tests, including PostgreSQL; 12,001/13,299 production lines (90.2%). Chat: 402 tests; 2,429/2,651 lines (91.6%). Contract baseline: 160 modules unchanged. Format, warnings-as-errors, and 16 Credo checks passed. Repeated 100,000-ID retention and both queue workloads passed. See `docs/runtime-limits-results.md`. |
 
 ## C6 — Bus subscription recovery
 
@@ -400,3 +400,8 @@ C12 CI passed on `8c1b231` (22 checks passed, one expected skip). The correction
 retains the three existing dynamic media-boundary Dialyzer annotations after
 extraction. Consumer cleanup tests accept `:noproc` when monitoring observes an
 already stopped worker, and wait up to one second for cleanup.
+
+
+C13 CI passed on `a4b0fcd` (22 checks passed, one expected skip). The C14
+local report and raw repeated measurements are in
+[the final results](../runtime-limits-results.md).

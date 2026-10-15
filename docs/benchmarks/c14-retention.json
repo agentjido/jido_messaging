@@ -1,0 +1,63 @@
+{
+  "count": 100000,
+  "otp": "29",
+  "schedulers": 10,
+  "host": "macOS arm64; OTP 29.1; Elixir 1.20.4; 10 schedulers",
+  "elixir": "1.20.4",
+  "cache_entries": 1000,
+  "disk_hit": {
+    "p50_us": 28,
+    "p95_us": 99,
+    "p99_us": 133
+  },
+  "new_claim": {
+    "p50_us": 70,
+    "p95_us": 97,
+    "p99_us": 142
+  },
+  "elapsed_us": 18907635,
+  "ets_entries": 1,
+  "ets_bytes": 2552,
+  "beam_total_delta": 102551187,
+  "beam_total_delta_after_store_gc": 102089811,
+  "store_process_bytes": 689624,
+  "worker_process_bytes": 8896,
+  "cache_encoded_bytes": 340000,
+  "file_bytes_including_wal": 45072080,
+  "sqlite_cache_budget_kib": 2048,
+  "native_sqlite_bytes": {
+    "allocator_current_bytes": 2231136,
+    "allocator_peak_bytes": 2243000,
+    "connection_page_cache_bytes": 2155184,
+    "connection_schema_bytes": 1440,
+    "connection_statement_bytes": 6080
+  },
+  "hit": {
+    "p50_us": 1,
+    "p95_us": 14,
+    "p99_us": 15
+  },
+  "oldest_after_restart": true,
+  "beam_before": {
+    "atom": 1246264,
+    "atom_used": 1246264,
+    "binary": 300880,
+    "code": 20897116,
+    "ets": 2245856,
+    "processes": 22565368,
+    "processes_used": 22544160,
+    "system": 60478645,
+    "total": 83044013
+  },
+  "beam_after_store_gc": {
+    "atom": 2593805,
+    "atom_used": 2593805,
+    "binary": 2940856,
+    "code": 77209519,
+    "ets": 11710080,
+    "processes": 26102232,
+    "processes_used": 26097528,
+    "system": 159031592,
+    "total": 185133824
+  }
+}
