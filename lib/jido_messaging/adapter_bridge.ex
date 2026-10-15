@@ -2,12 +2,13 @@ defmodule Jido.Messaging.AdapterBridge do
   @moduledoc """
   Runtime bridge between `Jido.Messaging` and `Jido.Chat.Adapter`.
 
-  This module is the only boundary used by the messaging runtime for outbound
-  operations and adapter capability/failure normalization.
+  Provider operations forward to the internal `ProviderCall` boundary. This
+  module retains media conversion, adapter capabilities, transport controls,
+  and compatibility failure normalization.
   """
 
   alias Jido.Chat.{Binding, Capabilities, FileUpload, PostPayload}
-  alias Jido.Messaging.Runtime
+  alias Jido.Messaging.ProviderCall
 
   @type failure_class :: :recoverable | :degraded | :fatal
   @type failure_disposition :: :retry | :degrade | :crash
@@ -154,103 +155,11 @@ defmodule Jido.Messaging.AdapterBridge do
 
   @doc false
   @spec configured_binding(module(), keyword()) :: {:ok, Binding.t()} | {:error, term()}
-  def configured_binding(adapter, opts) do
-    case {opts[:binding], opts[:instance_module], opts[:bridge_id]} do
-      {%Binding{adapter: ^adapter} = binding, _, _} ->
-        {:ok, binding}
-
-      {nil, instance, id} when is_atom(instance) and not is_nil(instance) and is_binary(id) ->
-        Runtime.ensure_binding(instance.__jido_messaging__(:runtime), adapter, id, opts)
-
-      _ ->
-        Jido.Chat.Signal.Policy.error(:invalid_binding)
-    end
-  end
+  def configured_binding(adapter, opts), do: ProviderCall.configured_binding(adapter, opts)
 
   @doc false
   @spec operation(module(), atom(), map(), keyword()) :: {:ok, map()} | {:error, term()}
-  def operation(adapter, operation, data, opts) do
-    with {:ok, binding} <- configured_binding(adapter, opts) do
-      {_type, {definition, ^operation, _fields, _shape, _schema}} =
-        Enum.find(Jido.Chat.Operations.Definitions.all(), fn {_type, {_module, name, _fields, _shape, _schema}} ->
-          name == operation
-        end)
-
-      id = opts[:request_id] || Jido.Chat.ID.generate!()
-
-      data =
-        Enum.reduce([:thread_id, :reply_to_id, :format, :cursor, :limit, :direction, :topic_name], data, fn option,
-                                                                                                            data ->
-          key = Atom.to_string(option)
-
-          value =
-            if option == :thread_id,
-              do: opts[:external_thread_id] || opts[:thread_id],
-              else: opts[option]
-
-          value =
-            if is_atom(value) and not is_nil(value) and key in ["direction", "format"],
-              do: Atom.to_string(value),
-              else: value
-
-          allowed =
-            cond do
-              key == "topic_name" ->
-                operation == :open_thread
-
-              key == "direction" ->
-                operation in [:fetch_messages, :fetch_channel_messages, :list_threads]
-
-              key in ["cursor", "limit"] ->
-                operation in [:fetch_messages, :fetch_channel_messages, :list_threads, :load_options]
-
-              true ->
-                true
-            end
-
-          if is_nil(value) or not allowed, do: data, else: Map.put_new(data, key, value)
-        end)
-
-      data = Map.put(data, "request_id", id)
-      {:ok, request} = definition.new(data)
-      {:ok, request} = Jido.Messaging.Signal.Context.attach(request, parent_signal: opts[:parent_signal])
-
-      case Jido.Chat.execute(binding, request) do
-        {:ok, %{type: "jido.chat.operation.completed"} = result} ->
-          {:ok, private_result(result.data["result"], operation)}
-
-        {:ok, %{type: "jido.chat.operation.failed"} = result} ->
-          {:error, failure_reason(binding, result)}
-
-        error ->
-          error
-      end
-    end
-  end
-
-  defp private_result(%{"id" => id} = result, operation) when operation in [:open_thread, :fetch_thread] do
-    result
-    |> Map.put(:external_thread_id, id)
-    |> Map.put(:delivery_external_room_id, result["delivery_room_ref"])
-  end
-
-  defp private_result(%{"id" => id} = result, _operation) do
-    result
-    |> Map.put(:message_id, id)
-    |> Map.put(:external_message_id, id)
-    |> Map.put(:external_room_id, result["room_id"])
-  end
-
-  defp private_result(result, _operation), do: result
-  defp failure_reason(_binding, %{data: %{"code" => "unsupported"}}), do: :unsupported
-
-  defp failure_reason(binding, result) do
-    Jido.Chat.Operations.Failure.reason_tag(binding, result) ||
-      %{
-        class: Jido.Chat.Operations.Failure.class(binding, result),
-        reason: {:provider_operation_failed, result.data["code"]}
-      }
-  end
+  def operation(adapter, operation, data, opts), do: ProviderCall.operation(adapter, operation, data, opts)
 
   @doc """
   Returns listener child specs for an adapter, defaulting to no listeners.

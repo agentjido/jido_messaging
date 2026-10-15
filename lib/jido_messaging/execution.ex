@@ -3,6 +3,7 @@ defmodule Jido.Messaging.Execution do
   alias Jido.Chat.Content.Text
   alias Jido.Chat.Signal.Policy
   alias Jido.Messaging.{AuthorizationScope, Authorizer, Dispatch, Events, Message, RoomServer, RoomSupervisor, Runtime}
+  alias Jido.Messaging.{Diagnostics, ProviderCall, RequestLedger}
   alias Jido.Messaging.Operations.Definitions
   alias Jido.Messaging.Signal.{Context, Identity, OperationCompleted, OperationFailed}
   alias Jido.Signal.Catalog
@@ -26,9 +27,13 @@ defmodule Jido.Messaging.Execution do
       _ -> Policy.error(:invalid_request)
     end
   rescue
-    _ -> Policy.error(:invalid_request)
+    _ ->
+      Diagnostics.failure(:execution, request, :exception)
+      Policy.error(:invalid_request)
   catch
-    _, _ -> Policy.error(:invalid_request)
+    kind, _ ->
+      Diagnostics.failure(:execution, request, kind)
+      Policy.error(:invalid_request)
   end
 
   def execute(_instance, _request, _opts), do: Policy.error(:invalid_request)
@@ -70,9 +75,13 @@ defmodule Jido.Messaging.Execution do
       _ -> {:denied, operation, "authorization_denied"}
     end
   rescue
-    _ -> {:denied, operation, "authorization_store_failed"}
+    _ ->
+      Diagnostics.failure(:authorization, request, :exception)
+      {:denied, operation, "authorization_store_failed"}
   catch
-    _, _ -> {:denied, operation, "authorization_store_failed"}
+    kind, _ ->
+      Diagnostics.failure(:authorization, request, kind)
+      {:denied, operation, "authorization_store_failed"}
   end
 
   defp authorization_decision(runtime, principal, action, scope, request, "route_outbound", opts) do
@@ -203,25 +212,19 @@ defmodule Jido.Messaging.Execution do
   defp admitted(instance, runtime, request, definition, operation, decision, opts) do
     table = Runtime.request_table(runtime)
     key = {decision.principal_id, request.data["request_id"]}
-    digest = :crypto.hash(:sha256, :erlang.term_to_binary({request.type, request.data}, [:deterministic]))
-
     authority = request_authority(decision)
 
-    if :ets.insert_new(table, {key, digest, authority, {:running, self()}}) do
-      result = run(instance, runtime, request, definition, operation, decision, opts)
-      :ets.insert(table, {key, digest, authority, {:done, result}})
-      result
-    else
-      case :ets.lookup(table, key) do
-        [{^key, ^digest, ^authority, {:done, result}}] ->
-          result
+    case RequestLedger.claim(table, key, {request.type, request.data}, authority) do
+      {:ok, claim} ->
+        result = run(instance, runtime, request, definition, operation, decision, opts)
+        :ok = RequestLedger.complete(table, claim, result)
+        result
 
-        [{^key, ^digest, ^authority, {:running, owner}}] ->
-          Policy.error(if(Process.alive?(owner), do: :request_in_progress, else: :request_outcome_unknown))
+      {:cached, result} ->
+        result
 
-        _ ->
-          Policy.error(:request_conflict)
-      end
+      {:error, _} = error ->
+        error
     end
   end
 
@@ -256,9 +259,13 @@ defmodule Jido.Messaging.Execution do
         error
     end
   rescue
-    _ -> failure(instance, request, operation, "persistence_failed")
+    _ ->
+      Diagnostics.failure(:workflow, request, :exception)
+      failure(instance, request, operation, "persistence_failed")
   catch
-    _, _ -> failure(instance, request, operation, "persistence_failed")
+    kind, _ ->
+      Diagnostics.failure(:workflow, request, kind)
+      failure(instance, request, operation, "persistence_failed")
   end
 
   defp cancel_unpublished_result(instance, %Jido.Signal{
@@ -299,7 +306,7 @@ defmodule Jido.Messaging.Execution do
          data <- receipt_data(data, receipt),
          {:ok, command} <- definition.new(data),
          {:ok, command} <- Context.attach(command, parent_signal: request),
-         {:ok, result} <- Jido.Chat.execute(binding, command) do
+         {:ok, result} <- ProviderCall.execute(binding, command) do
       case result.type do
         "jido.chat.operation.completed" ->
           with :ok <- commit_receipt(instance, runtime, request, receipt) do

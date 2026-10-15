@@ -4,6 +4,11 @@ defmodule Jido.Messaging.Runtime do
 
   Manages adapter initialization and holds per-instance state including
   adapter module and adapter state (e.g., ETS table references).
+
+  Runtime owns the typed request ledger and bindings created through
+  `ensure_binding/4`. Registered external bindings remain owned by their
+  creator. Request IDs and results have the lifetime of Runtime; they do not
+  expire automatically. See `docs/runtime-ownership.md` for restart limits.
   """
   use GenServer
 
@@ -105,7 +110,7 @@ defmodule Jido.Messaging.Runtime do
           struct!(__MODULE__, %{
             instance_module: instance_module,
             persistence: persistence,
-            request_admissions: :ets.new(:messaging_request_admissions, [:set, :public]),
+            request_admissions: Jido.Messaging.RequestLedger.new(),
             catalog: Jido.Signal.Catalog.new!(Jido.Chat.signal_definitions() ++ Jido.Messaging.signal_definitions()),
             persistence_state: persistence_state
           })

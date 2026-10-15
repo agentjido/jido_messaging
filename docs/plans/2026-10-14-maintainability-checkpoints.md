@@ -11,7 +11,7 @@ record formats stable. Do not combine all review changes in one checkpoint.
 | C2 | R3 | Reuse native Zoi schemas and operation metadata. Prove payload compatibility. | Complete; local tests and CI passed |
 | C3 | R4, R5 | Extract entry-module workflows and ingest stages. Keep public forwarding functions and commit rules. | Complete; local tests and CI passed |
 | C4 | R6 | Separate storage feature contracts and shared pure rules. Define stored-record compatibility. | Complete; local checks passed; final CI result in saved report |
-| C5 | R7, R8 | Define process ownership, provider-call boundaries, and request retention. Measure queue behavior before concurrency changes. | Pending |
+| C5 | R7, R8 | Define process ownership, provider-call boundaries, and request retention. Measure queue behavior before concurrency changes. | Complete; local checks passed; final CI result in saved report |
 
 ## C1 scope and checks
 
@@ -193,3 +193,61 @@ The new pure rule module covers 66 of 67 lines. The contract registry and payloa
 codec have full line coverage. Format, compilation, and 16 Credo checks passed.
 
 The saved C4 report contains the final commit and CI results. C5 remains pending.
+
+## C5 scope and checks
+
+Extract common provider-call mechanics. Keep each caller's authorization,
+sanitization, queue, retry, receipt, and publication rules. Preserve legacy
+Streaming and Sender callback arities and return values. Add safe internal
+diagnostics without private payloads or causes.
+
+Extract the request admission protocol into a small ledger. Keep the existing
+entry format, principal/payload/authority checks, completed-result cache,
+and unknown-owner rule. Retain IDs for Runtime lifetime. Do not introduce
+expiry that can repeat an external effect.
+
+Define process groups, resource owners, dependency loss, and restart limits.
+Keep existing profiles and supervisor strategies. Test Runtime and Bus restart,
+registry loss, and partition death after an effect. Measure the partition
+mailbox, overload rejection, caller timeout, and retry-wait delay before any
+concurrency change. No concurrency change is included in C5.
+
+Compare compiled exports, state schemas and structs, and moved function bodies.
+Run the full suite with PostgreSQL, coverage, format, compilation, static checks,
+and CI. See [Runtime ownership](../runtime-ownership.md) and
+[Queue measurement](../outbound-queue-measurement.md).
+Stop after C5 and report the results.
+
+## C5 local result
+
+Shared provider-call code now has one internal owner. Existing callers keep
+their authorization, sanitization, retry, queue, receipt, and publication rules.
+Streaming and Sender keep their legacy callback contracts. Safe diagnostics
+record stage, operation, outcome, class, and public correlation.
+
+The request ledger retains the existing entry format and Runtime lifetime.
+Completed successes and failures remain cached. Dead-owner requests remain
+unknown and cannot be reclaimed automatically. No age or size eviction is added.
+The ownership document defines resource owners, profiles, and restart limits.
+
+The queue probe found 13 pending calls with internal capacity two. Overload
+rejection waited for the held provider. A caller timeout did not cancel a send.
+A later call also waited for a 200 ms retry backoff. No concurrency or supervisor
+strategy change is included. Bus subscriptions are lost on Bus restart; registry
+failure can cause an instance restart and reset volatile state. These existing
+limits are explicit and have failure tests.
+
+Exports, structs, defaults, callbacks, and native field schemas match for 19
+checked modules. Field-key order is sorted for map-defined native schemas.
+Seven copied provider clauses and 258 existing function clauses match after
+helper-call and diagnostic changes. Public Signal and stored record contracts
+remain unchanged.
+
+All 2,268 Messaging tests passed, including integration, story, and PostgreSQL
+tests. The 15 new tests cover retention, ownership, provider boundaries, and
+dependency loss. Production-source coverage is 90.0% (11,469 of 12,740 lines;
+the unrounded ratio is 90.02%). All three new internal modules have full line
+coverage. Format, compilation, and 16 static checks passed.
+
+The saved C5 report contains the final commit and CI results. Stop after C5.
+Further admission, bounded retention, and recovery changes are separate work.

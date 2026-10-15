@@ -128,7 +128,7 @@ defmodule Jido.Messaging.Streaming do
       }) do
     min_interval = Keyword.get(opts, :min_update_interval_ms, @default_min_interval_ms)
 
-    case channel.send_message(chat_id, initial_content, opts) do
+    case Jido.Messaging.ProviderCall.legacy_send(channel, chat_id, initial_content, opts) do
       {:ok, %{message_id: message_id}} ->
         state =
           struct!(__MODULE__, %{
@@ -252,7 +252,7 @@ defmodule Jido.Messaging.Streaming do
 
   defp edit_message(%{channel: channel} = state, content) do
     if function_exported?(channel, :edit_message, 3) do
-      case channel.edit_message(state.chat_id, state.message_id, content) do
+      case Jido.Messaging.ProviderCall.legacy_edit(channel, state.chat_id, state.message_id, content) do
         {:ok, _} -> :ok
         error -> error
       end

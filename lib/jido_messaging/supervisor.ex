@@ -4,6 +4,11 @@ defmodule Jido.Messaging.Supervisor do
 
   Started by the host application's messaging module (defined with `use Jido.Messaging`).
   Each instance has its own isolated supervision tree.
+
+  The existing `:core` profile starts the canonical store and all runtime
+  integration groups. The `:full` profile also starts onboarding. These names
+  do not select a minimal store-only runtime. See `docs/runtime-ownership.md`
+  for owners, dependencies, and restart limits.
   """
   use Supervisor
 

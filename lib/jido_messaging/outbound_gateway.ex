@@ -5,8 +5,13 @@ defmodule Jido.Messaging.OutboundGateway do
   The gateway enforces:
 
   - Stable partition routing by `bridge_id:external_room_id`
-  - Bounded per-partition queues with pressure transition signals
+  - Bounded internal per-partition queues with pressure transition signals
   - Normalized outbound error categories for retry and terminal handling
+
+  Provider work, pressure delays, and retry waits run in the partition.
+  Calls can accumulate in its mailbox while it is busy. `queue_capacity`
+  bounds the internal queue; it does not bound that mailbox. A caller timeout
+  does not cancel a queued or active send. See `docs/outbound-queue-measurement.md`.
   """
 
   alias Jido.Messaging.AdapterBridge
