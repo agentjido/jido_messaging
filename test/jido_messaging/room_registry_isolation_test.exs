@@ -61,7 +61,7 @@ defmodule Jido.Messaging.RoomRegistryIsolationTest do
     assert :ok = RoomSupervisor.stop_room(Instance, drop.id)
     assert {:error, :not_found} = RoomSupervisor.stop_room(Instance, drop.id)
     kill_registry()
-    assert_eventually(fn -> is_pid(RoomServer.whereis(Instance, keep.id)) end)
+    assert_eventually(fn -> is_pid(RoomServer.whereis(Instance, keep.id)) end, timeout: 1_000)
     assert RoomSupervisor.count_rooms(Instance) == 1
     assert RoomServer.whereis(Instance, drop.id) == nil
     assert RoomServer.get_state(RoomServer.whereis(Instance, keep.id)).message_limit == 7
@@ -79,7 +79,7 @@ defmodule Jido.Messaging.RoomRegistryIsolationTest do
     assert {:error, :not_found} = RoomSupervisor.stop_room(Instance, room.id)
     assert {:error, :supervisor_unavailable} = RoomSupervisor.start_room(Instance, room)
     assert {:ok, _} = Supervisor.restart_child(context.root, id)
-    assert_eventually(fn -> is_pid(RoomServer.whereis(Instance, room.id)) end)
+    assert_eventually(fn -> is_pid(RoomServer.whereis(Instance, room.id)) end, timeout: 1_000)
     assert [{_, _}] = RoomSupervisor.list_rooms(Instance)
     assert_owners(context)
   end
@@ -93,14 +93,18 @@ defmodule Jido.Messaging.RoomRegistryIsolationTest do
 
     try do
       DesiredWorkers.restore(supervisor)
-      assert_eventually(fn -> :sys.get_state(Module.concat(supervisor, :DesiredWorkers)).retry != nil end)
+
+      assert_eventually(fn -> :sys.get_state(Module.concat(supervisor, :DesiredWorkers)).retry != nil end,
+        timeout: 1_000
+      )
+
       assert RoomServer.whereis(Instance, room.id) == external
       assert RoomSupervisor.count_rooms(Instance) == 0
     after
       GenServer.stop(external)
     end
 
-    assert_eventually(fn -> RoomSupervisor.count_rooms(Instance) == 1 end)
+    assert_eventually(fn -> RoomSupervisor.count_rooms(Instance) == 1 end, timeout: 1_000)
     assert_owners(context)
   end
 
@@ -113,13 +117,17 @@ defmodule Jido.Messaging.RoomRegistryIsolationTest do
 
     try do
       DesiredWorkers.restore(supervisor)
-      assert_eventually(fn -> :sys.get_state(Module.concat(supervisor, :DesiredWorkers)).retry != nil end)
+
+      assert_eventually(fn -> :sys.get_state(Module.concat(supervisor, :DesiredWorkers)).retry != nil end,
+        timeout: 1_000
+      )
+
       assert RoomSupervisor.count_rooms(Instance) == 0
     after
       true = Process.register(context.runtime_pid, context.runtime)
     end
 
-    assert_eventually(fn -> RoomSupervisor.count_rooms(Instance) == 1 end)
+    assert_eventually(fn -> RoomSupervisor.count_rooms(Instance) == 1 end, timeout: 1_000)
     assert_owners(context)
   end
 
@@ -127,7 +135,7 @@ defmodule Jido.Messaging.RoomRegistryIsolationTest do
     room = Jido.Chat.Room.new(%{type: :group, name: "unsaved"})
     {:ok, _} = RoomSupervisor.start_room(Instance, room)
     kill_registry()
-    assert_eventually(fn -> is_pid(RoomServer.whereis(Instance, room.id)) end)
+    assert_eventually(fn -> is_pid(RoomServer.whereis(Instance, room.id)) end, timeout: 1_000)
     assert RoomServer.get_room(RoomServer.whereis(Instance, room.id)) == room
     assert_owners(context)
   end

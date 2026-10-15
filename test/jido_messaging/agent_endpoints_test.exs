@@ -267,7 +267,10 @@ defmodule Jido.Messaging.AgentEndpointsTest do
           max_concurrency: 20,
           timeout: 15_000
         )
-        |> Enum.map(fn {:ok, {:ok, membership}} -> membership end)
+        |> Enum.map(fn {:ok, result} ->
+          assert {:ok, membership} = result, "Membership failure for #{inspect(messaging)}: #{inspect(result)}"
+          membership
+        end)
 
       assert membership_results |> Enum.map(& &1.id) |> Enum.uniq() |> length() == 1
 
