@@ -108,7 +108,8 @@ defmodule Jido.Messaging.IngestPolicyFailureTest do
           Ingest.ingest_incoming(Runtime, Channel, "owned-bridge", incoming(), opts)
         end)
 
-      assert_receive {:policy_called, worker}
+      on_exit(fn -> if Process.alive?(caller), do: Process.exit(caller, :kill) end)
+      assert_receive {:policy_called, worker}, 1_000
       monitor = Process.monitor(worker)
       on_exit(fn -> if Process.alive?(worker), do: Process.exit(worker, :kill) end)
       Process.exit(caller, :kill)
