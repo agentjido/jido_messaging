@@ -1,6 +1,6 @@
 # Runtime limits: C6–C14 results
 
-Date: 2026-10-15. Goal: complete the runtime limits checkpoints while retaining
+Date: 2026-10-15. Status: complete. Goal: complete the runtime limits checkpoints while retaining
 the public API, payload validation, stored records, and request commit rules.
 The [checkpoint plan](plans/2026-10-15-runtime-limits-checkpoints.md) records each
 change, local check, and CI result. No package merge or publication is included.
@@ -62,7 +62,7 @@ and [raw data](benchmarks/c14-queue.json).
 | C14 contract baseline | 160 modules unchanged: exports, defaults, structs, callbacks, and Signal schemas |
 | Format, compilation, and static checks | Passed; warnings as errors and 16 Credo checks |
 | C13 CI | 22 passed, one expected skip on `a4b0fcd` |
-| Final C14 CI | Pending delivery to [Messaging PR 109](https://github.com/agentjido/jido_messaging/pull/109) |
+| Final C14 CI | 22 passed, one expected skip on `6835102`, [Messaging PR 109](https://github.com/agentjido/jido_messaging/pull/109) |
 | Chat CI | 20 passed, one expected skip on `9a07c7e` |
 
 The only C14 source addition is the combined-failure test file. Production source
@@ -92,3 +92,12 @@ unchanged. No merge or package publication was performed.
 Unknown outcomes stay held and are not automatically retried. Public error
 shapes and canonical stored records remain unchanged. The new phase and backend
 functions are private additions; existing public exports remain available.
+
+
+## Delivery
+
+Messaging C12: `246bf95`, with CI correction `8c1b231`. C13: `a4b0fcd`.
+C14: `6835102`. Chat's final code commit is `9a07c7e`. The existing PRs are
+[Messaging 109](https://github.com/agentjido/jido_messaging/pull/109) and
+[Chat 66](https://github.com/agentjido/jido_chat/pull/66). All checkpoint CI gates
+passed. This final report update changes documentation only.

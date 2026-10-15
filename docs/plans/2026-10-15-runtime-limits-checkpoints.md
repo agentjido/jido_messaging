@@ -1,7 +1,7 @@
 # Messaging runtime limits: next checkpoints
 
 Date: 2026-10-15.
-Status: active goal. All checkpoints authorized on 2026-10-15.
+Status: complete. All checkpoints verified on 2026-10-15.
 Baseline: Messaging `1a544f9bbca469ea26be051ba2bf0398d371724d` (C5).
 
 Continue after the completed [C1–C5 plan](2026-10-14-maintainability-checkpoints.md).
@@ -87,7 +87,7 @@ stored records. Compare public contracts separately from those internal details.
 | C11 | Complete | Chat: 402 tests, 2,429/2,651 lines (91.6%). Messaging: 2,336 tests with PostgreSQL, integration, and story tests; 11,858/13,145 lines (90.2%). Contract comparison: 160 modules, only eight specified private exports added. Format, compilation, and configured Credo checks passed. Chat CI: 20 passed, one expected skip on `9a07c7e`. |
 | C12 | Complete; CI passed | Full Messaging suite: 2,343 passed with PostgreSQL, integration, and story tests; 11,886/13,170 lines (90.2%). Final focused suite: 45 passed, including one added shutdown test. Contract comparison: 160 modules unchanged. Format, compilation, and 16 Credo checks passed. Provider waits, retry waits, and throttle waits leave admission responsive. |
 | C13 | Complete; CI passed on `a4b0fcd` | Full suite: 2,352 passed, including PostgreSQL; 11,998/13,298 lines (90.2%). Final focused suite: 46 passed, including buffer startup failure handling. Contract baseline: 160 modules unchanged. Format, warnings-as-errors, and 16 Credo checks passed. Five capacity-64 bursts meet the latency target. See queue measurement and raw C13 JSON. |
-| C14 | Local verification complete; CI pending | Two combined-fault scenarios passed in the full Messaging suite: 2,355 tests, including PostgreSQL; 12,001/13,299 production lines (90.2%). Chat: 402 tests; 2,429/2,651 lines (91.6%). Contract baseline: 160 modules unchanged. Format, warnings-as-errors, and 16 Credo checks passed. Repeated 100,000-ID retention and both queue workloads passed. See `docs/runtime-limits-results.md`. |
+| C14 | Complete; CI passed on `6835102` | Two combined-fault scenarios passed in the full Messaging suite: 2,355 tests, including PostgreSQL; 12,001/13,299 production lines (90.2%). Chat: 402 tests; 2,429/2,651 lines (91.6%). Contract baseline: 160 modules unchanged. Format, warnings-as-errors, and 16 Credo checks passed. Repeated 100,000-ID retention and both queue workloads passed. See `docs/runtime-limits-results.md`. |
 
 ## C6 — Bus subscription recovery
 
@@ -405,3 +405,10 @@ already stopped worker, and wait up to one second for cleanup.
 C13 CI passed on `a4b0fcd` (22 checks passed, one expected skip). The C14
 local report and raw repeated measurements are in
 [the final results](../runtime-limits-results.md).
+
+
+C14 CI passed on `6835102` (22 checks passed, one expected skip). Chat CI passed
+on `9a07c7e` (20 checks passed, one expected skip). All checkpoints C6–C14,
+including C8a–C8e, are complete. The final source and tests are delivered in the
+existing PRs. No merge or package publication was performed. See the final
+results for measured bounds and remaining limits.
