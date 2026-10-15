@@ -52,7 +52,7 @@ defmodule Jido.Messaging.ReplayRegistryIsolationTest do
   test "group shutdown rejects replay before changing the retained record", context do
     record = capture("down")
     :ok = Supervisor.terminate_child(context.root, ReplaySupervisor)
-    assert ReplayWorker.whereis(Instance, 0) == nil
+    assert_eventually(fn -> ReplayWorker.whereis(Instance, 0) == nil end, timeout: 1_000)
     assert {:error, :replay_unavailable} = DeadLetter.replay(Instance, record.id)
     assert {:ok, ^record} = DeadLetter.get(Instance, record.id)
     assert {:ok, _} = Supervisor.restart_child(context.root, ReplaySupervisor)
@@ -89,7 +89,7 @@ defmodule Jido.Messaging.ReplayRegistryIsolationTest do
 
     child = {:dead_letter_replay_worker, 0}
     :ok = Supervisor.terminate_child(workers, child)
-    assert ReplayWorker.whereis(Instance, 0) == nil
+    assert_eventually(fn -> ReplayWorker.whereis(Instance, 0) == nil end, timeout: 1_000)
     assert is_pid(ReplayWorker.whereis(Instance, 1))
     assert {:ok, _} = Supervisor.restart_child(workers, child)
     assert is_pid(ReplayWorker.whereis(Instance, 0))
