@@ -80,7 +80,8 @@ stored records. Compare public contracts separately from those internal details.
 | C8a | Local verification complete; CI pending | 2,292 tests passed. Coverage: 11,637/12,899 lines (90.2%). Public contracts: 24 modules unchanged. Format, compilation, and 16 Credo checks passed. |
 | C8b | Local verification complete; CI pending | 2,297 tests passed. Coverage: 11,660/12,920 lines (90.2%). Public contracts: 25 modules unchanged. Format, compilation, and 16 Credo checks passed. |
 | C8c | Local verification complete; CI pending | 2,303 tests passed. Coverage: 11,661/12,929 lines (90.1%). Public contracts: 27 modules unchanged. Format, compilation, and 16 Credo checks passed. |
-| C8d–C8e | Pending | |
+| C8d | Local verification complete; CI pending | 2,307 tests passed. Coverage: 11,665/12,929 lines (90.2%). Public contracts: 29 modules unchanged. Format, compilation, and 16 Credo checks passed. |
+| C8e | Pending | |
 | C9–C14 | Pending | |
 
 ## C6 — Bus subscription recovery
@@ -372,3 +373,7 @@ run found two 100 ms recovery waits competing with the 100 ms retry timer; commi
 That run also reported an intermittent existing concurrent endpoint-membership
 lookup failure on OTP 29. The assertion now identifies the affected adapter.
 Keep this issue open until a verified fix or clean repeated evidence resolves it.
+
+C8b CI passed all test jobs, including PostgreSQL and the earlier recovery
+regressions. Dialyzer found one unreachable private restoration clause. Commit
+`394fc99` removes it; 25 focused agent tests passed. Final CI remains pending.

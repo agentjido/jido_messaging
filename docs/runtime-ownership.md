@@ -1,10 +1,10 @@
 # Runtime ownership and failure limits
 
-This document defines the runtime contract after C8c. Public functions, existing
+This document defines the runtime contract after C8d. Public functions, existing
 process names, state structs, Signal schemas, and stored records remain unchanged.
-C6 adds private subscription workers. C7 and C8a–C8c isolate the instance, room,
-agent, and bridge registries with their workers. Request retention and provider
-scheduling remain as measured in C5.
+C6 adds private subscription workers. C7 and C8a–C8d isolate the instance, room,
+agent, bridge, and replay registries with their workers. Request retention and
+provider scheduling remain as measured in C5.
 
 ## Process groups
 
@@ -143,7 +143,8 @@ kill a partition after a provider effect but before its reply.
   and the Bus remain alive. Completed and unknown request entries stay intact.
   Room-registry loss restores desired room workers in its own branch. Agent-registry loss restores desired runners with their handler settings.
   Bridge-registry loss restores desired bridge workers and listeners. Replay
-  and onboarding registries retain their earlier limits until their C8 steps.
+  workers recover in their own branch. Onboarding retains its earlier limit
+  until C8e.
 * A partition restart preserves a Runtime-owned Chat binding. A request whose
   provider owner died after an effect remains `request_outcome_unknown` and
   terminates at attempt one. It does not cause a second provider call.
@@ -259,3 +260,20 @@ it too, with the existing `not_found` result. Failed startup and duplicate start
 do not replace desired configuration. Recovery waits for stale external
 registrations and for Runtime availability. Tests check listener replacement,
 exact config revision, request history, and unchanged unrelated process PIDs.
+
+## Replay registry recovery after C8d
+
+ReplaySupervisor keeps its existing name. It now places the replay registry
+before a nested supervisor for its static workers and uses `rest_for_one`. One
+registry failure replaces the worker group together. DeadLetter stays outside
+this branch, so its records, order, replay attempts, and results remain intact.
+
+During group downtime, replay returns `replay_unavailable` before it changes a
+dead-letter record. A retained running attempt still returns `replay_in_progress`
+for an ordinary retry. The existing explicit force option is unchanged. Recovery
+does not start a new replay attempt.
+
+Tests replace 64 replay workers and preserve completed and running records,
+request history, Runtime, the Bus, and unrelated groups. An external registry
+prevents startup without adoption or termination of its workers. Static workers
+retain ordinary Supervisor stop/restart behavior.
