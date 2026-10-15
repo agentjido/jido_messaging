@@ -127,6 +127,31 @@ defmodule Jido.Messaging.RequestStore do
     end
   end
 
+  defp request({:remember, key, value}, _from, state) do
+    encoded_key = encode(key)
+    entry = {key, :metadata, :metadata, {:done, value}}
+
+    case store_call(state, {:write, encoded_key, encode(entry), 1}) do
+      {:ok, []} -> {:reply, :ok, cache(drop_cache(state, encoded_key), encoded_key, entry)}
+      _ -> unavailable(state)
+    end
+  end
+
+  defp request({:lookup, key}, _from, state) do
+    encoded_key = encode(key)
+
+    case read(state, encoded_key) do
+      {:ok, {^key, :metadata, :metadata, {:done, value}} = entry} ->
+        {:reply, {:ok, value}, cache(state, encoded_key, entry)}
+
+      {:ok, nil} ->
+        {:reply, {:error, :not_found}, state}
+
+      _ ->
+        unavailable(state)
+    end
+  end
+
   defp request(_operation, _from, state),
     do: {:stop, :request_store_failed, Policy.error(:request_outcome_unknown), state}
 
@@ -208,6 +233,21 @@ defmodule Jido.Messaging.RequestStore do
     token = state.retry || make_ref()
     if is_nil(state.retry), do: Process.send_after(self(), {:reopen, token}, 100)
     %{state | worker: nil, retry: token, cache: %{}, order: :queue.new(), bytes: 0}
+  end
+
+  defp drop_cache(state, key) do
+    case Map.pop(state.cache, key) do
+      {nil, _cache} ->
+        state
+
+      {encoded, cache} ->
+        %{
+          state
+          | cache: cache,
+            bytes: state.bytes - byte_size(encoded),
+            order: :queue.filter(&(&1 != key), state.order)
+        }
+    end
   end
 
   defp cache(state, key, entry) do

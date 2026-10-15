@@ -89,7 +89,7 @@ defmodule Jido.Messaging.RuntimeBindingReadOutcomeTest do
       assert {:error, ^expected} = Runtime.binding(context.runtime, "owned")
       assert Process.alive?(Process.whereis(context.runtime))
       assert Runtime.get_state(context.runtime).bindings == %{"owned" => binding}
-      assert :ets.info(binding.resources, :size) == 0
+      assert :ets.info(binding.resources, :size) == 1
       refute_received :configured
       Agent.update(Store.Control, fn _ -> :pass end)
       assert {:ok, ^binding} = Runtime.binding(context.runtime, "owned")

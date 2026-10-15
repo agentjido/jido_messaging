@@ -95,36 +95,39 @@ Public error codes and retry flags remain unchanged.
 
 ## Request retention
 
-`RequestLedger` is a small ETS protocol, not a new process. A typed admission
-key is `{principal_id, request_id}`. The digest covers request type and payload.
-The stored authority includes grant and policy revisions, constraints, and any
-route decision. Validation and authorization happen before cached results are
-read. Revocation cannot expose an earlier cached success.
+`RequestLedger` uses a private SQLite store with a bounded memory cache. A typed
+admission key is `{principal_id, request_id}`. The digest covers request type and
+payload. The stored authority includes grant and policy revisions, constraints,
+and any route decision. Validation and authorization occur before cached replay.
+Revocation denies access to an earlier success.
 
 | Entry | Same payload and authority | Different payload or authority | Retention |
 | --- | --- | --- | --- |
 | Running, owner alive | `request_in_progress` | `request_conflict` | Runtime lifetime |
-| Running, owner dead | `request_outcome_unknown` | `request_conflict` | Runtime lifetime; never reclaimed automatically |
-| Completed success or failure | Original result | `request_conflict` | Runtime lifetime; no age or size eviction |
+| Running, owner dead or store worker replaced | `request_outcome_unknown` | `request_conflict` | Runtime lifetime; no automatic reclaim |
+| Completed success or failure | Original result | `request_conflict` | Runtime lifetime on disk |
 
-The existing four-element ETS entry format is unchanged. No request ID expires
-while Runtime owns the table. A process restart that destroys Runtime also
-destroys these entries. This is local deduplication, not a durable exactly-once
-guarantee. Reconcile an uncertain external effect before restarting an owner or
-submitting a new ID. C5 adds no reconciliation API or automatic unknown retry.
+Runtime-created Chat bindings use this store too. Each binding generation has a
+separate private namespace. Outer Messaging claims use another namespace. Chat
+request results, failure classes, and reason tags share the same cache limits.
+The binding resource table holds one backend locator plus resource rows; it has
+no growing request or failure index. Media request references use this store too. Provider options do not contain this locator.
 
-Chat also retains its own per-binding request entries. A gateway success cache
-is a separate bounded FIFO; its default limit is 1,000. Cache eviction does not
-release a stable Chat request ID. Callers that omit a stable request ID do not
-get that protection after the gateway cache is lost. Inbound Deduper has another
-protocol: ordinary entries expire; explicitly unknown entries stay pinned until
-clear or owner shutdown.
+External bindings keep their creator, backend, and retention rules. Registration
+does not transfer ownership or change a live backend. Standalone Chat continues
+to use ETS. The memory bound covers Messaging-owned request history and bindings
+created by Runtime. It does not cover external bindings or all resource values.
 
-Memory therefore grows with unique typed requests during a long Runtime life.
-A bounded completed-result window would need permanent or durable ID
-tombstones, an explicit expired-ID response, and result-resource cleanup rules.
-Evicting entries and accepting old IDs as new could repeat external effects.
-That policy is outside C5 because it changes current public return behavior.
+A replay does not renew a resource owner, expiry, cancellation, or failed state.
+Runtime shutdown ends the replay contract. This is local deduplication. It is not
+a durable exactly-once guarantee. Reconcile an uncertain external effect before
+restarting Runtime or submitting a new ID.
+
+The gateway success cache is a separate bounded FIFO with a default of 1,000.
+Its eviction does not release a stable Chat request ID. Callers that omit a
+stable ID do not get that protection after the gateway cache is lost. Inbound
+Deduper has separate rules: normal entries expire; unknown entries stay pinned
+until clear or owner shutdown.
 
 ## Verified restart limits
 
@@ -320,5 +323,5 @@ shutdown, and storage failure before and after a provider effect. The full suite
 also retains earlier authorization and caller-timeout checks. See the
 [retention measurement](request-retention-measurement.md) for separate ETS, BEAM,
 native SQLite, file-size, and latency results. Disk use remains unbounded.
-C10 will cover Runtime-created Chat binding history; external bindings retain
-their existing owner and backend.
+C10 applies the same store to Runtime-created Chat bindings. External bindings
+retain their existing owner and backend.

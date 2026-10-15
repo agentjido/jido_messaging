@@ -105,7 +105,11 @@ defmodule Jido.Messaging.AdapterBridgeOperationsTest do
     file = FileUpload.new(%{kind: :image, data: "complete"})
     {:ok, ref} = Jido.Chat.put_resource(context.binding, "file", file)
     digest = :crypto.hash(:sha256, :erlang.term_to_binary(file, [:deterministic]))
-    :ets.insert(context.binding.resources, {{:messaging_media_resource, "prepared"}, digest, ref})
+
+    {:ok, {:claimed, claim}} =
+      Jido.Chat.RequestStore.claim(context.binding, {:messaging_media_resource, "prepared"}, digest)
+
+    :ok = Jido.Chat.RequestStore.complete(context.binding, claim, {:ok, ref})
 
     assert {:error, %Jido.Chat.Errors.Contract{code: :resource_owner_mismatch}} =
              Task.async(fn ->
@@ -142,7 +146,11 @@ defmodule Jido.Messaging.AdapterBridgeOperationsTest do
       end
 
       digest = :crypto.hash(:sha256, :erlang.term_to_binary(file, [:deterministic]))
-      :ets.insert(context.binding.resources, {{:messaging_media_resource, "unavailable"}, digest, ref})
+
+      {:ok, {:claimed, claim}} =
+        Jido.Chat.RequestStore.claim(context.binding, {:messaging_media_resource, "unavailable"}, digest)
+
+      :ok = Jido.Chat.RequestStore.complete(context.binding, claim, {:ok, ref})
 
       assert {:error, %{class: :fatal, reason: {:provider_operation_failed, code}}} =
                AdapterBridge.send_media(MockAdapter, "room", %{kind: :image, data: "complete"},

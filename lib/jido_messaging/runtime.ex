@@ -262,8 +262,13 @@ defmodule Jido.Messaging.Runtime do
       end
 
     case result do
-      {:ok, binding} -> {:reply, {:ok, binding}, %{state | bindings: Map.put(state.bindings, id, binding)}}
-      error -> {:reply, error, state}
+      {:ok, binding} ->
+        [{Jido.Messaging.RequestStore, store}] = :ets.lookup(state.request_admissions, Jido.Messaging.RequestStore)
+        :ok = Jido.Chat.RequestStore.install(binding, {Jido.Messaging.ChatRequestStore, {store, make_ref()}})
+        {:reply, {:ok, binding}, %{state | bindings: Map.put(state.bindings, id, binding)}}
+
+      error ->
+        {:reply, error, state}
     end
   end
 

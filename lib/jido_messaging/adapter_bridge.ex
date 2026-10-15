@@ -132,25 +132,21 @@ defmodule Jido.Messaging.AdapterBridge do
     key = {:messaging_media_resource, request_id}
     digest = :crypto.hash(:sha256, :erlang.term_to_binary(file, [:deterministic]))
 
-    case :ets.lookup(binding.resources, key) do
-      [{^key, ^digest, ref}] ->
-        {:ok, ref}
+    case Jido.Chat.RequestStore.claim(binding, key, digest) do
+      {:ok, {:cached, result}} ->
+        result
 
-      [] ->
-        with {:ok, ref} <- Jido.Chat.put_resource(binding, "file", file) do
-          if :ets.insert_new(binding.resources, {key, digest, ref}) do
-            {:ok, ref}
-          else
-            :ok = Jido.Chat.cancel_resource(binding, ref)
-            media_resource(binding, file, request_id)
-          end
+      {:ok, {:claimed, claim}} ->
+        result = Jido.Chat.put_resource(binding, "file", file)
+
+        case Jido.Chat.RequestStore.complete(binding, claim, result) do
+          :ok -> result
+          error -> error
         end
 
-      _ ->
-        Jido.Chat.Signal.Policy.error(:request_conflict)
+      error ->
+        error
     end
-  rescue
-    ArgumentError -> Jido.Chat.Signal.Policy.error(:invalid_binding)
   end
 
   @doc false

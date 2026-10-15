@@ -129,7 +129,7 @@ defmodule Jido.Messaging.MixProject do
       {env, _} when env in [:dev, :test] ->
         {:jido_chat,
          git: "https://github.com/agentjido/jido_chat.git",
-         ref: "2a9c21a860cb8c5f1069a865a981a8be035f56c0",
+         ref: "45ee7183c625647faba9596e473e7194b2590d75",
          override: true}
 
       _ ->

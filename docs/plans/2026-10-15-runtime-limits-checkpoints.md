@@ -82,8 +82,9 @@ stored records. Compare public contracts separately from those internal details.
 | C8c | Complete | 2,303 tests passed. Coverage: 11,661/12,929 lines (90.1%). Public contracts: 27 modules unchanged. Format, compilation, and 16 Credo checks passed. CI: 22 passed, one expected skip on `32f61ea`. |
 | C8d | Complete | 2,307 tests passed. Coverage: 11,665/12,929 lines (90.2%). Public contracts: 29 modules unchanged. Format, compilation, and 16 Credo checks passed. CI: 22 passed, one expected skip on `32f61ea`. |
 | C8e | Complete | 2,313 tests passed. Coverage: 11,673/12,937 lines (90.2%). Public contracts: 33 modules unchanged. Format, compilation, and 16 Credo checks passed. CI: 22 passed, one expected skip on `e01764f`. |
-| C9 | Local verification complete; CI pending | 2,326 tests passed with PostgreSQL, integration, and story tests. Coverage: 11,823/13,093 lines (90.3%). Public contracts: 33 modules unchanged. Format, compilation, and 16 Credo checks passed. 100,000 requests retained on disk; 1,000 entries / 340,000 encoded bytes in cache. See the retention measurement. |
-| C10–C14 | Pending | |
+| C9 | Complete | 2,326 tests passed with PostgreSQL, integration, and story tests. Coverage: 11,823/13,093 lines (90.3%). Public contracts: 33 modules unchanged. Format, compilation, and 16 Credo checks passed. 100,000 requests retained on disk; 1,000 entries / 340,000 encoded bytes in cache. See the retention measurement. |
+| C10 | Local verification complete; Messaging CI pending | Chat: 374 tests, 2,401/2,610 lines (91.9%). Messaging: 2,333 tests with PostgreSQL, integration, and story tests; 11,832/13,112 lines (90.2%). Public contracts: 159 modules unchanged. Format, compilation, and configured Credo checks passed. Chat CI: 20 passed, one expected skip on `45ee718`. Messaging pins that commit. |
+| C11–C14 | Pending | |
 
 ## C6 — Bus subscription recovery
 
@@ -384,3 +385,5 @@ reconciliation task could reach a replacement instance. The task is now linked
 to ConfigStore, and a held-lock test verifies owner shutdown. The fix passed all
 22 required CI checks, with one expected skip. C9 also rejects a dead subscription
 worker as current while Registry finishes its asynchronous cleanup.
+
+C9 final CI passed on `1d0e55f` (22 passed, one expected skip). Both earlier OTP 28 failures checked the Registry before asynchronous cleanup after a worker stop. The test now waits for cleanup; four focused replay tests passed.
