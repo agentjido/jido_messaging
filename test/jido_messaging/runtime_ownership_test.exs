@@ -45,6 +45,7 @@ defmodule Jido.Messaging.RuntimeOwnershipTest do
 
     for child <- [
           Runtime,
+          Jido.Messaging.SubscriptionSupervisor,
           Jido.Messaging.RoomSupervisor,
           Jido.Messaging.AgentSupervisor,
           Jido.Messaging.SessionManager.Supervisor,
@@ -61,7 +62,7 @@ defmodule Jido.Messaging.RuntimeOwnershipTest do
 
     refute Process.whereis(Module.concat(Instance, OnboardingSupervisor))
     refute Process.whereis(Module.concat(Instance, Registry.Onboarding))
-    assert length(ids) == 16
+    assert length(ids) == 17
   end
 
   test "Runtime owns request and created-binding tables; external bindings keep their owner", %{

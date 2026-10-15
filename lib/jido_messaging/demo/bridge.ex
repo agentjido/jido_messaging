@@ -21,9 +21,8 @@ defmodule Jido.Messaging.Demo.Bridge do
   use GenServer
   require Logger
 
-  alias Jido.Messaging.{AuthorizationScope, Events, Message, Runtime}
+  alias Jido.Messaging.{AuthorizationScope, Events, Message, Runtime, Subscription}
   alias Jido.Messaging.Signal.{Context, Identity, SendMessage}
-  alias Jido.Messaging.Supervisor, as: MessagingSupervisor
 
   @schema Zoi.struct(
             __MODULE__,
@@ -112,20 +111,33 @@ defmodule Jido.Messaging.Demo.Bridge do
 
   @impl true
   def handle_info(:subscribe, state) do
-    bus_name = MessagingSupervisor.signal_bus_name(state.instance_module)
-
-    case Jido.Signal.Bus.subscribe(bus_name, "jido.messaging.room.message_added",
-           selector: [source: Events.source(state.instance_module), subject: Identity.room_subject(state.room_id)]
+    case Subscription.ensure(state.instance_module, self(), "jido.messaging.room.message_added",
+           source: Events.source(state.instance_module),
+           subject: Identity.room_subject(state.room_id)
          ) do
-      {:ok, _subscription_id} ->
-        Logger.info("[Bridge] Subscribed to Signal Bus #{inspect(bus_name)}")
-        {:noreply, %{state | subscribed: true}}
+      {:ok, _worker} ->
+        {:noreply, state}
 
-      {:error, reason} ->
-        Logger.debug("[Bridge] Failed to subscribe to #{inspect(bus_name)}: #{inspect(reason)}, retrying in 100ms")
+      {:error, _reason} ->
         Process.send_after(self(), :subscribe, 100)
         {:noreply, state}
     end
+  end
+
+  def handle_info({:messaging_subscription_started, worker}, state) do
+    Subscription.monitor(worker)
+    {:noreply, state}
+  end
+
+  def handle_info({:messaging_subscription_status, worker, subscribed}, state) do
+    if Subscription.current?(state.instance_module, self(), worker),
+      do: {:noreply, %{state | subscribed: subscribed}},
+      else: {:noreply, state}
+  end
+
+  def handle_info({:messaging_subscription_down, _ref, :process, _worker, _reason}, state) do
+    send(self(), :subscribe)
+    {:noreply, %{state | subscribed: false}}
   end
 
   @impl true

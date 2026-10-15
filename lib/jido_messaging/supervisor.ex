@@ -66,6 +66,7 @@ defmodule Jido.Messaging.Supervisor do
            instance_module: instance_module,
            persistence: persistence,
            persistence_opts: persistence_opts},
+          {Jido.Messaging.SubscriptionSupervisor, instance_module: instance_module},
           {Jido.Messaging.RoomSupervisor, name: room_supervisor_name, instance_module: instance_module},
           {Jido.Messaging.AgentSupervisor, name: agent_supervisor_name, instance_module: instance_module},
           {Jido.Messaging.SessionManager.Supervisor,

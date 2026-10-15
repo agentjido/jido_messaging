@@ -1,8 +1,9 @@
 # Runtime ownership and failure limits
 
-This document defines the C5 contract. Public functions, process names, state
-structs, Signal schemas, and stored records remain unchanged. C5 adds no workers,
-process groups, expiry timer, supervisor strategy, or concurrency option.
+This document defines the runtime contract after C6. Public functions, existing
+process names, state structs, Signal schemas, and stored records remain unchanged.
+C6 adds private subscription workers. Request retention, provider scheduling,
+and the existing supervisor strategies remain as measured in C5.
 
 ## Process groups
 
@@ -11,7 +12,7 @@ OTP default: three restarts in five seconds. Each dynamic supervisor has its
 own limit. A child failure can therefore cause a parent restart when many
 dependent workers fail together.
 
-The current `:core` profile starts all 16 base children. The `:full` profile
+The current `:core` profile starts all 17 base children. The `:full` profile
 also starts the onboarding registry and supervisor. An explicit `:onboarding`
 feature also enables those two children. Unknown profile values retain the
 existing full-profile behavior. `:core` is not a minimal store-only profile.
@@ -19,7 +20,7 @@ existing full-profile behavior. `:core` is not a minimal store-only profile.
 | Responsibility | Processes | Requirement |
 | --- | --- | --- |
 | Canonical state and typed commands | Runtime, RoomSupervisor, RoomServer, room registry | Required for room workflows and direct execution |
-| Observations | Instance Signal Bus | Required for publication; does not execute commands |
+| Observations | Instance Signal Bus; private subscription supervisor and workers | Required for publication; does not execute commands |
 | Agent integration | AgentSupervisor, AgentRunner, agent registry | Required for assigned handlers; starts in both existing profiles |
 | Delivery and routing | SessionManager supervisor/partitions, OutboundGateway supervisor/partitions, DeadLetter, replay supervisor/workers | Required by existing delivery paths; starts in both profiles |
 | Provider connections | InstanceSupervisor and InstanceServer; BridgeSupervisor and BridgeServer | Required by connection/configuration paths; starts in both profiles |
@@ -132,9 +133,10 @@ kill a partition after a provider effect but before its reply.
   and ETS records. External binding tables survive if their owner survives,
   but their registration must be restored.
 * Bus restart leaves Runtime alive but removes ordinary subscriptions. Public
-  subscribers must subscribe again. Existing AgentRunner and Demo subscriptions
-  have no Bus-restart monitor; restart those consumers or the instance to restore
-  them. Missed observations are not replayed by the current memory store.
+  subscribers must subscribe again. AgentRunner and Demo.Bridge each have a
+  private worker that monitors the Bus and restores their subscription. The
+  worker can restore it while the consumer's handler is busy. Missed
+  observations are not replayed by the current memory store.
 * Registry loss restarts registered delivery workers. A large simultaneous
   restart burst can exceed supervisor limits and restart the whole instance.
   Recovery can therefore reset Runtime and its volatile state. It does not
@@ -146,6 +148,25 @@ kill a partition after a provider effect but before its reply.
 These tests define existing failure limits. They do not claim continuous
 delivery across dependency loss. Before a later restart-policy change, group
 the instance registry with its registered workers and test isolated recovery.
-Before a later Bus recovery change, define subscription reattachment and missed
-observation behavior. Do not replace the entire instance strategy with
-`rest_for_one` without those contracts.
+Do not replace the entire instance strategy with `rest_for_one` without those
+contracts.
+
+## Managed subscriptions after C6
+
+Each library consumer owns one subscription worker. The worker monitors its
+consumer and the current Bus PID. It retries with one timer and a delay between
+100 ms and one second. Old retry tokens and Bus monitor messages are ignored.
+The private registry prevents duplicate workers for the same consumer PID.
+
+The worker uses the existing type and source/subject selectors. The Bus sends
+observations directly to the consumer through its `target:` option. Consumer
+validation and handling are unchanged. A stable private subscription ID lets
+a replacement worker remove an old registration before it subscribes again.
+
+Consumer shutdown removes the worker, timer, and subscription. Consumers monitor
+their workers and restore them after private subscription-group failure. The
+public `subscribed` field changes when the consumer processes status messages;
+a busy handler can delay that field update while its worker recovers separately.
+
+Recovery restores future observations. It does not replay missed observations
+or change the contract for ordinary public Bus subscribers.
