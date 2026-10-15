@@ -36,6 +36,7 @@ defmodule Jido.Messaging.Supervisor do
            collision_policy: bridge_collision_policy
          ) do
       {:ok, _bootstrap_result} ->
+        desired_workers = Jido.Messaging.DesiredWorkers.new(instance_module)
         runtime_name = Module.concat(instance_module, Runtime)
         room_registry_name = Module.concat(instance_module, Registry.Rooms)
         room_supervisor_name = Module.concat(instance_module, RoomSupervisor)
@@ -58,7 +59,6 @@ defmodule Jido.Messaging.Supervisor do
         base_children = [
           {Registry, keys: :unique, name: room_registry_name},
           {Registry, keys: :unique, name: agent_registry_name},
-          {Registry, keys: :unique, name: instance_registry_name},
           {Registry, keys: :unique, name: bridge_registry_name},
           {Jido.Signal.Bus, name: signal_bus_name},
           {Jido.Messaging.Runtime,
@@ -69,16 +69,21 @@ defmodule Jido.Messaging.Supervisor do
           {Jido.Messaging.SubscriptionSupervisor, instance_module: instance_module},
           {Jido.Messaging.RoomSupervisor, name: room_supervisor_name, instance_module: instance_module},
           {Jido.Messaging.AgentSupervisor, name: agent_supervisor_name, instance_module: instance_module},
-          {Jido.Messaging.SessionManager.Supervisor,
-           name: session_manager_supervisor_name, instance_module: instance_module},
           {Jido.Messaging.DeadLetter, name: dead_letter_name, instance_module: instance_module},
           {Jido.Messaging.DeadLetter.ReplaySupervisor,
            name: dead_letter_replay_supervisor_name, instance_module: instance_module},
-          {Jido.Messaging.OutboundGateway.Supervisor,
-           name: outbound_gateway_supervisor_name, instance_module: instance_module},
           {Jido.Messaging.ConfigStore, name: config_store_name, instance_module: instance_module},
           {Jido.Messaging.Deduper, name: deduper_name, instance_module: instance_module},
-          {Jido.Messaging.InstanceSupervisor, name: instance_supervisor_name, instance_module: instance_module},
+          {Jido.Messaging.DesiredWorkers, supervisor: instance_supervisor_name, table: desired_workers},
+          {Jido.Messaging.RegistryDomain,
+           registry: instance_registry_name,
+           children: [
+             {Jido.Messaging.SessionManager.Supervisor,
+              name: session_manager_supervisor_name, instance_module: instance_module},
+             {Jido.Messaging.OutboundGateway.Supervisor,
+              name: outbound_gateway_supervisor_name, instance_module: instance_module},
+             {Jido.Messaging.InstanceSupervisor, name: instance_supervisor_name, instance_module: instance_module}
+           ]},
           {Jido.Messaging.BridgeSupervisor, name: bridge_supervisor_name, instance_module: instance_module}
         ]
 

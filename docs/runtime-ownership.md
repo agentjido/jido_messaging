@@ -1,9 +1,9 @@
 # Runtime ownership and failure limits
 
-This document defines the runtime contract after C6. Public functions, existing
+This document defines the runtime contract after C7. Public functions, existing
 process names, state structs, Signal schemas, and stored records remain unchanged.
-C6 adds private subscription workers. Request retention, provider scheduling,
-and the existing supervisor strategies remain as measured in C5.
+C6 adds private subscription workers. C7 isolates the instance registry and its
+workers. Request retention and provider scheduling remain as measured in C5.
 
 ## Process groups
 
@@ -12,7 +12,7 @@ OTP default: three restarts in five seconds. Each dynamic supervisor has its
 own limit. A child failure can therefore cause a parent restart when many
 dependent workers fail together.
 
-The current `:core` profile starts all 17 base children. The `:full` profile
+The current `:core` profile starts all base process groups. The `:full` profile
 also starts the onboarding registry and supervisor. An explicit `:onboarding`
 feature also enables those two children. Unknown profile values retain the
 existing full-profile behavior. `:core` is not a minimal store-only profile.
@@ -28,7 +28,8 @@ existing full-profile behavior. `:core` is not a minimal store-only profile.
 | Onboarding | Onboarding registry/supervisor and task workers | Optional; selected as above |
 | Demo and Jidoka integration | Demo modules, host handlers, endpoint/identity services | Not started as separate children by the instance supervisor |
 
-These are responsibility groups, not new supervisor branches. A future minimal
+These rows describe responsibilities. The instance registry has its own recovery
+branch, as described below. A future minimal
 profile must select complete dependency groups. It must keep existing profiles
 compatible. A package split must first define the host boundary for Demo and
 Jidoka integration; C5 does not split packages.
@@ -137,19 +138,16 @@ kill a partition after a provider effect but before its reply.
   private worker that monitors the Bus and restores their subscription. The
   worker can restore it while the consumer's handler is busy. Missed
   observations are not replayed by the current memory store.
-* Registry loss restarts registered delivery workers. A large simultaneous
-  restart burst can exceed supervisor limits and restart the whole instance.
-  Recovery can therefore reset Runtime and its volatile state. It does not
-  guarantee preservation of requests or ETS records.
+* Instance-registry loss restarts its delivery and provider worker group. Runtime
+  and the Bus remain alive. Completed and unknown request entries stay intact.
+  Other instance registries retain their earlier recovery limits until C8.
 * A partition restart preserves a Runtime-owned Chat binding. A request whose
   provider owner died after an effect remains `request_outcome_unknown` and
   terminates at attempt one. It does not cause a second provider call.
 
-These tests define existing failure limits. They do not claim continuous
-delivery across dependency loss. Before a later restart-policy change, group
-the instance registry with its registered workers and test isolated recovery.
-Do not replace the entire instance strategy with `rest_for_one` without those
-contracts.
+These tests define recovery from one dependency failure. They do not claim
+continuous delivery across dependency loss. Repeated independent failures can
+still exceed a branch restart limit. The root strategy and limits are unchanged.
 
 ## Managed subscriptions after C6
 
@@ -170,3 +168,27 @@ a busy handler can delay that field update while its worker recovers separately.
 
 Recovery restores future observations. It does not replay missed observations
 or change the contract for ordinary public Bus subscribers.
+
+## Instance registry recovery after C7
+
+The instance registry and a nested worker supervisor form one `rest_for_one`
+branch. The worker supervisor owns SessionManager, OutboundGateway, and
+InstanceSupervisor. The root supervisor keeps Runtime, the Bus, ConfigStore,
+Deduper, and DeadLetter outside this branch. Existing process names stay the same.
+
+A private coordinator retains desired provider start specifications in ETS owned
+by the root supervisor. It serializes start, stop, and recovery for its dynamic
+supervisor. Successful explicit stops remove the specification. Failed or
+duplicate starts do not replace it. Coordinator restart reads the same table.
+Registry loss restores only workers owned by that supervisor. A stale external
+registration must end before the owned replacement can start.
+
+A killed Registry supervisor can leave its named partition alive briefly. The
+registry starter monitors that partition and waits at most five seconds for its
+exit. It does not kill the stale process or raise supervisor restart limits.
+During recovery, lookup and delivery paths use their existing unavailable results.
+
+Tests use 64 session partitions and 64 gateway partitions. They preserve Runtime
+and Bus PIDs, canonical room state, completed results, and unknown outcomes. A
+provider effect followed by registry loss does not repeat under the same request
+ID. Root supervisor loss still ends the Runtime lifetime and its volatile state.

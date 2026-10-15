@@ -51,6 +51,8 @@ defmodule Jido.Messaging.OutboundGateway.Partition do
       [{pid, _}] -> pid
       [] -> nil
     end
+  rescue
+    ArgumentError -> nil
   end
 
   @spec dispatch(module(), non_neg_integer(), OutboundGateway.request(), timeout()) ::

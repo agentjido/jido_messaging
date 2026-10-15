@@ -49,6 +49,8 @@ defmodule Jido.Messaging.SessionManager.Partition do
       [{pid, _}] -> pid
       [] -> nil
     end
+  rescue
+    ArgumentError -> nil
   end
 
   @spec set(module(), non_neg_integer(), SessionManager.session_key(), SessionManager.route(), keyword(), timeout()) ::

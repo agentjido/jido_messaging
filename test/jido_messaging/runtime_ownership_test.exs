@@ -37,7 +37,7 @@ defmodule Jido.Messaging.RuntimeOwnershipTest do
   end
 
   test "core retains its existing process groups; onboarding is optional", %{supervisor: supervisor} do
-    ids = Supervisor.which_children(supervisor) |> Enum.map(&elem(&1, 0))
+    ids = child_ids(supervisor)
 
     for suffix <- [Registry.Rooms, Registry.Agents, Registry.Instances, Registry.Bridges] do
       assert Module.concat(Instance, suffix) in ids
@@ -62,7 +62,6 @@ defmodule Jido.Messaging.RuntimeOwnershipTest do
 
     refute Process.whereis(Module.concat(Instance, OnboardingSupervisor))
     refute Process.whereis(Module.concat(Instance, Registry.Onboarding))
-    assert length(ids) == 17
   end
 
   test "Runtime owns request and created-binding tables; external bindings keep their owner", %{
@@ -133,7 +132,8 @@ defmodule Jido.Messaging.RuntimeOwnershipTest do
     recovered_runtime = Process.whereis(runtime)
     assert is_pid(recovered_runtime)
     assert :ets.info(Runtime.request_table(runtime), :owner) == recovered_runtime
-    if recovered_runtime != runtime_pid, do: assert(:ets.info(table) == :undefined)
+    assert recovered_runtime == runtime_pid
+    assert :ets.info(table, :owner) == runtime_pid
   end
 
   test "provider effect followed by partition death stays unknown and is not retried", %{runtime: runtime} do
@@ -168,6 +168,15 @@ defmodule Jido.Messaging.RuntimeOwnershipTest do
     assert error.attempt == 1
     assert error.retryable == false
     refute_receive {:effect_before_reply, _}
+  end
+
+  defp child_ids(supervisor) do
+    supervisor
+    |> Supervisor.which_children()
+    |> Enum.flat_map(fn
+      {id, pid, :supervisor, _} when is_pid(pid) -> [id | child_ids(pid)]
+      {id, _pid, _type, _modules} -> [id]
+    end)
   end
 
   defp eventually(fun, attempts \\ 100)
