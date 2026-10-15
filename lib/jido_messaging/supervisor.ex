@@ -57,7 +57,6 @@ defmodule Jido.Messaging.Supervisor do
         signal_bus_name = Module.concat(instance_module, SignalBus)
 
         base_children = [
-          {Registry, keys: :unique, name: room_registry_name},
           {Registry, keys: :unique, name: agent_registry_name},
           {Registry, keys: :unique, name: bridge_registry_name},
           {Jido.Signal.Bus, name: signal_bus_name},
@@ -67,7 +66,10 @@ defmodule Jido.Messaging.Supervisor do
            persistence: persistence,
            persistence_opts: persistence_opts},
           {Jido.Messaging.SubscriptionSupervisor, instance_module: instance_module},
-          {Jido.Messaging.RoomSupervisor, name: room_supervisor_name, instance_module: instance_module},
+          {Jido.Messaging.DesiredWorkers, supervisor: room_supervisor_name, table: desired_workers},
+          {Jido.Messaging.RegistryDomain,
+           registry: room_registry_name,
+           children: [{Jido.Messaging.RoomSupervisor, name: room_supervisor_name, instance_module: instance_module}]},
           {Jido.Messaging.AgentSupervisor, name: agent_supervisor_name, instance_module: instance_module},
           {Jido.Messaging.DeadLetter, name: dead_letter_name, instance_module: instance_module},
           {Jido.Messaging.DeadLetter.ReplaySupervisor,

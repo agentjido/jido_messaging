@@ -812,6 +812,7 @@ defmodule Jido.Messaging.Ingest do
 
       {:error, reason} ->
         Logger.warning("[Jido.Messaging.Ingest] Failed to start room server: #{inspect(reason)}")
+        {:error, reason}
     end
   end
 

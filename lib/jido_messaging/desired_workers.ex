@@ -16,9 +16,11 @@ defmodule Jido.Messaging.DesiredWorkers do
   @spec start_link(keyword()) :: GenServer.on_start()
   def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: name(Keyword.fetch!(opts, :supervisor)))
 
-  @spec start(module(), atom(), term(), Supervisor.child_spec() | {module(), term()}) :: term()
-  def start(instance, supervisor, key, spec) do
-    manage(instance, supervisor, {:start, key, spec}, fn -> DynamicSupervisor.start_child(supervisor, spec) end)
+  @spec start(module(), atom(), term(), term(), term()) :: term()
+  def start(instance, supervisor, key, spec, restore_spec \\ nil) do
+    manage(instance, supervisor, {:start, key, spec, restore_spec || spec}, fn ->
+      DynamicSupervisor.start_child(supervisor, spec)
+    end)
   end
 
   @spec stop(module(), atom(), term(), pid()) :: :ok | {:error, term()}
@@ -39,10 +41,10 @@ defmodule Jido.Messaging.DesiredWorkers do
   def handle_continue(:restore, state), do: {:noreply, restore_children(state)}
 
   @impl true
-  def handle_call({:start, key, spec}, _from, state) do
+  def handle_call({:start, key, spec, restore_spec}, _from, state) do
     result = safely(fn -> DynamicSupervisor.start_child(state.supervisor, spec) end)
 
-    if started?(result), do: :ets.insert(state.table, {{state.supervisor, key}, spec})
+    if started?(result), do: :ets.insert(state.table, {{state.supervisor, key}, restore_spec})
     {:reply, result, state}
   end
 

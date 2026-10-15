@@ -1,9 +1,10 @@
 # Runtime ownership and failure limits
 
-This document defines the runtime contract after C7. Public functions, existing
+This document defines the runtime contract after C8a. Public functions, existing
 process names, state structs, Signal schemas, and stored records remain unchanged.
-C6 adds private subscription workers. C7 isolates the instance registry and its
-workers. Request retention and provider scheduling remain as measured in C5.
+C6 adds private subscription workers. C7 and C8a isolate the instance and room
+registries with their workers. Request retention and provider scheduling remain
+as measured in C5.
 
 ## Process groups
 
@@ -140,7 +141,8 @@ kill a partition after a provider effect but before its reply.
   observations are not replayed by the current memory store.
 * Instance-registry loss restarts its delivery and provider worker group. Runtime
   and the Bus remain alive. Completed and unknown request entries stay intact.
-  Other instance registries retain their earlier recovery limits until C8.
+  Room-registry loss restores desired room workers in its own branch. Other
+  instance registries retain their earlier recovery limits until their C8 step.
 * A partition restart preserves a Runtime-owned Chat binding. A request whose
   provider owner died after an effect remains `request_outcome_unknown` and
   terminates at attempt one. It does not cause a second provider call.
@@ -192,3 +194,21 @@ Tests use 64 session partitions and 64 gateway partitions. They preserve Runtime
 and Bus PIDs, canonical room state, completed results, and unknown outcomes. A
 provider effect followed by registry loss does not repeat under the same request
 ID. Root supervisor loss still ends the Runtime lifetime and its volatile state.
+
+## Room registry recovery after C8a
+
+The room registry and RoomSupervisor use a separate recovery branch. A private
+coordinator retains desired room start settings in the root-owned table. Registry
+loss restores these workers. Recovery loads the current saved room record. A room
+started without a saved record retains its supplied room value. A failed read
+keeps the desired entry and waits for recovery; it does not replace saved state.
+
+Successful explicit stop removes the desired entry. A duplicate start does not
+replace the original settings. A stale registration outside RoomSupervisor is
+not adopted or stopped. Lookup and count calls return their existing empty or
+unavailable results while this group is down. Accepted messages still publish
+an observation-failure event when their room observation cannot run.
+
+Tests restore 64 rooms with custom settings. Runtime, the Bus, other process
+groups, completed request history, and saved room data survive. The private
+subscription registry also uses the safe starter for a stale Registry partition.

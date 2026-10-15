@@ -9,8 +9,10 @@ defmodule Jido.Messaging.SubscriptionSupervisor do
   def init(opts) do
     instance = Keyword.fetch!(opts, :instance_module)
 
+    registry = Module.concat(instance, Registry.Subscriptions)
+
     children = [
-      {Registry, keys: :unique, name: Module.concat(instance, Registry.Subscriptions)},
+      %{id: registry, start: {Jido.Messaging.RegistryDomain, :start_registry, [registry]}, type: :supervisor},
       {DynamicSupervisor, name: Module.concat(instance, SubscriptionWorkers), strategy: :one_for_one}
     ]
 

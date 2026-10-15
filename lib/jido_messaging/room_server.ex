@@ -193,6 +193,8 @@ defmodule Jido.Messaging.RoomServer do
       [] ->
         nil
     end
+  rescue
+    ArgumentError -> nil
   end
 
   @doc "Get list of agent PIDs participating in a room"
@@ -208,18 +210,39 @@ defmodule Jido.Messaging.RoomServer do
 
   @impl true
   def init(opts) do
-    room = Keyword.fetch!(opts, :room)
     instance_module = Keyword.fetch!(opts, :instance_module)
 
-    state =
-      struct!(__MODULE__, %{
-        room: room,
-        instance_module: instance_module,
-        message_limit: Keyword.get(opts, :message_limit, @default_message_limit),
-        timeout_ms: Keyword.get(opts, :timeout_ms, @default_timeout_ms)
-      })
+    with {:ok, room} <- initial_room(opts) do
+      state =
+        struct!(__MODULE__, %{
+          room: room,
+          instance_module: instance_module,
+          message_limit: Keyword.get(opts, :message_limit, @default_message_limit),
+          timeout_ms: Keyword.get(opts, :timeout_ms, @default_timeout_ms)
+        })
 
-    {:ok, state, {:continue, :restore_agents}}
+      {:ok, state, {:continue, :restore_agents}}
+    else
+      {:error, reason} -> {:stop, reason}
+    end
+  end
+
+  defp initial_room(opts) do
+    room = Keyword.fetch!(opts, :room)
+
+    if Keyword.get(opts, :restore_from_persistence, false) do
+      runtime = Module.concat(Keyword.fetch!(opts, :instance_module), Runtime)
+
+      case Jido.Messaging.get_room(runtime, room.id) do
+        {:ok, stored} -> {:ok, stored}
+        {:error, :not_found} -> {:ok, room}
+        {:error, _reason} = error -> error
+      end
+    else
+      {:ok, room}
+    end
+  catch
+    :exit, _reason -> {:error, :runtime_unavailable}
   end
 
   @impl true

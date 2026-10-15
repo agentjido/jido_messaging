@@ -60,14 +60,12 @@ defmodule Jido.Messaging.AcceptanceFailureTest do
 
           if Process.get({__MODULE__, :stop_room_supervisor_after_write}) do
             instance = Jido.Messaging.AcceptanceFailureTest.Instance
-            pid = Process.whereis(Module.concat(instance, "RoomSupervisor"))
 
-            {id, ^pid, _, _} =
-              Enum.find(Supervisor.which_children(instance.__jido_messaging__(:supervisor)), fn {_, child, _, _} ->
-                child == pid
-              end)
-
-            :ok = Supervisor.terminate_child(instance.__jido_messaging__(:supervisor), id)
+            :ok =
+              Supervisor.terminate_child(
+                instance.__jido_messaging__(:supervisor),
+                Module.concat(instance, Registry.Rooms)
+              )
           end
 
           result

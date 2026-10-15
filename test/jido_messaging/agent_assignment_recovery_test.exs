@@ -83,10 +83,15 @@ defmodule Jido.Messaging.AgentAssignmentRecoveryTest do
           do: Instance.__jido_messaging__(:runtime),
           else: Module.concat(Instance, :RoomSupervisor)
 
-      pid = Process.whereis(name)
+      id =
+        if unquote(child) == :room_supervisor do
+          Module.concat(Instance, Registry.Rooms)
+        else
+          {id, _, _, _} =
+            Enum.find(Supervisor.which_children(supervisor), fn {_, pid, _, _} -> pid == Process.whereis(name) end)
 
-      {id, ^pid, _, _} =
-        Enum.find(Supervisor.which_children(supervisor), fn {_, child_pid, _, _} -> child_pid == pid end)
+          id
+        end
 
       assert :ok = Supervisor.terminate_child(supervisor, id)
       assert {:error, :runtime_unavailable} = Jido.Messaging.restore_agent_runners(Instance)
