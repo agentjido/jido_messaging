@@ -212,8 +212,6 @@ defmodule Jido.Messaging.AgentSupervisor do
     :ok
   end
 
-  defp maybe_restore_assigned_runners(_instance_module), do: :ok
-
   defp retry_restore_assigned_runners(_instance_module, 0), do: :ok
 
   defp retry_restore_assigned_runners(instance_module, attempts_left) do
