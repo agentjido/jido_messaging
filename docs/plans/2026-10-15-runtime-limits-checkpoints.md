@@ -372,7 +372,7 @@ run found two 100 ms recovery waits competing with the 100 ms retry timer; commi
 `1d316d0` sets one-second test limits. Its focused regression run passed 18 tests.
 That run also reported an intermittent existing concurrent endpoint-membership
 lookup failure on OTP 29. The assertion now identifies the affected adapter.
-Keep this issue open until a verified fix or clean repeated evidence resolves it.
+A controlled read-snapshot test now reproduces it. Conflict recovery uses the existing optional transaction to read the committed endpoint, membership, or route on a current connection. All eight endpoint tests pass. Full verification continues with C9.
 
 C8b CI passed all test jobs, including PostgreSQL and the earlier recovery
 regressions. Dialyzer found one unreachable private restoration clause. Commit

@@ -290,6 +290,45 @@ defmodule Jido.Messaging.AgentEndpointsTest do
     end
   end
 
+  test "conflict recovery reads committed endpoint, membership, and route state" do
+    {participant, room, thread} = create_agent_thread(SQLiteMessaging, "snapshot")
+    runtime = SQLiteMessaging.__jido_messaging__(:runtime)
+    {SQLite, state} = Jido.Messaging.Runtime.get_persistence(runtime)
+    attrs = %{principal_id: participant.id, jidoka_agent_ref: %{system: "jidoka", id: "snapshot-jidoka"}}
+
+    endpoint =
+      with_read_snapshot(state.db, fn ->
+        assert {:ok, endpoint} = SQLiteMessaging.create_agent_messaging_endpoint(attrs)
+        assert {:ok, ^endpoint} = SQLiteMessaging.create_agent_messaging_endpoint(attrs)
+        endpoint
+      end)
+
+    with_read_snapshot(state.db, fn ->
+      assert {:ok, membership} = SQLiteMessaging.add_agent_endpoint_to_room(endpoint.id, room.id)
+      assert {:ok, ^membership} = SQLiteMessaging.add_agent_endpoint_to_room(endpoint.id, room.id)
+    end)
+
+    assert {:ok, _} = SQLiteMessaging.add_agent_endpoint_to_room(endpoint.id, room.id)
+
+    with_read_snapshot(state.db, fn ->
+      assert {:ok, route} = SQLiteMessaging.route_thread_to_agent_endpoint(thread.id, endpoint.id)
+      assert {:ok, updated} = SQLiteMessaging.route_thread_to_agent_endpoint(thread.id, endpoint.id)
+      assert updated.id == route.id
+      assert updated.delivery_revision == route.delivery_revision + 1
+    end)
+  end
+
+  defp with_read_snapshot(db, operation) do
+    {:ok, statement} = Sqlite3.prepare(db, "SELECT payload FROM jido_messaging_records")
+
+    try do
+      assert {:row, _} = Sqlite3.step(db, statement)
+      operation.()
+    after
+      Sqlite3.release(db, statement)
+    end
+  end
+
   test "endpoint records reject executable agent definitions and secret data" do
     assert_raise ArgumentError, ~r/permits only/, fn ->
       AgentMessagingEndpoint.new(%{

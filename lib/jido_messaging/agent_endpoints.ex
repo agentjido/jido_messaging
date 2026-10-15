@@ -290,13 +290,15 @@ defmodule Jido.Messaging.AgentEndpoints do
   end
 
   defp resolve_endpoint_save_conflict(persistence, state, endpoint, error) do
-    case persistence.get_agent_messaging_endpoint_by_ref(state, endpoint.jidoka_agent_ref["id"]) do
-      {:ok, %{principal_id: principal_id} = existing} when principal_id == endpoint.principal_id ->
-        {:ok, existing}
+    with_current_state(persistence, state, fn current ->
+      case persistence.get_agent_messaging_endpoint_by_ref(current, endpoint.jidoka_agent_ref["id"]) do
+        {:ok, %{principal_id: principal_id} = existing} when principal_id == endpoint.principal_id ->
+          {:ok, existing}
 
-      _other ->
-        error
-    end
+        _other ->
+          error
+      end
+    end)
   end
 
   defp get_or_build_membership(persistence, state, endpoint, room_id, opts) do
@@ -321,11 +323,13 @@ defmodule Jido.Messaging.AgentEndpoints do
   defp save_or_get_membership(persistence, state, membership) do
     case persistence.save_room_membership(state, membership) do
       {:error, {:room_membership_conflict, _membership_id}} ->
-        case persistence.get_room_membership(state, membership.room_id, membership.endpoint_id) do
-          {:ok, %RoomMembership{status: :active} = existing} -> {:ok, existing}
-          {:ok, %RoomMembership{status: status}} -> {:error, {:membership_inactive, status}}
-          {:error, _reason} = error -> error
-        end
+        with_current_state(persistence, state, fn current ->
+          case persistence.get_room_membership(current, membership.room_id, membership.endpoint_id) do
+            {:ok, %RoomMembership{status: :active} = existing} -> {:ok, existing}
+            {:ok, %RoomMembership{status: status}} -> {:error, {:membership_inactive, status}}
+            {:error, _reason} = error -> error
+          end
+        end)
 
       result ->
         result
@@ -385,13 +389,24 @@ defmodule Jido.Messaging.AgentEndpoints do
   defp save_thread_route(persistence, state, thread, endpoint, route, opts) do
     case persistence.save_agent_thread_route(state, route) do
       {:error, {:agent_thread_route_conflict, _route_id}} ->
-        with {:ok, updated} <- build_thread_route(persistence, state, thread, endpoint, opts) do
-          persistence.save_agent_thread_route(state, updated)
-        end
+        with_current_state(persistence, state, fn current ->
+          with {:ok, updated} <- build_thread_route(persistence, current, thread, endpoint, opts) do
+            persistence.save_agent_thread_route(current, updated)
+          end
+        end)
 
       result ->
         result
     end
+  end
+
+  # A concurrent SELECT on SQLite's shared read connection can retain a snapshot
+  # older than the committed writer that returned the conflict. The optional
+  # transaction opens a current connection for conflict resolution.
+  defp with_current_state(persistence, state, operation) do
+    if function_exported?(persistence, :transaction, 2),
+      do: persistence.transaction(state, operation),
+      else: operation.(state)
   end
 
   defp route_value(opts, key, route, true), do: Keyword.get(opts, key, Map.get(route, key))
