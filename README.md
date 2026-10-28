@@ -1,5 +1,12 @@
 # Jido Messaging
 
+> [!IMPORTANT]
+> `jido_messaging` is retired. Its runtime is now part of
+> [`jido_chat`](https://github.com/agentjido/jido_chat) on the `release/v3`
+> branch. Use `Jido.Chat.Runtime` for rooms, participants, connections, and
+> bridges. The public adapter APIs remain `Jido.Chat.Plugin` and
+> `Jido.Chat.Sensor`.
+
 [![Hex.pm](https://img.shields.io/hexpm/v/jido_messaging.svg)](https://hex.pm/packages/jido_messaging)
 [![Hex Docs](https://img.shields.io/badge/hex-docs-lightgreen.svg)](https://hexdocs.pm/jido_messaging/)
 [![CI](https://github.com/agentjido/jido_messaging/actions/workflows/ci.yml/badge.svg)](https://github.com/agentjido/jido_messaging/actions/workflows/ci.yml)
